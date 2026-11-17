@@ -3,7 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/json"
+	"encoding/pem"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +17,9 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/crypto/ssh"
 
 	"apothecary/internal/platform/wstunnel"
 )
@@ -29,12 +35,19 @@ type fakeEngine struct {
 	approve int  // the poll that is approved (0: never)
 	deny    bool // the sign-in is denied
 	status  int  // device-login status calls
-	srv     *httptest.Server
+	// keys are the account's SSH keys, by fingerprint; adds the POSTed
+	// (name, line) pairs; keysAt answers the list (0: fine), addAt a POST;
+	// raced: a POST finds its key put on this account meanwhile (409).
+	keys          map[string]string
+	adds          [][2]string
+	keysAt, addAt int
+	raced         bool
+	srv           *httptest.Server
 }
 
 func newFakeEngine(t *testing.T) *fakeEngine {
 	t.Helper()
-	e := &fakeEngine{version: "v1.0.0", approve: 2}
+	e := &fakeEngine{version: "v1.0.0", approve: 2, keys: map[string]string{}}
 	mux := http.NewServeMux()
 	authed := func(w http.ResponseWriter, r *http.Request) bool {
 		if r.Header.Get("Authorization") != "Bearer good" {
@@ -145,6 +158,53 @@ func newFakeEngine(t *testing.T) *fakeEngine {
 	})
 	mux.HandleFunc("GET /api/ssh/tunnel", func(w http.ResponseWriter, r *http.Request) {
 		echo(w, r, "ssh "+r.URL.Query().Get("workspace"))
+	})
+	mux.HandleFunc("GET /api/me/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(w, r) {
+			return
+		}
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		if e.keysAt != 0 {
+			w.WriteHeader(e.keysAt)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "token expired"})
+			return
+		}
+		list := []map[string]string{}
+		for fp, name := range e.keys {
+			list = append(list, map[string]string{"id": "k-" + name, "name": name, "fingerprint": fp})
+		}
+		_ = json.NewEncoder(w).Encode(list)
+	})
+	mux.HandleFunc("POST /api/me/ssh-keys", func(w http.ResponseWriter, r *http.Request) {
+		if !authed(w, r) {
+			return
+		}
+		var body struct {
+			Name      string `json:"name"`
+			PublicKey string `json:"public_key"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		e.adds = append(e.adds, [2]string{body.Name, body.PublicKey})
+		pk, _, _, _, err := ssh.ParseAuthorizedKey([]byte(body.PublicKey))
+		switch {
+		case err != nil:
+			w.WriteHeader(http.StatusBadRequest)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "not an OpenSSH public key"})
+		case e.raced:
+			e.keys[ssh.FingerprintSHA256(pk)] = "laptop (the other run)"
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "this key is already registered"})
+		case e.addAt != 0:
+			w.WriteHeader(e.addAt)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "this key is already registered"})
+		default:
+			e.keys[ssh.FingerprintSHA256(pk)] = body.Name
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(map[string]string{"id": "k-" + body.Name, "name": body.Name, "fingerprint": ssh.FingerprintSHA256(pk)})
+		}
 	})
 	e.srv = httptest.NewServer(mux)
 	t.Cleanup(e.srv.Close)
@@ -312,8 +372,9 @@ func TestOSEnv(t *testing.T) {
 	}
 }
 
-// ssh-config writes its block once, keeps everything else, and replaces
-// only its own block when run again.
+// ssh-config makes this machine's key, registers it, writes its block once
+// with that key, keeps everything else, and replaces only its own block when
+// run again, reusing the key.
 func TestSSHConfig(t *testing.T) {
 	e := newFakeEngine(t)
 	r := newRig(t)
@@ -324,6 +385,27 @@ func TestSSHConfig(t *testing.T) {
 	if code := r.run("ssh-config"); code != 0 {
 		t.Fatalf("ssh-config = %d %q", code, r.err)
 	}
+	keyPath := filepath.Join(r.env.Home, ".ssh", "apothecary_ed25519")
+	key, _ := os.ReadFile(keyPath)
+	raw, err := ssh.ParseRawPrivateKey(key)
+	priv, ok := raw.(*ed25519.PrivateKey)
+	if err != nil || !ok {
+		t.Fatalf("key = %T %v", raw, err)
+	}
+	if info, _ := os.Stat(keyPath); info.Mode().Perm() != 0o600 {
+		t.Errorf("key mode = %v", info.Mode())
+	}
+	want, _ := ssh.NewPublicKey(priv.Public())
+	pubLine, _ := os.ReadFile(keyPath + ".pub")
+	if pub, comment, _, _, err := ssh.ParseAuthorizedKey(pubLine); err != nil || !bytes.Equal(pub.Marshal(), want.Marshal()) || comment != "apothecary@laptop" {
+		t.Errorf(".pub = %q %v", pubLine, err)
+	}
+	if len(e.adds) != 1 || e.adds[0][0] != "laptop (apothecary ssh-config)" || e.keys[ssh.FingerprintSHA256(want)] == "" {
+		t.Errorf("registered = %q", e.adds)
+	}
+	if out := r.out.String(); !strings.Contains(out, ssh.FingerprintSHA256(want)+"): created") || !strings.Contains(out, `Registered it on your account as "laptop (apothecary ssh-config)"`) {
+		t.Errorf("said %q", out)
+	}
 	got, _ := os.ReadFile(path)
 	host := strings.TrimPrefix(e.srv.URL, "http://")
 	host = host[:strings.LastIndex(host, ":")]
@@ -331,6 +413,8 @@ func TestSSHConfig(t *testing.T) {
 		"ServerAliveInterval 30\nHost work\n    User me\n\n# >>> apothecary >>>",
 		"Host *.apothecary\n",
 		"    ProxyCommand /usr/local/bin/apothecary ssh-proxy %h\n",
+		"    IdentityFile " + filepath.ToSlash(keyPath) + "\n",
+		"    IdentitiesOnly yes\n",
 		"    HostKeyAlias apothecary-" + host + "\n",
 		"    StrictHostKeyChecking accept-new\n",
 	} {
@@ -352,6 +436,12 @@ func TestSSHConfig(t *testing.T) {
 	if info, _ := os.Stat(path); info.Mode().Perm() != 0o600 {
 		t.Errorf("mode = %v", info.Mode())
 	}
+	if same, _ := os.ReadFile(keyPath); !bytes.Equal(same, key) || len(e.adds) != 1 {
+		t.Errorf("a rerun must reuse the key and not register it again: %d adds", len(e.adds))
+	}
+	if out := r.out.String(); !strings.Contains(out, "): reused") || !strings.Contains(out, "Already registered") {
+		t.Errorf("rerun said %q", out)
+	}
 	if withBlock("", "B\n") != "B\n" {
 		t.Error("empty config")
 	}
@@ -369,6 +459,221 @@ func TestSSHConfig(t *testing.T) {
 	r.env.Home = ""
 	if code := r.run("ssh-config"); code != 1 {
 		t.Errorf("no home = %d", code)
+	}
+}
+
+// noApothecaryFiles fails the test when ssh-config left a key or a config.
+func noApothecaryFiles(t *testing.T, home string) {
+	t.Helper()
+	for _, name := range []string{"apothecary_ed25519", "apothecary_ed25519.pub", "config"} {
+		if _, err := os.Stat(filepath.Join(home, ".ssh", name)); err == nil {
+			t.Errorf("%s was written", name)
+		}
+	}
+}
+
+// A sign-in the engine no longer takes writes nothing: no key, no config.
+func TestSSHConfigWhenTheEngineRefusesTheToken(t *testing.T) {
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	e.keysAt = http.StatusUnauthorized
+	if code := r.run("ssh-config"); code != 1 || !strings.Contains(r.err.String(), "sign in again") {
+		t.Errorf("ssh-config = %d %q", code, r.err)
+	}
+	noApothecaryFiles(t, r.env.Home)
+}
+
+// A key already on another account is left alone, and so is the config;
+// the person is told how out.
+func TestSSHConfigWhenTheKeyIsAnotherAccounts(t *testing.T) {
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	e.addAt = http.StatusConflict
+	if code := r.run("ssh-config"); code != 1 {
+		t.Fatalf("ssh-config = %d", code)
+	}
+	keyPath := filepath.Join(r.env.Home, ".ssh", "apothecary_ed25519")
+	for _, want := range []string{"registered on another account", "this key is already registered", "remove it there", "move " + keyPath + "* aside"} {
+		if !strings.Contains(r.err.String(), want) {
+			t.Errorf("error lacks %q: %q", want, r.err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(r.env.Home, ".ssh", "config")); err == nil {
+		t.Error("the config must not be written")
+	}
+	e.addAt = http.StatusBadGateway
+	if code := r.run("ssh-config"); code != 1 || strings.Contains(r.err.String(), "another account") {
+		t.Errorf("any other refusal is the engine's: %d %q", code, r.err)
+	}
+}
+
+// A 409 for a key put on this account between the list and the POST
+// (another ssh-config, the UI) is not another account's: the key is
+// registered, and the config is written.
+func TestSSHConfigWhenTheKeyIsRegisteredMeanwhile(t *testing.T) {
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	e.raced = true
+	if code := r.run("ssh-config"); code != 0 {
+		t.Fatalf("ssh-config = %d: %s", code, r.err)
+	}
+	if !strings.Contains(r.out.String(), `Already registered on your account as "laptop (the other run)"`) {
+		t.Errorf("out = %q", r.out)
+	}
+	if len(e.adds) != 1 || len(e.keys) != 1 {
+		t.Errorf("adds = %d, keys = %v", len(e.adds), e.keys)
+	}
+	config, err := os.ReadFile(filepath.Join(r.env.Home, ".ssh", "config"))
+	if err != nil || !strings.Contains(string(config), "IdentitiesOnly yes") {
+		t.Errorf("config = %q, %v", config, err)
+	}
+}
+
+// placeKey puts a key of the test's own at ~/.ssh/apothecary_ed25519.
+func placeKey(t *testing.T, home string, passphrase string, mode os.FileMode) ssh.PublicKey {
+	t.Helper()
+	pub, priv, _ := ed25519.GenerateKey(rand.Reader)
+	block, err := ssh.MarshalPrivateKey(priv, "mine")
+	if passphrase != "" {
+		block, err = ssh.MarshalPrivateKeyWithPassphrase(priv, "mine", []byte(passphrase))
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(home, ".ssh")
+	_ = os.MkdirAll(dir, 0o700)
+	path := filepath.Join(dir, "apothecary_ed25519")
+	if err := os.WriteFile(path, pem.EncodeToMemory(block), mode); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chmod(path, mode)
+	sp, _ := ssh.NewPublicKey(pub)
+	return sp
+}
+
+// A key that is there is used, never replaced: tightened when others could
+// read it, read through its public half when it has a passphrase, its .pub
+// written when missing or another key's.
+func TestSSHConfigReusesTheKeyThere(t *testing.T) {
+	for _, tc := range []struct {
+		name, passphrase string
+		mode             os.FileMode
+		stalePub         bool
+	}{
+		{name: "readable by others", mode: 0o644},
+		{name: "with a passphrase", passphrase: "secret", mode: 0o600, stalePub: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := newFakeEngine(t)
+			r := newRig(t)
+			r.signIn(t, e)
+			want := placeKey(t, r.env.Home, tc.passphrase, tc.mode)
+			keyPath := filepath.Join(r.env.Home, ".ssh", "apothecary_ed25519")
+			before, _ := os.ReadFile(keyPath)
+			if tc.stalePub {
+				other := placeKey(t, t.TempDir(), "", 0o600)
+				_ = os.WriteFile(keyPath+".pub", ssh.MarshalAuthorizedKey(other), 0o644)
+			}
+			if code := r.run("ssh-config"); code != 0 {
+				t.Fatalf("ssh-config = %d %q", code, r.err)
+			}
+			if e.keys[ssh.FingerprintSHA256(want)] == "" || len(e.adds) != 1 {
+				t.Errorf("registered %q, not the key there", e.adds)
+			}
+			if after, _ := os.ReadFile(keyPath); !bytes.Equal(after, before) {
+				t.Error("the key must not be rewritten")
+			}
+			if info, _ := os.Stat(keyPath); info.Mode().Perm() != 0o600 {
+				t.Errorf("mode = %v", info.Mode())
+			}
+			if tightened := strings.Contains(r.out.String(), "readable by you only"); tightened != (tc.mode != 0o600) {
+				t.Errorf("said %q", r.out)
+			}
+			pubLine, _ := os.ReadFile(keyPath + ".pub")
+			if pub, _, _, _, err := ssh.ParseAuthorizedKey(pubLine); err != nil || !bytes.Equal(pub.Marshal(), want.Marshal()) {
+				t.Errorf(".pub = %q", pubLine)
+			}
+		})
+	}
+}
+
+// A key file it cannot read, or cannot make, stops it with the file named;
+// whatever is there stays as it was.
+func TestSSHConfigKeyTrouble(t *testing.T) {
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	dir := filepath.Join(r.env.Home, ".ssh")
+	keyPath := filepath.Join(dir, "apothecary_ed25519")
+	_ = os.MkdirAll(dir, 0o700)
+	_ = os.WriteFile(keyPath, []byte("not a key"), 0o600)
+	if code := r.run("ssh-config"); code != 1 || !strings.Contains(r.err.String(), keyPath+" is not a private key") || !strings.Contains(r.err.String(), "move it aside") {
+		t.Errorf("corrupt = %d %q", code, r.err)
+	}
+	if got, _ := os.ReadFile(keyPath); string(got) != "not a key" {
+		t.Errorf("the file was changed: %q", got)
+	}
+	_ = os.Remove(keyPath)
+	_ = os.Symlink(filepath.Join(r.env.Home, "planted"), keyPath)
+	if code := r.run("ssh-config"); code != 1 || !strings.Contains(r.err.String(), keyPath) {
+		t.Errorf("a planted symlink = %d %q", code, r.err)
+	}
+	if _, err := os.Stat(filepath.Join(r.env.Home, "planted")); err == nil {
+		t.Error("a key was written through the symlink")
+	}
+	_ = os.Remove(keyPath)
+	_ = os.Mkdir(keyPath, 0o700)
+	if code := r.run("ssh-config"); code != 1 {
+		t.Errorf("the key is a directory = %d", code)
+	}
+	_ = os.Remove(keyPath)
+	_ = os.Mkdir(keyPath+".pub", 0o700)
+	if code := r.run("ssh-config"); code != 1 {
+		t.Errorf(".pub is a directory = %d", code)
+	}
+	if len(e.adds) != 0 {
+		t.Errorf("registered %q", e.adds)
+	}
+}
+
+// IdentityFile survives a home with a space and a % in it.
+func TestSSHConfigQuotesTheKeysPath(t *testing.T) {
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	r.env.Home = filepath.Join(t.TempDir(), "Ada 100%")
+	if code := r.run("ssh-config"); code != 0 {
+		t.Fatalf("ssh-config = %d %q", code, r.err)
+	}
+	got, _ := os.ReadFile(filepath.Join(r.env.Home, ".ssh", "config"))
+	want := `    IdentityFile "` + filepath.ToSlash(filepath.Join(r.env.Home, ".ssh", "apothecary_ed25519")) + `"`
+	want = strings.Replace(want, "100%", "100%%", 1)
+	if !strings.Contains(string(got), want+"\n") {
+		t.Errorf("config lacks %q:\n%s", want, got)
+	}
+}
+
+// The key's name on the account fits the engine's 64 characters, and a
+// machine without a name still gets one.
+func TestKeyName(t *testing.T) {
+	if got := keyName(strings.Repeat("h", 70)); got != strings.Repeat("h", 64) {
+		t.Errorf("long = %q", got)
+	}
+	if got := keyName(strings.Repeat("é", 50)); utf8.RuneCountInString(got) > 64 || !strings.HasPrefix(got, strings.Repeat("é", 50)+" (apothecary") {
+		t.Errorf("runes = %q", got)
+	}
+	if keyName("") != "apothecary ssh-config" || keyComment("") != "apothecary" {
+		t.Error("no hostname")
+	}
+	e := newFakeEngine(t)
+	r := newRig(t)
+	r.signIn(t, e)
+	r.env.Hostname = ""
+	if code := r.run("ssh-config"); code != 0 || len(e.adds) != 1 || e.adds[0][0] != "apothecary ssh-config" || !strings.HasSuffix(e.adds[0][1], " apothecary") {
+		t.Errorf("no hostname = %d %q %q", code, e.adds, r.err)
 	}
 }
 

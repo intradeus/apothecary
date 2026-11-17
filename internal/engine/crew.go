@@ -193,7 +193,7 @@ func subagentSpawns(title, input string) int {
 	_, task := in["task"]
 	_, solutionSpace := in["solutionSpace"]
 	switch {
-	case prompt && subagentType: // opencode's task tool
+	case prompt && subagentType: // opencode's task tool, Claude Code's Task tool
 		return 1
 	case task && solutionSpace: // omp's task tool, one assignment
 		return 1

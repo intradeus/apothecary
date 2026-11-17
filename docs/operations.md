@@ -33,7 +33,7 @@ address:
 | `apothecary forward status` | what is forwarded, run by run |
 | `apothecary forward stop <run> [port]...` or `--all` | stop forwarding |
 | `apothecary forward logs` | the background forwarder's log |
-| `apothecary ssh-config` | once: route `ssh <workspace>.apothecary` and VS Code Remote-SSH through the engine |
+| `apothecary ssh-config` | once: create this machine's key, register it on your account, and route `ssh <workspace>.apothecary` and VS Code Remote-SSH through the engine with it |
 | `apothecary ssh-proxy <host>` | the ssh `ProxyCommand` that `ssh-config` installs |
 | `apothecary update [--check]` | install the client release matching the engine's version, checked against the release's `SHA256SUMS` |
 | `apothecary logout` | sign out, revoking this machine's sign-in |
@@ -130,12 +130,21 @@ A run's workspace is reachable from a desktop, with plain `ssh` or VS Code's
 Remote-SSH (its terminal and file tree), through the engine's **SSH door**.
 No sshd runs in any container, and no SSH port is published.
 
-1. **Register a key** under **Account → SSH keys**.
-2. **Run `apothecary ssh-config` once.** It writes one block into
-   `~/.ssh/config`: every host named `<workspace>.apothecary` goes through
-   `apothecary ssh-proxy`, inside the engine's HTTPS address.
-3. **Connect:** `ssh <workspace>.apothecary`, or *Open in VS Code* from the
+1. **Run `apothecary ssh-config` once,** signed in. It makes this machine's
+   key, `~/.ssh/apothecary_ed25519` (Ed25519, no passphrase, readable by you
+   only), unless it is there already; registers its public half on your
+   account; and writes one block into `~/.ssh/config`: every host named
+   `<workspace>.apothecary` goes through `apothecary ssh-proxy`, inside the
+   engine's HTTPS address, with that key (`IdentityFile`) and no other
+   (`IdentitiesOnly yes`). Run again, it reuses the key and rewrites only
+   its block. It works the same on macOS, Linux and Windows.
+2. **Connect:** `ssh <workspace>.apothecary`, or *Open in VS Code* from the
    run page.
+
+Keys for other machines or tools are registered under **Account → SSH
+keys**, where this machine's appears too (and is revoked). A key you
+registered there before is no longer offered to `*.apothecary` hosts once
+`ssh-config` has run: the block names its own key.
 
 The door authenticates the key, checks that the run is yours, and proxies the
 session to an SSH server in the workspace's sidecar, over the engine's own

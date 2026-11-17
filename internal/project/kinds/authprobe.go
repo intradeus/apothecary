@@ -42,6 +42,7 @@ var (
 	_ AuthChecker = (*opencodeHarness)(nil)
 	_ AuthChecker = (*codexHarness)(nil)
 	_ AuthChecker = (*ompHarness)(nil)
+	_ AuthChecker = (*claudeCodeHarness)(nil)
 )
 
 // authProbe is one zero-token request that only an accepted credential gets

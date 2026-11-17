@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -164,6 +165,9 @@ type acpClient struct {
 	waiting map[int]chan acpReply
 	updates []json.RawMessage
 	exited  chan struct{}
+	// refuse answers every permission request with its reject option, as
+	// the sidecar does in a read-only session (only reading tools pass).
+	refuse atomic.Bool
 }
 
 type acpReply struct {
@@ -263,8 +267,8 @@ func (c *acpClient) read(stdout io.Reader) {
 }
 
 // answer replies to the agent's own requests: a permission is granted once
-// (the sidecar auto-approves too); nothing else is offered — the sidecar
-// declares no fs or terminal.
+// (the sidecar auto-approves too), or refused when the client refuses; nothing
+// else is offered — the sidecar declares no fs or terminal.
 func (c *acpClient) answer(id json.RawMessage, method string, params json.RawMessage) {
 	reply := map[string]any{"jsonrpc": "2.0", "id": id}
 	if method == "session/request_permission" {
@@ -276,7 +280,7 @@ func (c *acpClient) answer(id json.RawMessage, method string, params json.RawMes
 		}
 		_ = json.Unmarshal(params, &p)
 		for _, o := range p.Options {
-			if strings.HasPrefix(o.Kind, "allow") {
+			if strings.HasPrefix(o.Kind, "allow") != c.refuse.Load() {
 				reply["result"] = map[string]any{"outcome": map[string]any{"outcome": "selected", "optionId": o.OptionID}}
 				break
 			}

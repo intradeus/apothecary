@@ -468,7 +468,7 @@ export default {
 		'Give this workshop’s workspaces their run’s own docker daemon — testcontainers, docker compose, docker run — by adding the standard docker-outside-of-docker feature to the build. A repo that declares the feature itself needs nothing here. The instance’s daemon door decides whether it is allowed: open by itself under an unprivileged sandbox, by the operator’s setting otherwise.',
 	'form.project.extensions': 'code-server extensions',
 	'form.project.extensionsHelp':
-		"VS Code extension ids from Open VSX, installed the first time the browser editor opens in a run (together with the repo's devcontainer customizations, and each harness's own extension — Codex, opencode — signed in like its agent) — no rebuild.",
+		"VS Code extension ids from Open VSX, installed the first time the browser editor opens in a run (together with the repo's devcontainer customizations, and each harness's own extension — Codex, opencode, Claude Code — signed in like its agent) — no rebuild.",
 	'form.project.editorDefaults': 'Editor defaults',
 	'form.project.editorHelp':
 		'code-server settings, applied each time the browser editor opens — no rebuild.',

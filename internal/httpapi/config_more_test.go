@@ -551,6 +551,9 @@ func TestProviderList(t *testing.T) {
 	if p := byID["google-antigravity"]; !p.Login || p.SignIn {
 		t.Errorf("antigravity (a login one imports) = %+v", p)
 	}
+	if p := byID["anthropic"]; !slices.Equal(p.Harnesses, []string{providers.ClaudeCode, providers.Omp, providers.Opencode}) {
+		t.Errorf("anthropic is used by %v", p.Harnesses)
+	}
 	_, data = x.do(t, "GET", "/api/providers?harness="+providers.Codex, nil, nil)
 	some := decode[[]ProviderInfo](t, data)
 	if len(some) == 0 || len(some) >= len(all) {

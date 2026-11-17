@@ -26,9 +26,10 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 	r.RegisterHarness(Opencode{})
 	r.RegisterHarness(Codex{})
 	r.RegisterHarness(Omp{})
+	r.RegisterHarness(ClaudeCode{})
 	for _, ok := range [][2]string{
 		{"repository", "gitlab"}, {"repository", "github"}, {"provisioner", "kubernetes"},
-		{"harness", "opencode"}, {"harness", "codex"}, {"harness", "omp"},
+		{"harness", "opencode"}, {"harness", "codex"}, {"harness", "omp"}, {"harness", "claude-code"},
 	} {
 		if !r.Valid(ok[0], ok[1]) {
 			t.Errorf("%s/%s not valid", ok[0], ok[1])
@@ -38,8 +39,8 @@ func TestRegistryValidAndDescriptors(t *testing.T) {
 		t.Error("the provider port was removed (harness-owned auth); nothing may register it")
 	}
 	ds := r.Descriptors()
-	if len(ds) != 6 {
-		t.Fatalf("descriptors = %d, want 6", len(ds))
+	if len(ds) != 7 {
+		t.Fatalf("descriptors = %d, want 7", len(ds))
 	}
 	// Secret fields are flagged so the UI renders write-only inputs.
 	for _, d := range ds {
@@ -65,6 +66,7 @@ func TestHarnessOptionsMatchTheirHarnesses(t *testing.T) {
 	r.RegisterHarness(Opencode{})
 	r.RegisterHarness(Codex{})
 	r.RegisterHarness(Omp{})
+	r.RegisterHarness(ClaudeCode{})
 	takes := func(kind string) bool {
 		h, err := r.harnesses[kind].New(Config{}, fake.NewEnvProvisioner())
 		if err != nil {
@@ -431,6 +433,7 @@ func TestHarnessEditorExtensions(t *testing.T) {
 		{Codex{}, []string{"openai.chatgpt"}},
 		{Opencode{}, []string{"sst-dev.opencode"}},
 		{Omp{}, nil},
+		{ClaudeCode{}, []string{"Anthropic.claude-code"}},
 	} {
 		h, err := c.kind.New(Config{}, nil)
 		if err != nil {

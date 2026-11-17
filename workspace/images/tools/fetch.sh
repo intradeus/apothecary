@@ -8,11 +8,11 @@ out=${1:?usage: fetch.sh <out-dir>}
 case "${TARGETARCH:-$(uname -m)}" in
   # x64 takes the *-baseline builds: no AVX2 requirement (what opencode's own
   # npm installer falls back to on such CPUs); arm64 has no such split.
-  amd64|x86_64)  oc=x64-baseline; ocm=x64-baseline-musl; cx=x86_64;  omp=x64;   cs=amd64 ;;
-  arm64|aarch64) oc=arm64;        ocm=arm64-musl;        cx=aarch64; omp=arm64; cs=arm64 ;;
+  amd64|x86_64)  oc=x64-baseline; ocm=x64-baseline-musl; cx=x86_64;  omp=x64;   cc=x64;   cs=amd64 ;;
+  arm64|aarch64) oc=arm64;        ocm=arm64-musl;        cx=aarch64; omp=arm64; cc=arm64; cs=arm64 ;;
   *) echo "fetch.sh: unsupported architecture ${TARGETARCH:-$(uname -m)}" >&2; exit 1 ;;
 esac
-: "${OPENCODE_VERSION:?}" "${CODEX_VERSION:?}" "${OMP_VERSION:?}" "${CODE_SERVER_VERSION:?}"
+: "${OPENCODE_VERSION:?}" "${CODEX_VERSION:?}" "${OMP_VERSION:?}" "${CLAUDE_AGENT_ACP_VERSION:?}" "${CODE_SERVER_VERSION:?}"
 
 mkdir -p "$out/gnu/bin" "$out/gnu/libexec" "$out/musl/bin" "$out/musl/libexec" "$out/musl/lib"
 tmp=$(mktemp -d)
@@ -54,6 +54,23 @@ for a in "omp-linux-$omp:$out/gnu/bin/omp" "omp-linux-musl-$omp:$out/musl/libexe
   get "$omp_base/$asset" "$tmp/$asset"
   (cd "$tmp" && grep " $asset\$" SHA256SUMS.txt | sha256sum -c -)
   install -m 0755 "$tmp/$asset" "$dest"
+done
+
+# claude-agent-acp: one archive per libc, each holding the bun-built bridge
+# and the claude CLI it runs (the wrappers point the one at the other). glibc
+# takes claude straight onto PATH; the rest sits behind a wrapper.
+cc_base=$gh/agentclientprotocol/claude-agent-acp/releases/download/v$CLAUDE_AGENT_ACP_VERSION
+for a in "linux-$cc:$out/gnu/bin:$out/gnu/libexec" "linux-$cc-musl:$out/musl/libexec:$out/musl/libexec"; do
+  asset=${a%%:*}; rest=${a#*:}; cli=${rest%%:*}; acp=${rest#*:}
+  get "$cc_base/claude-agent-acp-$asset.tar.gz" "$tmp/cc.tgz"
+  mkdir -p "$tmp/cc"
+  tar -xzf "$tmp/cc.tgz" -C "$tmp/cc"
+  for f in claude claude-agent-acp; do
+    [ -f "$tmp/cc/$f" ] || { echo "fetch.sh: claude-agent-acp-$asset.tar.gz holds no $f" >&2; exit 1; }
+  done
+  install -m 0755 "$tmp/cc/claude" "$cli/claude"
+  install -m 0755 "$tmp/cc/claude-agent-acp" "$acp/claude-agent-acp"
+  rm -rf "$tmp/cc" "$tmp/cc.tgz"
 done
 
 # code-server: the standalone tree, which bundles its own node (glibc only —

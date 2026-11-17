@@ -68,9 +68,9 @@ query. Between the start and the end, it does whatever your flow says.
   about the code without touching the run.
 - **From your machine.** Forward a run's ports, `ssh` in, or open it in
   VS Code, all through the one HTTPS address.
-- **Harnesses and models.** opencode, codex or omp. Model credentials (API
-  keys or subscription logins) live under *Providers*. A **skills** library,
-  grouped into skillsets, is installed per run.
+- **Harnesses and models.** opencode, codex, omp or Claude Code. Model
+  credentials (API keys or subscription logins) live under *Providers*. A
+  **skills** library, grouped into skillsets, is installed per run.
 - **Several repositories per workshop**, one merge request per repository
   changed. **GitHub or GitLab**.
 - **A browser per workshop**: agents drive it to check the app they built
@@ -198,7 +198,7 @@ k3d cluster.
 
    ```sh
    apothecary login https://apothecary.example.com   # approve in the browser
-   apothecary ssh-config                             # once: ssh <workspace>.apothecary
+   apothecary ssh-config                             # once: a key, registered; ssh <workspace>.apothecary
    ```
 
 To upgrade, run `helm upgrade` with the new `--version`, then
@@ -219,7 +219,7 @@ Everything is configured in the UI and stored encrypted in the database.
      - GitHub: a PAT with `repo`, or fine-grained Contents and Pull
        requests read/write.
      - GitLab: a PAT with `api`, Developer or above.
-   - **Harness:** opencode, codex or omp.
+   - **Harness:** opencode, codex, omp or Claude Code.
    - **Ticket source** (optional): Jira, GitHub Issues or GitLab Issues; see
      [docs/ticket-sources.md](docs/ticket-sources.md).
 

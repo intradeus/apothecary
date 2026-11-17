@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // A shell on a PTY: it runs in the repo, the window size the client asked
@@ -39,8 +41,10 @@ func TestSSHShellOnAPTY(t *testing.T) {
 	if !strings.Contains(out, repo) || !strings.Contains(out, "24 80") {
 		t.Errorf("shell output lacks the repo or the size:\n%s", out)
 	}
-	if err := ses.WindowChange(30, 100); err != nil {
-		t.Fatal(err)
+	// Asked with a reply, which the server sends once the pty is resized: a
+	// bare WindowChange races the next line of input to the shell.
+	if ok, err := ses.SendRequest("window-change", true, ssh.Marshal(winchReq{Cols: 100, Rows: 30})); err != nil || !ok {
+		t.Fatalf("window change = %v, %v", ok, err)
 	}
 	_, _ = io.WriteString(stdin, "stty size; echo marker-$((40+3))\n")
 	if out := read("marker-43"); !strings.Contains(out, "30 100") {
