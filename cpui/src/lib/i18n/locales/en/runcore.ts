@@ -321,6 +321,31 @@ export default {
 	'run.files.readError': 'This file could not be read.',
 	'run.files.folderError': 'Could not list {path}.',
 	'run.files.binary': 'Binary file · {size}',
+	'run.files.goTo': 'Go to path…',
+	'run.files.backToCheckout': 'Back to the checkout',
+	'run.files.viewer': 'Contents of {path}',
+	'run.files.deleted': 'Deleted from the workspace: this is its last content.',
+	'run.files.gone': 'This file is no longer in the workspace.',
+	'run.files.closeTab': 'Close tab',
+	'run.files.notFound': '{path} is not in the workspace.',
+	'run.files.predates': 'This workspace predates opening linked paths: restart or rebuild it.',
+	'run.files.noWorkspace': 'The workspace is gone: {path} cannot be opened.',
+
+	// Files: the tab strip and Go to path
+	'run.files.tabs.aria': 'Open files',
+	'run.files.tabs.close': 'Close {name}',
+	'run.files.tabs.changed': 'changed',
+	'run.files.tabs.deleted': 'deleted',
+	'run.files.tabs.hint': 'Drag or Alt+Shift+←/→ to move; middle-click to close',
+	'run.files.goto.title': 'Go to path',
+	'run.files.goto.label': 'Path',
+	'run.files.goto.help': 'An absolute path, or one under ~. Tab completes; Enter opens.',
+	'run.files.goto.absolute': 'Start with / or ~.',
+	'run.files.goto.entries': 'In this folder',
+	'run.files.goto.none': 'Nothing here starts with that.',
+	'run.files.goto.predates':
+		'This workspace predates opening paths outside the checkouts: restart or rebuild it.',
+	'run.files.goto.open': 'Open',
 
 	// Terminal
 	'run.terminal.connected': 'connected',
@@ -357,6 +382,20 @@ export default {
 	'run.composer.attach': 'Attach',
 	'run.composer.send': 'Send',
 	'run.composer.sendTitle': 'Delivered when the agent finishes its current turn',
+
+	// Annotations (lines from the Files viewer, on their way into a chat)
+	'run.annotate.noTarget': 'Take over the agent or open Ask to send this to a chat',
+	'run.annotate.comment': 'Comment on {ref}',
+	'run.annotate.placeholder': 'Say what to do about these lines…',
+	'run.annotate.toSession': 'Send to Session',
+	'run.annotate.toAsk': 'Send to Ask',
+	'run.annotate.cancel': 'Cancel',
+	'run.annotate.lines_one': '{count} line',
+	'run.annotate.lines_other': '{count} lines',
+	'run.annotate.show': 'Show the lines of {ref}',
+	'run.annotate.hide': 'Hide the lines of {ref}',
+	'run.annotate.remove': 'Remove {ref}',
+	'run.annotate.chips': 'Lines to send',
 
 	// Runs list / table
 	'run.row.untitled': 'Untitled run',

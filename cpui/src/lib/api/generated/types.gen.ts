@@ -2228,6 +2228,7 @@ export type WorkspaceDiff = {
 export type WorkspaceEntry = {
 	dir: boolean;
 	ignored?: boolean;
+	mtime?: string;
 	name: string;
 	path: string;
 	size?: number;
@@ -2236,6 +2237,7 @@ export type WorkspaceEntry = {
 export type WorkspaceFile = {
 	binary: boolean;
 	content: string;
+	mtime: string;
 	path: string;
 	size: number;
 	truncated: boolean;
@@ -2246,6 +2248,35 @@ export type WorkspaceLog = {
 	end: number;
 	size: number;
 	start: number;
+};
+
+export type WorkspacePathRef = {
+	abs?: string;
+	path?: string;
+	repo?: string;
+};
+
+export type WorkspacePathStat = {
+	dir: boolean;
+	error?: string;
+	exists: boolean;
+	mtime: string;
+	size: number;
+};
+
+export type WorkspaceResolvedPath = {
+	abs?: string;
+	dir: boolean;
+	path?: string;
+	repo?: string;
+};
+
+export type WorkspaceStatRequest = {
+	items: Array<WorkspacePathRef> | null;
+};
+
+export type WorkspaceStatResponse = {
+	items: Array<WorkspacePathStat> | null;
 };
 
 export type ListActionsData = {
@@ -9368,6 +9399,92 @@ export type GetWorkspaceFileResponses = {
 
 export type GetWorkspaceFileResponse = GetWorkspaceFileResponses[keyof GetWorkspaceFileResponses];
 
+export type GetWorkspacePathFileData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * absolute file, or ~/… under the remote user's home
+		 */
+		path?: string;
+	};
+	url: '/api/runs/{id}/workspace/path/file';
+};
+
+export type GetWorkspacePathFileErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspacePathFileResponses = {
+	/**
+	 * OK
+	 */
+	200: WorkspaceFile;
+};
+
+export type GetWorkspacePathFileResponse =
+	GetWorkspacePathFileResponses[keyof GetWorkspacePathFileResponses];
+
+export type GetWorkspacePathTreeData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * absolute directory, or ~ / ~/… for the remote user's home
+		 */
+		path?: string;
+	};
+	url: '/api/runs/{id}/workspace/path/tree';
+};
+
+export type GetWorkspacePathTreeErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkspacePathTreeResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<WorkspaceEntry> | null;
+};
+
+export type GetWorkspacePathTreeResponse =
+	GetWorkspacePathTreeResponses[keyof GetWorkspacePathTreeResponses];
+
 export type GetWorkspaceReposData = {
 	body?: never;
 	path: {
@@ -9405,6 +9522,95 @@ export type GetWorkspaceReposResponses = {
 
 export type GetWorkspaceReposResponse =
 	GetWorkspaceReposResponses[keyof GetWorkspaceReposResponses];
+
+export type ResolveWorkspacePathData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * repo-relative, absolute or ~/… path
+		 */
+		path?: string;
+		/**
+		 * checkout tried first (default: the primary)
+		 */
+		repo?: string;
+	};
+	url: '/api/runs/{id}/workspace/resolve';
+};
+
+export type ResolveWorkspacePathErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ResolveWorkspacePathResponses = {
+	/**
+	 * OK
+	 */
+	200: WorkspaceResolvedPath;
+};
+
+export type ResolveWorkspacePathResponse =
+	ResolveWorkspacePathResponses[keyof ResolveWorkspacePathResponses];
+
+export type StatWorkspacePathsData = {
+	body: WorkspaceStatRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/workspace/stat';
+};
+
+export type StatWorkspacePathsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StatWorkspacePathsResponses = {
+	/**
+	 * OK
+	 */
+	200: WorkspaceStatResponse;
+};
+
+export type StatWorkspacePathsResponse =
+	StatWorkspacePathsResponses[keyof StatWorkspacePathsResponses];
 
 export type GetWorkspaceTreeData = {
 	body?: never;

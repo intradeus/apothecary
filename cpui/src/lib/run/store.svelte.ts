@@ -32,6 +32,8 @@ import { toast } from '$lib/ui/toast.svelte';
 import { t } from '$lib/i18n/index.svelte';
 import { applyDelta, emptyLive, pruneLive, type LiveState } from '$lib/run/transcriptItems';
 import { currentStage, envLinks, pingsOf, totals, workingSince, type StageDef } from './derive';
+import { ComposerRegistry } from './composerTarget.svelte';
+import { OpenFiles } from './openFiles.svelte';
 
 /** How long the stream's messages gather before they land: about a frame. */
 export const STREAM_BATCH_MS = 16;
@@ -85,6 +87,10 @@ export class RunStore {
 	phasesNudgeDismissedAt = $state(-1);
 	/** The Egress view's rule filter (the banner opens it on held hosts). */
 	egressRule = $state<'' | EgressStatus>('');
+	/** The chats an annotation from the Files viewer can go to. */
+	readonly composers = new ComposerRegistry();
+	/** The Files pane's tabs and tree, kept per run. */
+	readonly files: OpenFiles;
 
 	// Plain counters: polls read them, nothing renders them.
 	#portUsers = 0;
@@ -102,6 +108,7 @@ export class RunStore {
 
 	constructor(runId: string) {
 		this.runId = runId;
+		this.files = new OpenFiles(runId);
 	}
 
 	readonly terminal = $derived(this.run !== null && isTerminal(this.run.state));
@@ -211,12 +218,14 @@ export class RunStore {
 			(ev) => this.#receive({ ev }),
 			(d) => this.#receive({ d })
 		);
+		const stopFiles = this.files.start(() => this.hasWorkspace);
 
 		return () => {
 			timers.forEach(clearInterval);
 			clearTimeout(this.#inboxTimer);
 			this.#inbox = [];
 			stop();
+			stopFiles();
 		};
 	}
 

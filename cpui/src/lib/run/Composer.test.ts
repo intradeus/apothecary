@@ -1,10 +1,15 @@
 import { createEvent, fireEvent, render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { tick } from 'svelte';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { session } from '$lib/app/session.svelte';
+import type { Me } from '$lib/domain';
 import { aHold, settled } from '$test/fixtures/run-components';
 import { aFile } from '$test/fixtures/run.svelte';
 import { deferred } from '$test/helpers';
+import { makeAnnotation } from './annotation';
+import { ComposerRegistry } from './composerTarget.svelte';
 import Composer from './Composer.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -22,11 +27,12 @@ function paste(...files: File[]) {
 const box = () => screen.getByRole('textbox', { name: 'Message the agent' });
 const stopNow = () => screen.queryByRole('checkbox', { name: 'Stop the agent now' });
 const sendBtn = () => screen.getByRole('button', { name: 'Send' });
+const base = () => ({ runId: 'r1', composers: new ComposerRegistry() });
 
 function held(over: Partial<Parameters<typeof render<typeof Composer>>[1]> = {}) {
 	const onsent = vi.fn();
 	const onfailed = vi.fn();
-	render(Composer, { runId: 'r1', onsent, onfailed, hold: aHold(), ...over });
+	render(Composer, { ...base(), onsent, onfailed, hold: aHold(), ...over });
 	return { onsent, onfailed };
 }
 
@@ -41,7 +47,7 @@ describe('Composer', () => {
 
 	describe('before a take-over', () => {
 		it('is only the Take over button, stopping the agent by default', () => {
-			render(Composer, { runId: 'r1', onsent: vi.fn() });
+			render(Composer, { ...base(), onsent: vi.fn() });
 
 			expect(screen.getByText('Take over to talk to the agent')).toBeInTheDocument();
 			expect(screen.getByRole('button', { name: 'Take over' })).toBeEnabled();
@@ -54,7 +60,7 @@ describe('Composer', () => {
 		it('holds the button and the box while the take-over is on its way', async () => {
 			const taking = deferred<boolean>();
 			const ontakeover = vi.fn(() => taking.promise);
-			render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+			render(Composer, { ...base(), onsent: vi.fn(), ontakeover });
 			const btn = screen.getByRole('button', { name: 'Take over' });
 
 			await userEvent.click(btn);
@@ -70,7 +76,7 @@ describe('Composer', () => {
 
 		it('takes over passively with the box unchecked', async () => {
 			const ontakeover = vi.fn(async () => true);
-			render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+			render(Composer, { ...base(), onsent: vi.fn(), ontakeover });
 
 			await userEvent.click(stopNow()!);
 			expect(stopNow()).not.toBeChecked();
@@ -80,7 +86,7 @@ describe('Composer', () => {
 
 		it('stops the agent again on the next take-over, after a passive one is released', async () => {
 			const ontakeover = vi.fn(async () => true);
-			const { rerender } = render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+			const { rerender } = render(Composer, { ...base(), onsent: vi.fn(), ontakeover });
 			await userEvent.click(stopNow()!);
 			await userEvent.click(screen.getByRole('button', { name: 'Take over' }));
 			expect(ontakeover).toHaveBeenLastCalledWith(false);
@@ -94,7 +100,7 @@ describe('Composer', () => {
 
 		it('offers the button again when a take-over is refused', async () => {
 			const ontakeover = vi.fn(async () => false);
-			render(Composer, { runId: 'r1', onsent: vi.fn(), ontakeover });
+			render(Composer, { ...base(), onsent: vi.fn(), ontakeover });
 			const btn = screen.getByRole('button', { name: 'Take over' });
 
 			await userEvent.click(btn);
@@ -123,7 +129,7 @@ describe('Composer', () => {
 
 		it('counts no messages until there is one, then one in the singular', async () => {
 			const { rerender } = render(Composer, {
-				runId: 'r1',
+				...base(),
 				onsent: vi.fn(),
 				hold: aHold({ messages: 0 })
 			});
@@ -137,7 +143,7 @@ describe('Composer', () => {
 			const since = '2026-10-31T12:00:00Z';
 			const start = new Date(since).getTime();
 			const { rerender } = render(Composer, {
-				runId: 'r1',
+				...base(),
 				onsent: vi.fn(),
 				hold: aHold({ since }),
 				now: start + 9_000
@@ -279,7 +285,7 @@ describe('Composer', () => {
 
 		it('survives a refusal without an onfailed', async () => {
 			vi.mocked(api.runs.sendMessage).mockRejectedValue(new Error('nope'));
-			render(Composer, { runId: 'r1', onsent: vi.fn(), hold: aHold() });
+			render(Composer, { ...base(), onsent: vi.fn(), hold: aHold() });
 
 			await userEvent.type(box(), 'go on{Enter}');
 
@@ -400,6 +406,123 @@ describe('Composer', () => {
 			await userEvent.type(box(), 'next');
 			expect(box()).toHaveValue('next');
 			expect(screen.getByRole('button', { name: /Attach$/ })).toBeEnabled();
+		});
+	});
+
+	describe('annotations', () => {
+		const ME = 'u1';
+		const chips = () => screen.queryByRole('group', { name: 'Lines to send' });
+		const comments = () =>
+			screen.getAllByRole<HTMLInputElement>('textbox', { name: /^Comment on/ }).map((e) => e.value);
+		const QUOTED = '`run.go:3-4`\n\n```go\na\nb\n```';
+
+		beforeEach(() => {
+			session.me = { user: { id: ME, handle: 'me', name: 'Me', admin: false } } as Me;
+		});
+		afterEach(() => {
+			session.me = null;
+		});
+
+		/** Held by the signed-in user, unless `over` says otherwise. */
+		function mine(over: Partial<Parameters<typeof render<typeof Composer>>[1]> = {}) {
+			const props = { ...base(), onsent: vi.fn(), onfailed: vi.fn(), hold: aHold({ userId: ME }) };
+			const view = render(Composer, { ...props, ...over });
+			return { ...view, ...props };
+		}
+		async function land(composers: ComposerRegistry, comment = 'Why?') {
+			composers.active!.add(
+				makeAnnotation({ repo: '', path: 'run.go' }, 3, 4, 'a\nb', comment, [])
+			);
+			await tick();
+		}
+
+		it('takes a chip while held by you, editable, and sends it ahead of the words', async () => {
+			const { composers, onsent } = mine();
+			expect(composers.active?.kind).toBe('hold');
+			await land(composers);
+			expect(chips()).toBeInTheDocument();
+
+			const comment = screen.getByRole('textbox', { name: 'Comment on run.go:3-4' });
+			await userEvent.clear(comment);
+			await userEvent.type(comment, 'Drop these');
+			await userEvent.type(box(), 'then go on{Enter}');
+
+			const text = `${QUOTED}\n\nDrop these\n\nthen go on`;
+			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', text, []);
+			expect(onsent).toHaveBeenCalledExactlyOnceWith(text);
+			expect(chips()).not.toBeInTheDocument();
+		});
+
+		it('sends chips alone', async () => {
+			const { composers } = mine();
+			expect(sendBtn()).toBeDisabled();
+			await land(composers, '');
+
+			await userEvent.click(sendBtn());
+			expect(api.runs.sendMessage).toHaveBeenCalledExactlyOnceWith('r1', QUOTED, []);
+		});
+
+		it('drops a removed chip', async () => {
+			const { composers } = mine();
+			await land(composers);
+			await userEvent.click(screen.getByRole('button', { name: 'Remove run.go:3-4' }));
+
+			expect(chips()).not.toBeInTheDocument();
+			expect(sendBtn()).toBeDisabled();
+		});
+
+		it('gives the chips back with the words when refused, ahead of any landed since', async () => {
+			const leaving = deferred<void>();
+			vi.mocked(api.runs.sendMessage).mockReturnValue(leaving.promise as never);
+			const { composers, onfailed } = mine();
+			await land(composers, 'first');
+			await userEvent.type(box(), 'go on{Enter}');
+			expect(chips()).not.toBeInTheDocument();
+			await land(composers, 'second');
+
+			leaving.reject(new Error('the hold has ended'));
+
+			await vi.waitFor(() => expect(box()).toHaveValue('go on'));
+			expect(comments()).toEqual(['first', 'second']);
+			expect(onfailed).toHaveBeenCalledExactlyOnceWith(`${QUOTED}\n\nfirst\n\ngo on`);
+			expect(screen.getByText('the hold has ended')).toBeInTheDocument();
+		});
+
+		it('keeps the chips when the files cannot go up', async () => {
+			vi.mocked(api.files.upload).mockRejectedValue(new Error('too big for the server'));
+			const { composers } = mine();
+			await settled();
+			await land(composers);
+			paste(shot());
+			await userEvent.click(sendBtn());
+
+			expect(await screen.findByText('too big for the server')).toBeInTheDocument();
+			expect(api.runs.sendMessage).not.toHaveBeenCalled();
+			expect(comments()).toEqual(['Why?']);
+		});
+
+		it('is no target while held by someone else, before a hold, or on a hold with no user', () => {
+			for (const hold of [aHold({ userId: 'u2' }), undefined, aHold()]) {
+				const { composers, unmount } = mine({ hold });
+				expect(composers.active).toBeNull();
+				unmount();
+			}
+		});
+
+		it('is no target while signed out', () => {
+			session.me = null;
+			expect(mine().composers.active).toBeNull();
+		});
+
+		it('stops being the target on release and on unmount', async () => {
+			const { composers, rerender, unmount } = mine();
+			await rerender({ hold: undefined });
+			expect(composers.active).toBeNull();
+
+			await rerender({ hold: aHold({ userId: ME }) });
+			expect(composers.active?.kind).toBe('hold');
+			unmount();
+			expect(composers.active).toBeNull();
 		});
 	});
 

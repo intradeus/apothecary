@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { AgentToolCall } from '$lib/domain';
 import { aToolCall } from '$test/fixtures/run-components';
 import ToolCalls from './ToolCalls.svelte';
@@ -305,6 +305,64 @@ describe('ToolCalls', () => {
 			await rerender({ calls: calls(2) });
 
 			expect(screen.getByText('Call 1')).toBeInTheDocument();
+		});
+	});
+
+	describe('paths', () => {
+		const where = 'internal/run/run.go:336';
+
+		it('makes where a call acted a button beside its toggle', async () => {
+			const onpath = vi.fn();
+			render(ToolCalls, { calls: [aToolCall({ locations: [where] })], onpath });
+
+			await userEvent.click(screen.getByRole('button', { name: where }));
+			expect(onpath).toHaveBeenCalledExactlyOnceWith({ path: 'internal/run/run.go', from: 336 });
+			const toggle = screen.getByRole('button', { expanded: false });
+			expect(toggle).not.toHaveTextContent(where);
+
+			await userEvent.click(toggle);
+			expect(toggle).toHaveAttribute('aria-expanded', 'true');
+			expect(onpath).toHaveBeenCalledOnce();
+		});
+
+		it('keeps the counts and the in-flight word in a linked row', () => {
+			render(ToolCalls, {
+				calls: [
+					aToolCall({
+						kind: 'edit',
+						status: 'in_progress',
+						locations: ['a.go'],
+						diffs: [{ path: 'a.go', oldText: 'x', newText: 'y\nz' }]
+					})
+				],
+				onpath: vi.fn()
+			});
+			expect(screen.getByText('+2')).toBeInTheDocument();
+			expect(screen.getByText('in progress')).toBeInTheDocument();
+		});
+
+		it('makes the paths in a call’s input and output buttons, the text kept', async () => {
+			const onpath = vi.fn();
+			const input = `sed -n 1,9p ${where}`;
+			const output = 'ok: a/b.ts:4-9 and/or 1.2.3';
+			render(ToolCalls, { calls: [aToolCall({ input, output })], onpath });
+			await userEvent.click(rowOf(/Read/));
+
+			expect(screen.getByText('sed -n 1,9p', { exact: false }).textContent).toBe(input);
+			expect(screen.getByText('ok:', { exact: false }).textContent).toBe(output);
+			await userEvent.click(screen.getByRole('button', { name: where }));
+			expect(onpath).toHaveBeenLastCalledWith({ path: 'internal/run/run.go', from: 336 });
+			await userEvent.click(screen.getByRole('button', { name: 'a/b.ts:4-9' }));
+			expect(onpath).toHaveBeenLastCalledWith({ path: 'a/b.ts', from: 4, to: 9 });
+			expect(screen.queryByRole('button', { name: 'and/or' })).not.toBeInTheDocument();
+		});
+
+		it('links nothing without onpath', async () => {
+			render(ToolCalls, { calls: [aToolCall({ locations: [where], output: where })] });
+			await userEvent.click(rowOf(new RegExp(where)));
+
+			expect(rowOf(new RegExp(where))).toHaveAttribute('aria-expanded', 'true');
+			expect(screen.getAllByRole('button')).toHaveLength(1);
 		});
 	});
 });

@@ -1746,7 +1746,7 @@ describe('accounts', () => {
 });
 
 describe('the workspace', () => {
-	it('reads an entry and a file', () => {
+	it('reads an entry and a file, an absent mtime as unknown', () => {
 		expect(
 			map.toWorkspaceEntry(wire<Wire.WorkspaceEntry>({ name: 'a', path: 'a', dir: true }))
 		).toEqual({
@@ -1754,10 +1754,69 @@ describe('the workspace', () => {
 			path: 'a',
 			dir: true,
 			size: undefined,
-			ignored: false
+			ignored: false,
+			mtime: ''
 		});
-		const file = { path: 'a', size: 1, binary: false, truncated: true, content: 'c' };
+		expect(
+			map.toWorkspaceEntry(
+				wire<Wire.WorkspaceEntry>({
+					name: 'hosts',
+					path: '/etc/hosts',
+					dir: false,
+					size: 9,
+					mtime: '1700000000123456789'
+				})
+			)
+		).toMatchObject({ path: '/etc/hosts', size: 9, mtime: '1700000000123456789' });
+		const file = {
+			path: 'a',
+			size: 1,
+			binary: false,
+			truncated: true,
+			content: 'c',
+			mtime: '42'
+		};
 		expect(map.toWorkspaceFile(file)).toEqual(file);
+		expect(map.toWorkspaceFile(wire<Wire.WorkspaceFile>({ ...file, mtime: undefined }))).toEqual({
+			...file,
+			mtime: ''
+		});
+	});
+
+	it('reads a path stat, its error only when there is one', () => {
+		expect(map.toPathStat({ exists: true, dir: false, size: 3, mtime: '9', error: '' })).toEqual({
+			exists: true,
+			dir: false,
+			size: 3,
+			mtime: '9'
+		});
+		expect(
+			map.toPathStat(
+				wire<Wire.WorkspacePathStat>({
+					exists: false,
+					dir: false,
+					size: 0,
+					mtime: undefined,
+					error: 'permission denied'
+				})
+			)
+		).toEqual({ exists: false, dir: false, size: 0, mtime: '', error: 'permission denied' });
+	});
+
+	it('reads a resolved path as a checkout location or an absolute one', () => {
+		expect(map.toResolvedPath({ repo: 'lib', path: 'a/b.go', dir: false })).toEqual({
+			loc: { repo: 'lib', path: 'a/b.go' },
+			dir: false
+		});
+		// The primary is repo '' (omitted on the wire), its root path ''.
+		expect(map.toResolvedPath({ dir: true })).toEqual({
+			loc: { repo: '', path: '' },
+			dir: true
+		});
+		expect(map.toResolvedPath({ abs: '/etc/hosts', dir: false })).toEqual({
+			loc: { abs: '/etc/hosts' },
+			dir: false
+		});
 	});
 
 	it.each([

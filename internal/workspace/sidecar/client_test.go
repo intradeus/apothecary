@@ -152,7 +152,7 @@ func TestWorkspaceCallsEscapeTheirQuery(t *testing.T) {
 	ctx := context.Background()
 	const odd = "dir with spaces/a&b=c.go"
 	t.Run("tree", func(t *testing.T) {
-		c, rec := recording(t, `[{"name":"a","path":"a","dir":true}]`)
+		c, rec := recording(t, `[{"name":"a","path":"a","dir":true,"mtime":"1700000000123456789"}]`)
 		out, err := c.Tree(ctx, "repo", odd)
 		if err != nil {
 			t.Fatal(err)
@@ -160,18 +160,76 @@ func TestWorkspaceCallsEscapeTheirQuery(t *testing.T) {
 		if rec.path != "/fs/tree" || rec.query.Get("path") != odd || rec.query.Get("repo") != "repo" {
 			t.Errorf("request = %s %v", rec.path, rec.query)
 		}
-		if len(out) != 1 || !out[0].Dir {
+		if len(out) != 1 || !out[0].Dir || out[0].Mtime != "1700000000123456789" {
 			t.Errorf("tree = %+v", out)
 		}
 	})
 	t.Run("file", func(t *testing.T) {
-		c, rec := recording(t, `{"path":"a","size":3,"content":"abc"}`)
+		c, rec := recording(t, `{"path":"a","size":3,"content":"abc","mtime":"42"}`)
 		out, err := c.File(ctx, "lib", odd)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if rec.path != "/fs/file" || rec.query.Get("path") != odd || rec.query.Get("repo") != "lib" || out.Content != "abc" {
+		if rec.path != "/fs/file" || rec.query.Get("path") != odd || rec.query.Get("repo") != "lib" || out.Content != "abc" || out.Mtime != "42" {
 			t.Errorf("request = %s %v, %+v", rec.path, rec.query, out)
+		}
+	})
+	t.Run("abs tree", func(t *testing.T) {
+		c, rec := recording(t, `[{"name":"hosts","path":"/etc/hosts","size":9,"mtime":"7"}]`)
+		out, err := c.AbsTree(ctx, "~/"+odd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.method != "GET" || rec.path != "/fs/abs/tree" || rec.query.Get("path") != "~/"+odd || rec.query.Has("repo") {
+			t.Errorf("request = %s %s %v", rec.method, rec.path, rec.query)
+		}
+		if len(out) != 1 || out[0].Path != "/etc/hosts" || out[0].Size != 9 || out[0].Mtime != "7" {
+			t.Errorf("tree = %+v", out)
+		}
+	})
+	t.Run("abs file", func(t *testing.T) {
+		c, rec := recording(t, `{"path":"/etc/hosts","size":9,"binary":false,"truncated":true,"content":"127.0.0.1","mtime":"7"}`)
+		out, err := c.AbsFile(ctx, "/etc/../etc/hosts")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.path != "/fs/abs/file" || rec.query.Get("path") != "/etc/../etc/hosts" {
+			t.Errorf("request = %s %v", rec.path, rec.query)
+		}
+		if out != (File{Path: "/etc/hosts", Size: 9, Truncated: true, Content: "127.0.0.1", Mtime: "7"}) {
+			t.Errorf("file = %+v", out)
+		}
+	})
+	t.Run("stat", func(t *testing.T) {
+		c, rec := recording(t, `{"items":[{"exists":true,"dir":false,"size":3,"mtime":"9"},{"exists":false,"dir":false,"size":0,"mtime":""},{"exists":false,"dir":false,"size":0,"mtime":"","error":"permission denied"}]}`)
+		out, err := c.Stat(ctx, []StatItem{{Path: "a.go"}, {Repo: "lib", Path: "gone"}, {Abs: "/root/x"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.method != "POST" || rec.path != "/fs/stat" || rec.ctype != "application/json" ||
+			rec.body != `{"items":[{"path":"a.go"},{"repo":"lib","path":"gone"},{"abs":"/root/x"}]}` {
+			t.Errorf("request = %s %s %s", rec.method, rec.path, rec.body)
+		}
+		want := []StatResult{{Exists: true, Size: 3, Mtime: "9"}, {}, {Error: "permission denied"}}
+		if len(out) != 3 || out[0] != want[0] || out[1] != want[1] || out[2] != want[2] {
+			t.Errorf("stat = %+v", out)
+		}
+	})
+	t.Run("resolve", func(t *testing.T) {
+		c, rec := recording(t, `{"repo":"lib","path":"a/b.go","dir":false}`)
+		out, err := c.Resolve(ctx, "repo", odd)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if rec.path != "/fs/resolve" || rec.query.Get("path") != odd || rec.query.Get("repo") != "repo" {
+			t.Errorf("request = %s %v", rec.path, rec.query)
+		}
+		if out != (Resolved{Repo: "lib", Path: "a/b.go"}) {
+			t.Errorf("resolved = %+v", out)
+		}
+		c, _ = recording(t, `{"abs":"/etc/hosts","dir":true}`)
+		if out, err := c.Resolve(ctx, "", "/etc/hosts"); err != nil || out != (Resolved{Abs: "/etc/hosts", Dir: true}) {
+			t.Errorf("absolute = %+v, %v", out, err)
 		}
 	})
 	t.Run("changes", func(t *testing.T) {
@@ -222,6 +280,28 @@ func TestErrorAnswers(t *testing.T) {
 		var e *Error
 		if _, err := c.File(ctx, "", "x"); !errors.As(err, &e) || e.Msg != "no such file" {
 			t.Fatalf("err = %v", err)
+		}
+	})
+	// An old sidecar's mux answers an unknown route with a plain-text 404;
+	// the shim's own "not found" is JSON. Only the first is NoRoute.
+	t.Run("an unknown route", func(t *testing.T) {
+		c := serve(t, http.NotFound)
+		if _, err := c.Resolve(ctx, "", "a.go"); !IsNoRoute(err) || !IsStatus(err, http.StatusNotFound) {
+			t.Fatalf("err = %#v", err)
+		}
+		c = serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"no such file or directory"}`)
+		})
+		if _, err := c.Resolve(ctx, "", "a.go"); IsNoRoute(err) || !IsStatus(err, http.StatusNotFound) {
+			t.Fatalf("a missing file = %#v", err)
+		}
+		c = serve(t, func(w http.ResponseWriter, _ *http.Request) { http.Error(w, "plain", http.StatusBadRequest) })
+		if _, err := c.AbsFile(ctx, "x"); IsNoRoute(err) {
+			t.Fatalf("a plain 400 = %#v", err)
+		}
+		if IsNoRoute(errors.New("plain")) {
+			t.Fatal("a plain error is no sidecar answer")
 		}
 	})
 	t.Run("json without the field", func(t *testing.T) {

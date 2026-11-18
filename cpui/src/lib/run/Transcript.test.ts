@@ -5,6 +5,7 @@ import { fmtClock, fmtTime } from '$lib/core/format';
 import { aToolCall } from '$test/fixtures/run-components';
 import type { ChatItem } from './transcriptItems';
 import Transcript from './Transcript.svelte';
+import type { PathRef } from '$lib/core/paths';
 
 const AT = '2026-10-31T12:00:00Z';
 
@@ -21,7 +22,10 @@ const user = (text: string, over: Partial<Of<'user'>> = {}, key = text) =>
 const question = (over: Partial<Of<'question'>> = {}) =>
 	item('question', { pingId: 'p1', type: 'debug', question: 'Which DB?', options: [], ...over });
 
-function show(items: ChatItem[], props: { sending?: { text: string }[]; over?: boolean } = {}) {
+function show(
+	items: ChatItem[],
+	props: { sending?: { text: string }[]; over?: boolean; onpath?: (ref: PathRef) => void } = {}
+) {
 	const onlog = vi.fn();
 	const onanswer = vi.fn();
 	const view = render(Transcript, { items, onlog, onanswer, ...props });
@@ -153,6 +157,28 @@ describe('Transcript', () => {
 			const done = show([message('Written')]);
 			expect(done.container.querySelector('.caret')).not.toBeInTheDocument();
 		});
+
+		it('opens a file it names, with onpath', async () => {
+			const onpath = vi.fn();
+			show([message('Fixed in `internal/run/run.go:336`, see also a/b.ts:4-9.')], { onpath });
+
+			await userEvent.click(screen.getByRole('button', { name: 'internal/run/run.go:336' }));
+			expect(onpath).toHaveBeenCalledExactlyOnceWith({ path: 'internal/run/run.go', from: 336 });
+			await userEvent.click(screen.getByRole('button', { name: 'a/b.ts:4-9' }));
+			expect(onpath).toHaveBeenLastCalledWith({ path: 'a/b.ts', from: 4, to: 9 });
+		});
+
+		it('ignores a click beside its paths', async () => {
+			const onpath = vi.fn();
+			show([message('Fixed a/b.ts now')], { onpath });
+			await userEvent.click(screen.getByText(/Fixed/));
+			expect(onpath).not.toHaveBeenCalled();
+		});
+
+		it('leaves its paths text without onpath', () => {
+			show([message('Fixed in `internal/run/run.go:336`.')]);
+			expect(screen.queryByRole('button')).not.toBeInTheDocument();
+		});
 	});
 
 	describe('thinking', () => {
@@ -239,6 +265,15 @@ describe('Transcript', () => {
 
 			show([item('tools', { calls: four, live: false })]);
 			expect(screen.queryByText('Call 3')).not.toBeInTheDocument();
+		});
+
+		it('hands onpath on to its calls', async () => {
+			const onpath = vi.fn();
+			show([item('tools', { calls: [aToolCall({ locations: ['a/b.go:3'] })], live: false })], {
+				onpath
+			});
+			await userEvent.click(screen.getByRole('button', { name: 'a/b.go:3' }));
+			expect(onpath).toHaveBeenCalledWith({ path: 'a/b.go', from: 3 });
 		});
 	});
 
@@ -328,6 +363,13 @@ describe('Transcript', () => {
 
 			expect(screen.getByText('The agent asked')).toBeInTheDocument();
 			expect(screen.getByText('DB').tagName).toBe('STRONG');
+		});
+
+		it('opens a file it names, with onpath', async () => {
+			const onpath = vi.fn();
+			show([question({ question: 'Keep a/b.go:7?', answer: 'yes' })], { onpath });
+			await userEvent.click(screen.getByRole('button', { name: 'a/b.go:7' }));
+			expect(onpath).toHaveBeenCalledWith({ path: 'a/b.go', from: 7 });
 		});
 
 		it('lists its options until answered', () => {

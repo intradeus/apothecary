@@ -338,6 +338,12 @@ import type {
 	GetWorkspaceLogData,
 	GetWorkspaceLogErrors,
 	GetWorkspaceLogResponses,
+	GetWorkspacePathFileData,
+	GetWorkspacePathFileErrors,
+	GetWorkspacePathFileResponses,
+	GetWorkspacePathTreeData,
+	GetWorkspacePathTreeErrors,
+	GetWorkspacePathTreeResponses,
 	GetWorkspaceReposData,
 	GetWorkspaceReposErrors,
 	GetWorkspaceReposResponses,
@@ -530,6 +536,9 @@ import type {
 	ResetUserPasswordData,
 	ResetUserPasswordErrors,
 	ResetUserPasswordResponses,
+	ResolveWorkspacePathData,
+	ResolveWorkspacePathErrors,
+	ResolveWorkspacePathResponses,
 	RestartRunServiceData,
 	RestartRunServiceErrors,
 	RestartRunServiceResponses,
@@ -584,6 +593,9 @@ import type {
 	StartWorkshopTicketRunData,
 	StartWorkshopTicketRunErrors,
 	StartWorkshopTicketRunResponses,
+	StatWorkspacePathsData,
+	StatWorkspacePathsErrors,
+	StatWorkspacePathsResponses,
 	StopRunServiceData,
 	StopRunServiceErrors,
 	StopRunServiceResponses,
@@ -5384,6 +5396,64 @@ export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * One file anywhere in the workspace, by absolute or ~ path
+ *
+ * Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
+ */
+export const getWorkspacePathFile = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspacePathFileData, ThrowOnError>
+): RequestResult<GetWorkspacePathFileResponses, GetWorkspacePathFileErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetWorkspacePathFileResponses,
+		GetWorkspacePathFileErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/workspace/path/file',
+		...options
+	});
+
+/**
+ * One directory level anywhere in the workspace, by absolute or ~ path
+ *
+ * Read as the workspace's remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).
+ */
+export const getWorkspacePathTree = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkspacePathTreeData, ThrowOnError>
+): RequestResult<GetWorkspacePathTreeResponses, GetWorkspacePathTreeErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetWorkspacePathTreeResponses,
+		GetWorkspacePathTreeErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/workspace/path/tree',
+		...options
+	});
+
+/**
  * The run's checkouts (one per repository)
  */
 export const getWorkspaceRepos = <ThrowOnError extends boolean = false>(
@@ -5407,6 +5477,68 @@ export const getWorkspaceRepos = <ThrowOnError extends boolean = false>(
 			...options
 		}
 	);
+
+/**
+ * Where a path mentioned in the run lives: a checkout's file or an absolute one
+ *
+ * A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
+ */
+export const resolveWorkspacePath = <ThrowOnError extends boolean = false>(
+	options: Options<ResolveWorkspacePathData, ThrowOnError>
+): RequestResult<ResolveWorkspacePathResponses, ResolveWorkspacePathErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ResolveWorkspacePathResponses,
+		ResolveWorkspacePathErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/workspace/resolve',
+		...options
+	});
+
+/**
+ * Whether each of a batch of workspace paths exists, with its size and mtime
+ *
+ * What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.
+ */
+export const statWorkspacePaths = <ThrowOnError extends boolean = false>(
+	options: Options<StatWorkspacePathsData, ThrowOnError>
+): RequestResult<StatWorkspacePathsResponses, StatWorkspacePathsErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		StatWorkspacePathsResponses,
+		StatWorkspacePathsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/workspace/stat',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
 
 /**
  * One directory level of a run checkout

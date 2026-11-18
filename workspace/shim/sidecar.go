@@ -16,6 +16,10 @@ package main
 //	GET  /agent/events    NDJSON: buffered events after ?after=, then live
 //	GET  /fs/tree         one directory level (?path=)
 //	GET  /fs/file         one file's content (?path=)
+//	GET  /fs/abs/tree     one directory level by absolute or ~ path (?path=)
+//	GET  /fs/abs/file     one file's content by absolute or ~ path (?path=)
+//	POST /fs/stat         exists/dir/size/mtime for a batch of paths, per item
+//	GET  /fs/resolve      where a mentioned path lives (?path=&repo=)
 //	GET  /git/changes     the run's changes against ?base= (merge-base)
 //	GET  /git/diff        one file's unified diff (?base=&path=)
 //	GET  /term            WebSocket terminal (PTY) in the repo
@@ -28,7 +32,9 @@ package main
 // key the engine writes to /apothecary/ssh_door.pub.
 //
 // Every workspace route takes ?repo=<name> to address one of a multi-repo
-// run's additional checkouts (~/repos/<name>); absent = the primary.
+// run's additional checkouts (~/repos/<name>); absent = the primary. The
+// /fs/abs routes read as the remote user, anywhere it can: nothing is hidden
+// that its terminal could reach.
 //
 // The agent process lives as long as the sidecar does, which is as long as
 // the container: an engine restart neither kills a turn in flight nor loses
@@ -68,7 +74,10 @@ var errNoSuchRepo = errors.New("no such repository checkout")
 
 // root resolves a request's ?repo= to a checkout directory.
 func (s *sidecar) root(r *http.Request) (string, error) {
-	name := r.URL.Query().Get("repo")
+	return s.rootNamed(r.URL.Query().Get("repo"))
+}
+
+func (s *sidecar) rootNamed(name string) (string, error) {
 	if name == "" || name == "repo" {
 		return s.repo, nil
 	}
@@ -80,6 +89,25 @@ func (s *sidecar) root(r *http.Request) (string, error) {
 		return "", errNoSuchRepo
 	}
 	return dir, nil
+}
+
+// checkouts lists the primary (name "") first, then the additional
+// checkouts by name.
+func (s *sidecar) checkouts() []checkout {
+	out := []checkout{{dir: s.repo}}
+	if s.repos == "" {
+		return out
+	}
+	ents, _ := os.ReadDir(s.repos) // sorted by name
+	for _, e := range ents {
+		if e.Name() == "repo" {
+			continue // the primary's alias, never an additional checkout
+		}
+		if dir, err := s.rootNamed(e.Name()); err == nil {
+			out = append(out, checkout{name: e.Name(), dir: dir})
+		}
+	}
+	return out
 }
 
 var repoNameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
@@ -196,6 +224,10 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("GET /agent/events", s.agentEvents)
 	mux.HandleFunc("GET /fs/tree", s.fsTree)
 	mux.HandleFunc("GET /fs/file", s.fsFile)
+	mux.HandleFunc("GET /fs/abs/tree", s.fsAbsTree)
+	mux.HandleFunc("GET /fs/abs/file", s.fsAbsFile)
+	mux.HandleFunc("POST /fs/stat", s.fsStat)
+	mux.HandleFunc("GET /fs/resolve", s.fsResolve)
 	mux.HandleFunc("GET /git/changes", s.gitChanges)
 	mux.HandleFunc("GET /git/diff", s.gitDiff)
 	mux.HandleFunc("GET /term", s.terminal)
@@ -372,13 +404,76 @@ func (s *sidecar) fsFile(w http.ResponseWriter, r *http.Request) {
 	writeJSONResp(w, 200, f)
 }
 
+func (s *sidecar) fsAbsTree(w http.ResponseWriter, r *http.Request) {
+	ents, err := listAbsDir(r.URL.Query().Get("path"))
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	writeJSONResp(w, 200, ents)
+}
+
+func (s *sidecar) fsAbsFile(w http.ResponseWriter, r *http.Request) {
+	f, err := readAbsFile(r.URL.Query().Get("path"))
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	writeJSONResp(w, 200, f)
+}
+
+// fsStat answers each item on its own, in order: one unreadable or missing
+// path never fails the batch. os.Stat only, no git: the Files pane polls it.
+func (s *sidecar) fsStat(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Items []statItem `json:"items"`
+	}
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if len(req.Items) > maxStatItems {
+		writeErrResp(w, http.StatusBadRequest, fmt.Sprintf("at most %d items", maxStatItems))
+		return
+	}
+	out := make([]statResult, len(req.Items))
+	for i, it := range req.Items {
+		var full string
+		var err error
+		if it.Abs != "" {
+			full, err = absPath(it.Abs)
+		} else {
+			var root string
+			if root, err = s.rootNamed(it.Repo); err == nil {
+				full, err = repoPath(root, it.Path)
+			}
+		}
+		out[i] = statPath(full, err)
+	}
+	writeJSONResp(w, 200, map[string][]statResult{"items": out})
+}
+
+func (s *sidecar) fsResolve(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	res, err := resolvePath(s.checkouts(), q.Get("repo"), q.Get("path"))
+	if err != nil {
+		writeFSErr(w, err)
+		return
+	}
+	writeJSONResp(w, 200, res)
+}
+
+// writeFSErr maps a read's failure to its status. Something unreadable is
+// refused (403), never reported as the sidecar failing.
 func writeFSErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, errOutsideRepo):
+	case errors.Is(err, errOutsideRepo), errors.Is(err, errRelative),
+		errors.Is(err, errNotRegular), errors.Is(err, errIsDir):
 		writeErrResp(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, errNoSuchRepo):
 		writeErrResp(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, os.ErrPermission), errors.Is(err, errUnreadable):
+		writeErrResp(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, syscall.ENOTDIR):
 		writeErrResp(w, http.StatusNotFound, "no such file or directory")
 	default:
 		writeErrResp(w, http.StatusInternalServerError, err.Error())

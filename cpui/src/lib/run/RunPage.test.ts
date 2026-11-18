@@ -1,15 +1,18 @@
+import { EditorView } from '@codemirror/view';
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { goto } from '$app/navigation';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { ApiError } from '$lib/api/client';
 import { activeDesk } from '$lib/desk/active.svelte';
 import type { EgressDenial, Run, RunEvent, RunServices } from '$lib/domain';
 import { NEUTRAL_MIX, noise } from '$lib/ui/noiseState.svelte';
+import { toasts } from '$lib/ui/toast.svelte';
 import { aRun } from '$test/fixtures';
 import { aSample, settled } from '$test/fixtures/run-components';
-import { DESK_KEY, sizeDesk, tab, windows } from '$test/fixtures/desk';
-import { aLiveRun, anEvent, aRaise } from '$test/fixtures/run-views';
+import { sizeDesk, tab, windows } from '$test/fixtures/desk';
+import { aLiveRun, anAskMessage, anAskState, anEvent, aRaise } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
 import RunPage from './RunPage.svelte';
 import { STREAM_BATCH_MS } from './store.svelte';
@@ -85,9 +88,16 @@ const denied = (...hosts: string[]) =>
 const selected = (label: string) => expect(tab(label)).toHaveAttribute('aria-selected', 'true');
 const countOn = (label: string) => tab(label).textContent;
 
+beforeAll(() => {
+	// CodeMirror (the Files viewer) measures text; jsdom lays nothing out.
+	Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+	Range.prototype.getBoundingClientRect = () => new DOMRect();
+});
+
 beforeEach(() => {
 	vi.clearAllMocks();
-	localStorage.removeItem(DESK_KEY);
+	localStorage.clear();
+	toasts.list = [];
 	sizeDesk();
 	vi.mocked(api.runs.get).mockReset();
 	vi.mocked(api.runs.files).mockResolvedValue({ snapshots: [], attachments: [] } as never);
@@ -504,6 +514,146 @@ describe('RunPage', () => {
 			await userEvent.click(await pill());
 
 			selected('Session');
+		});
+	});
+
+	describe('a path a message names', () => {
+		const PATH = 'internal/run/run.go';
+		const said = (text: string) => anEvent(1, 'agent_message', { segment: 's', text });
+		const link = () => screen.findByRole('button', { name: `${PATH}:336` });
+		const toastTexts = () => toasts.list.map((x) => x.text);
+		const lines = Array.from({ length: 400 }, (_, i) => `line ${i + 1}`).join('\n');
+
+		beforeEach(() => {
+			vi.mocked(api.workspace.stat).mockResolvedValue([]);
+			vi.mocked(api.workspace.tree).mockResolvedValue([]);
+			vi.mocked(api.workspace.file).mockResolvedValue({
+				path: PATH,
+				size: 10,
+				binary: false,
+				truncated: false,
+				content: lines,
+				mtime: '1'
+			});
+		});
+
+		it('opens in Files at its line', async () => {
+			vi.mocked(api.workspace.resolve).mockResolvedValue({
+				loc: { repo: '', path: PATH },
+				dir: false
+			});
+			const { emit } = await setup();
+			await emit(said(`Fixed in \`${PATH}:336\`.`));
+
+			await userEvent.click(await link());
+
+			expect(api.workspace.resolve).toHaveBeenCalledExactlyOnceWith(aLiveRun().id, PATH);
+			selected('Files');
+			expect(await screen.findByRole('tab', { name: /run\.go/ })).toHaveAttribute(
+				'aria-selected',
+				'true'
+			);
+			const content = await screen.findByRole('textbox', { name: `Contents of ${PATH}` });
+			const view = EditorView.findFromDOM(content)!;
+			await waitFor(() => {
+				const sel = view.state.selection.main;
+				expect(view.state.doc.lineAt(sel.from).number).toBe(336);
+			});
+			expect(api.workspace.file).toHaveBeenCalledWith(aLiveRun().id, PATH, '');
+		});
+
+		it('opens a range, and a file without a line', async () => {
+			vi.mocked(api.workspace.resolve).mockResolvedValue({
+				loc: { repo: '', path: PATH },
+				dir: false
+			});
+			const { emit } = await setup();
+			await emit(said(`See ${PATH}:4-9 and \`${PATH}\`.`));
+
+			await userEvent.click(await screen.findByRole('button', { name: `${PATH}:4-9` }));
+			const view = EditorView.findFromDOM(
+				await screen.findByRole('textbox', { name: `Contents of ${PATH}` })
+			)!;
+			await waitFor(() => {
+				const sel = view.state.selection.main;
+				expect(view.state.doc.lineAt(sel.from).number).toBe(4);
+				expect(view.state.doc.lineAt(sel.to).number).toBe(9);
+			});
+
+			await userEvent.click(tab('Session'));
+			await userEvent.click(await screen.findByRole('button', { name: PATH }));
+			selected('Files');
+		});
+
+		it('shows a folder in the tree', async () => {
+			vi.mocked(api.workspace.resolve).mockResolvedValue({
+				loc: { repo: '', path: 'internal/run' },
+				dir: true
+			});
+			const { emit } = await setup();
+			await emit(said(`Fixed in \`${PATH}:336\`.`));
+
+			await userEvent.click(await link());
+
+			selected('Files');
+			await waitFor(() =>
+				expect(api.workspace.tree).toHaveBeenCalledWith(aLiveRun().id, 'internal/run', '')
+			);
+			expect(screen.queryByRole('tablist', { name: 'Open files' })).not.toBeInTheDocument();
+		});
+
+		it.each([
+			[404, `${PATH} is not in the workspace.`],
+			[501, 'This workspace predates opening linked paths: restart or rebuild it.'],
+			[500, 'boom']
+		])('says why on a %i, and opens nothing', async (status, text) => {
+			vi.mocked(api.workspace.resolve).mockRejectedValue(new ApiError('boom', status, null));
+			const { emit } = await setup();
+			await emit(said(`Fixed in \`${PATH}:336\`.`));
+
+			await userEvent.click(await link());
+
+			await waitFor(() => expect(toastTexts()).toEqual([text]));
+			expect(screen.queryByRole('tablist', { name: 'Open files' })).not.toBeInTheDocument();
+			expect(api.workspace.file).not.toHaveBeenCalled();
+		});
+
+		it('says the workspace is gone, asking nothing', async () => {
+			const { emit } = await setup(aLiveRun({ envStatus: 'absent' }));
+			await emit(said(`Fixed in \`${PATH}:336\`.`));
+
+			await userEvent.click(await link());
+
+			expect(toastTexts()).toEqual([`The workspace is gone: ${PATH} cannot be opened.`]);
+			expect(api.workspace.resolve).not.toHaveBeenCalled();
+		});
+
+		it('opens from Ask too, and an annotation sent there shows Ask again', async () => {
+			vi.mocked(api.workspace.resolve).mockResolvedValue({
+				loc: { repo: '', path: PATH },
+				dir: false
+			});
+			vi.mocked(api.ask.state).mockResolvedValue(
+				anAskState({
+					messages: [anAskMessage({ role: 'answer', text: `See \`${PATH}:336\`.` })]
+				})
+			);
+			vi.mocked(api.ask.stream).mockReturnValue(() => {});
+			await setup();
+			await userEvent.click(tab('Ask'));
+
+			await userEvent.click(await link());
+
+			selected('Files');
+			const view = EditorView.findFromDOM(
+				await screen.findByRole('textbox', { name: `Contents of ${PATH}` })
+			)!;
+			await waitFor(() => expect(view.state.selection.main.empty).toBe(false));
+			const send = await screen.findByRole('button', { name: 'Send to Ask' });
+			await waitFor(() => expect(send).toBeEnabled());
+			await userEvent.click(send);
+
+			selected('Ask');
 		});
 	});
 

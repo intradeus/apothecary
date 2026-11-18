@@ -10,16 +10,25 @@
 	// ↵ sends, delivered when the agent's turn ends; ⇧↵ is a newline. Sending
 	// is optimistic: the box clears and the bubble shows at once; if the engine
 	// refuses, the text comes back with the reason.
+	//
+	// While the run is in your hands, lines picked in the Files viewer land
+	// here as chips (the registry's hold target); a send folds them into the
+	// message ahead of the words, and a refusal gives them back too.
 	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
 	import { fmtClockDuration } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import type { RunHold } from '$lib/domain';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import AnnotationChip from './AnnotationChip.svelte';
+	import { annotationText, type Annotation } from './annotation';
+	import type { ComposerRegistry } from './composerTarget.svelte';
 
 	let {
 		runId,
+		composers,
 		onsent,
 		onfailed,
 		hold,
@@ -29,6 +38,9 @@
 		onrelease
 	}: {
 		runId: string;
+		/** Where the Files viewer sends annotations: this composer is its hold
+		 *  target while the run is in the signed-in user's hands. */
+		composers: ComposerRegistry;
 		/** Fired as the message leaves (before the engine confirms). */
 		onsent: (text: string) => void;
 		/** The engine refused it: the bubble should go. */
@@ -55,8 +67,17 @@
 	let ta = $state<HTMLTextAreaElement | null>(null);
 	let files = $state<File[]>([]);
 	let picker = $state<ReturnType<typeof AttachFiles> | null>(null);
+	/** Annotations from the Files viewer, waiting for the next message. */
+	let chips = $state<Annotation[]>([]);
 
 	const held = $derived(!!hold);
+	// A hold without its user (an older record) is nobody's in particular,
+	// so not yours.
+	const mine = $derived(!!hold?.userId && hold.userId === session.user?.id);
+	$effect(() => {
+		if (!mine) return;
+		return composers.register({ kind: 'hold', add: (a) => chips.push(a) });
+	});
 	const heldFor = $derived(hold ? fmtClockDuration(now - new Date(hold.since).getTime()) : '');
 	// Checked by default, not remembered: the next take-over (the composer
 	// stays mounted through a hold and its release) starts from a stop.
@@ -86,12 +107,12 @@
 	}
 
 	async function send() {
-		const text = draft.trim();
-		if ((!text && !files.length) || sending) return;
+		const typed = draft.trim();
+		if ((!typed && !files.length && !chips.length) || sending) return;
 		sending = true;
 		error = '';
-		// Files go up first; if they cannot, nothing is sent and the draft
-		// and its files stay put.
+		// Files go up first; if they cannot, nothing is sent and the draft,
+		// its files and its chips stay put.
 		let ids: string[] = [];
 		if (files.length) {
 			uploading = true;
@@ -105,16 +126,21 @@
 				uploading = false;
 			}
 		}
+		const sent = chips;
+		const text = [annotationText(sent), typed].filter(Boolean).join('\n\n');
 		draft = '';
 		files = [];
+		chips = [];
 		onsent(text);
 		try {
 			await api.runs.sendMessage(runId, text, ids);
 		} catch (e) {
 			error = errorMessage(e);
 			onfailed?.(text);
-			// Give the words back unless something new was typed meanwhile.
-			if (!draft.trim()) draft = text;
+			// Give the words back unless something new was typed meanwhile;
+			// the chips come back ahead of any that landed since.
+			if (!draft.trim()) draft = typed;
+			chips = [...sent, ...chips];
 		} finally {
 			sending = false;
 		}
@@ -154,6 +180,17 @@
 				<span class="muted">· {t('run.composer.heldMessages', { count: hold.messages })}</span>
 			{/if}
 		</div>
+		{#if chips.length}
+			<div class="chips" role="group" aria-label={t('run.annotate.chips')}>
+				{#each chips as chip, i (chip.id)}
+					<AnnotationChip
+						bind:annotation={chips[i]}
+						disabled={uploading}
+						onremove={() => (chips = chips.filter((c) => c.id !== chip.id))}
+					/>
+				{/each}
+			</div>
+		{/if}
 		<textarea
 			class="bare"
 			bind:this={ta}
@@ -198,7 +235,7 @@
 				class="btn-primary btn-md"
 				onclick={send}
 				aria-busy={sending}
-				disabled={sending || (!draft.trim() && !files.length)}
+				disabled={sending || (!draft.trim() && !files.length && !chips.length)}
 				title={t('run.composer.sendTitle')}>{t('run.composer.send')}</button
 			>
 		{:else}
@@ -256,6 +293,12 @@
 		padding: 8px 14px 0;
 		font-size: var(--fs-meta);
 		font-weight: 600;
+	}
+	.chips {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 8px 14px 0;
 	}
 	.foot {
 		display: flex;

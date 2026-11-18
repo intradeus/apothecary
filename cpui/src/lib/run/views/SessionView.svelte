@@ -23,18 +23,22 @@
 	import PingDock from '../PingDock.svelte';
 	import Composer from '../Composer.svelte';
 	import type { RunStore } from '../store.svelte';
+	import type { PathRef } from '$lib/core/paths';
 
 	let {
 		rs,
 		visible,
 		onlog,
-		onphases
+		onphases,
+		onpath
 	}: {
 		rs: RunStore;
 		visible: boolean;
 		onlog: (stage: string) => void;
 		/** Open the Phases window. */
 		onphases: () => void;
+		/** Open a file the conversation names. */
+		onpath?: (ref: PathRef) => void;
 	} = $props();
 
 	const items = $derived(buildTranscript(rs.events, rs.live));
@@ -164,6 +168,7 @@
 				over={rs.terminal}
 				{onlog}
 				onanswer={() => follow()}
+				{onpath}
 			/>
 			{#if showNudge}
 				<div class="nudge" transition:materialize={{ origin: 'center bottom', y: 6 }}>
@@ -204,6 +209,7 @@
 		{#if rs.run.hold || canTakeOver}
 			<Composer
 				runId={rs.runId}
+				composers={rs.composers}
 				onsent={(text) => {
 					// Sends still unechoed count too: two of the same (two
 					// files-only messages, both '') each wait for their own echo.

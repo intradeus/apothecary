@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -702,6 +703,212 @@ func TestSidecarRepoSelector(t *testing.T) {
 	}
 }
 
+// The absolute routes read as the remote user: ~ expands to its home, a
+// relative path is refused, and what cannot be read is refused, never a 500.
+func TestSidecarAbsoluteReads(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("export A=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(home, "real"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(home, "real"), filepath.Join(home, "linked")); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(home, "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ts := newTestSidecar(t, gitInit(t))
+
+	var f fileResp
+	if code := ts.get("/fs/abs/file?path=~/.bashrc", &f); code != 200 || f.Path != filepath.Join(home, ".bashrc") || f.Content != "export A=1\n" || f.Mtime == "" {
+		t.Errorf("~/.bashrc = %d %+v", code, f)
+	}
+	if _, err := os.Stat("/etc/hosts"); err == nil {
+		if code := ts.get("/fs/abs/file?path=/etc/hosts", &f); code != 200 || f.Path != "/etc/hosts" {
+			t.Errorf("/etc/hosts = %d %+v", code, f)
+		}
+	}
+	var tree []treeEntry
+	if code := ts.get("/fs/abs/tree?path=~", &tree); code != 200 || len(tree) != 4 {
+		t.Fatalf("~ = %d %+v", code, tree)
+	}
+	if e := tree[0]; e.Name != "linked" || !e.Dir || e.Path != filepath.Join(home, "linked") {
+		t.Errorf("a linked directory = %+v", e)
+	}
+	for path, want := range map[string]int{
+		"/fs/abs/file?path=.bashrc":        400, // relative
+		"/fs/abs/tree?path=repo":           400,
+		"/fs/abs/file?path=~/fifo":         400, // refused before it could block
+		"/fs/abs/file?path=/dev/null":      400,
+		"/fs/abs/file?path=~":              400, // a directory
+		"/fs/abs/file?path=~/missing":      404,
+		"/fs/abs/tree?path=~/missing":      404,
+		"/fs/abs/tree?path=~/.bashrc":      404, // not a directory
+		"/fs/file?path=src/new.go/x":       404,
+		"/fs/abs/file?path=/proc/self/mem": 403,
+	} {
+		var e map[string]string
+		if code := ts.get(path, &e); code != want || e["error"] == "" {
+			t.Errorf("%s = %d %v, want %d", path, code, e, want)
+		}
+	}
+	if os.Geteuid() != 0 {
+		if err := os.WriteFile(filepath.Join(home, "secret"), []byte("x"), 0o000); err != nil {
+			t.Fatal(err)
+		}
+		var e map[string]string
+		if code := ts.get("/fs/abs/file?path=~/secret", &e); code != 403 {
+			t.Errorf("mode 000 = %d %v", code, e)
+		}
+	}
+}
+
+// Stat answers each item on its own, in order, and sees a write's new mtime.
+func TestSidecarStat(t *testing.T) {
+	primary := gitInit(t)
+	repos := t.TempDir()
+	extra := gitInit(t)
+	if err := os.Symlink(extra, filepath.Join(repos, "api")); err != nil {
+		t.Fatal(err)
+	}
+	locked := t.TempDir()
+	if err := os.WriteFile(filepath.Join(locked, "x"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+	evl := newEventLog()
+	sc := &sidecar{repo: primary, repos: repos, log: evl, agent: newAgentHost(evl)}
+	srv := httptest.NewServer(sc.routes())
+	defer srv.Close()
+	ts := &testSidecar{t: t, srv: srv, sc: sc}
+
+	stat := func(items ...statItem) []statResult {
+		t.Helper()
+		data, _ := json.Marshal(map[string]any{"items": items})
+		res, err := http.Post(srv.URL+"/fs/stat", "application/json", bytes.NewReader(data))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var out struct {
+			Items []statResult `json:"items"`
+		}
+		if err := json.NewDecoder(res.Body).Decode(&out); err != nil || res.StatusCode != 200 || len(out.Items) != len(items) {
+			t.Fatalf("stat = %d %+v, %v", res.StatusCode, out, err)
+		}
+		return out.Items
+	}
+	got := stat(
+		statItem{Path: "README.md"},
+		statItem{Repo: "api", Path: "src"},
+		statItem{Path: "src/old.go"},      // deleted
+		statItem{Path: "../etc/passwd"},   // outside
+		statItem{Repo: "nope", Path: "x"}, // no such checkout
+		statItem{Abs: filepath.Join(locked, "x")},
+		statItem{Abs: "relative"},
+		statItem{Abs: filepath.Join(primary, "README.md")},
+	)
+	if r := got[0]; !r.Exists || r.Dir || r.Size != int64(len("hello\nworld\n")) || r.Mtime == "" || r.Error != "" {
+		t.Errorf("README = %+v", r)
+	}
+	if r := got[1]; !r.Exists || !r.Dir {
+		t.Errorf("api src = %+v", r)
+	}
+	if r := got[2]; r != (statResult{}) {
+		t.Errorf("deleted = %+v", r)
+	}
+	for i, want := range map[int]string{3: "outside", 4: "no such repository", 6: "absolute"} {
+		if r := got[i]; r.Exists || !strings.Contains(r.Error, want) {
+			t.Errorf("item %d = %+v, want %q", i, r, want)
+		}
+	}
+	if r := got[5]; os.Geteuid() != 0 && (r.Exists || !strings.Contains(r.Error, "permission denied")) {
+		t.Errorf("unreadable = %+v", r)
+	}
+	if got[7] != got[0] {
+		t.Errorf("absolute README = %+v, want %+v", got[7], got[0])
+	}
+
+	// A write moves the mtime on.
+	readme := filepath.Join(primary, "README.md")
+	later := time.Now().Add(time.Hour)
+	if err := os.WriteFile(readme, []byte("changed\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.Chtimes(readme, later, later)
+	if r := stat(statItem{Path: "README.md"})[0]; r.Mtime == got[0].Mtime || r.Size != 8 {
+		t.Errorf("after a write = %+v, before %+v", r, got[0])
+	}
+
+	// The batch is capped, and its body must be JSON.
+	code, out := ts.post("/fs/stat", map[string]any{"items": make([]statItem, maxStatItems+1)})
+	if code != 400 || !strings.Contains(fmt.Sprint(out["error"]), "at most") {
+		t.Errorf("over the cap = %d %v", code, out)
+	}
+	res, err := http.Post(srv.URL+"/fs/stat", "application/json", strings.NewReader("{nope"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != 400 {
+		t.Errorf("bad body = %d", res.StatusCode)
+	}
+}
+
+// Resolve tries the named checkout, then the others, then absolute.
+func TestSidecarResolve(t *testing.T) {
+	primary := gitInit(t)
+	repos := t.TempDir()
+	extra := gitInit(t)
+	if err := os.WriteFile(filepath.Join(extra, "only-api.go"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"api", "repo", "Bad"} {
+		if err := os.Symlink(extra, filepath.Join(repos, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(repos, "file"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	evl := newEventLog()
+	sc := &sidecar{repo: primary, repos: repos, log: evl, agent: newAgentHost(evl)}
+	srv := httptest.NewServer(sc.routes())
+	defer srv.Close()
+	ts := &testSidecar{t: t, srv: srv, sc: sc}
+
+	if cos := sc.checkouts(); len(cos) != 2 || cos[0].name != "" || cos[1].name != "api" {
+		t.Errorf("checkouts = %+v", cos)
+	}
+	for query, want := range map[string]resolved{
+		"path=README.md":                 {Path: "README.md"},
+		"path=README.md&repo=api":        {Repo: "api", Path: "README.md"},
+		"path=only-api.go&repo=repo":     {Repo: "api", Path: "only-api.go"},
+		"path=src":                       {Path: "src", Dir: true},
+		"path=" + extra + "/only-api.go": {Repo: "api", Path: "only-api.go"},
+		"path=" + filepath.Dir(primary):  {Abs: filepath.Dir(primary), Dir: true},
+	} {
+		var got resolved
+		if code := ts.get("/fs/resolve?"+query, &got); code != 200 || got != want {
+			t.Errorf("%s = %d %+v, want %+v", query, code, got, want)
+		}
+	}
+	var e map[string]string
+	if code := ts.get("/fs/resolve?path=nowhere.go", &e); code != 404 {
+		t.Errorf("nothing = %d %v", code, e)
+	}
+	// The primary alone, with no additional checkouts.
+	if cos := (&sidecar{repo: primary}).checkouts(); len(cos) != 1 {
+		t.Errorf("checkouts = %+v", cos)
+	}
+}
+
 // A body that is not JSON is refused on every route that takes one.
 func TestSidecarRefusesBadBodies(t *testing.T) {
 	ts := newTestSidecar(t, t.TempDir())
@@ -898,7 +1105,7 @@ func TestSidecarWorkspaceErrors(t *testing.T) {
 		"/fs/tree?path=missing": 404,
 		"/fs/tree?path=../..":   400,
 		"/fs/file?path=missing": 404,
-		"/fs/file?path=src":     500,
+		"/fs/file?path=src":     400, // a directory
 		"/git/diff?path=../x":   400,
 		"/git/diff?path=":       400,
 		"/term":                 400, // no upgrade

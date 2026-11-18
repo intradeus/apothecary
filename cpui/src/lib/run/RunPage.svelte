@@ -4,9 +4,13 @@
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
+	import { ApiError } from '$lib/api/client';
 	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
+	import { errorMessage } from '$lib/core/errors';
+	import type { PathRef } from '$lib/core/paths';
 	import { shortId, times } from '$lib/core/format';
+	import { toast } from '$lib/ui/toast.svelte';
 	import Banner from '$lib/ui/Banner.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
@@ -33,6 +37,7 @@
 	import { TRANSCRIPT_TYPES } from './derive';
 	import { HeaderActions, type HeaderAct } from './header/actions.svelte';
 	import { rebuild } from './header/rebuild';
+	import type { ComposerKind } from './composerTarget.svelte';
 	import { RunStore } from './store.svelte';
 
 	let { runId, onretried }: { runId: string; onretried: () => void } = $props();
@@ -153,6 +158,34 @@
 	}
 	const openRecord = () => desk.reveal('record');
 
+	// A path an agent or Ask message mentions: found in the workspace when
+	// clicked (the checkouts, then absolute), then opened in Files at its line.
+	async function openPath(ref: PathRef) {
+		if (!rs.hasWorkspace) {
+			toast(t('run.files.noWorkspace', { path: ref.path }), { tone: 'warn' });
+			return;
+		}
+		try {
+			const found = await api.workspace.resolve(rs.runId, ref.path);
+			if (found.dir) rs.files.showDir(found.loc);
+			else
+				rs.files.open(found.loc, ref.from ? { from: ref.from, to: ref.to ?? ref.from } : undefined);
+			desk.reveal('files');
+		} catch (e) {
+			const status = e instanceof ApiError ? e.status : 0;
+			toast(
+				status === 404
+					? t('run.files.notFound', { path: ref.path })
+					: status === 501
+						? t('run.files.predates')
+						: errorMessage(e),
+				{ tone: 'warn' }
+			);
+		}
+	}
+	// An annotation landed in a chat's composer: show that chat.
+	const annotated = (kind: ComposerKind) => desk.reveal(kind === 'hold' ? 'session' : 'ask');
+
 	const showDenials = $derived(rs.newDenials.length > 0 && rs.hasWorkspace && !rs.terminal);
 	const showUnknown = $derived(rs.run?.envStatus === 'unknown' && !unknownDismissed);
 	// The sandbox is up but its runtime refuses exec (sysbox restarted under
@@ -249,9 +282,10 @@
 						visible={p.visible}
 						onlog={openLog}
 						onphases={() => desk.reveal('phases')}
+						onpath={openPath}
 					/>
 				{:else if v === 'ask'}
-					<AskView {rs} visible={p.visible} />
+					<AskView {rs} visible={p.visible} onpath={openPath} />
 				{:else if v === 'pings'}
 					<PingsView {rs} />
 				{:else if v === 'phases'}
@@ -261,7 +295,13 @@
 				{:else if v === 'record'}
 					<RecordView {rs} />
 				{:else if v === 'changes' || v === 'files' || v === 'terminal'}
-					<WorkspaceView {rs} kind={v} visible={p.visible} onrecord={openRecord} />
+					<WorkspaceView
+						{rs}
+						kind={v}
+						visible={p.visible}
+						onrecord={openRecord}
+						onannotated={annotated}
+					/>
 				{:else if v === 'logs'}
 					<LogsView {rs} visible={p.visible} />
 				{:else if v === 'egress'}

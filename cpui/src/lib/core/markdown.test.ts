@@ -205,4 +205,78 @@ describe('mdToHtml', () => {
 			expect(dom('![a plan](./x.png)').querySelector('img')).toHaveAttribute('src', './x.png');
 		});
 	});
+
+	describe('path mode', () => {
+		const paths = (src: string) => {
+			const root = document.createElement('div');
+			root.innerHTML = mdToHtml(src, { paths: true });
+			return root;
+		};
+		const refs = (root: HTMLElement) =>
+			[...root.querySelectorAll<HTMLElement>('[data-path]')].map((el) => ({
+				text: el.textContent,
+				...el.dataset
+			}));
+
+		it('makes an inline code span that is a path a button around the code', () => {
+			const root = paths('See `internal/run/run.go:336`.');
+			const btn = root.querySelector('button');
+			expect(btn).toHaveAttribute('type', 'button');
+			expect(btn?.querySelector('code')).toHaveTextContent('internal/run/run.go:336');
+			expect(refs(root)).toEqual([
+				{ text: 'internal/run/run.go:336', path: 'internal/run/run.go', line: '336' }
+			]);
+		});
+
+		it('makes prose paths buttons, the words around them kept', () => {
+			const root = paths('Edit a/b.ts:4-9 and ~/.bashrc, then **c/d.go**.');
+			expect(refs(root)).toEqual([
+				{ text: 'a/b.ts:4-9', path: 'a/b.ts', line: '4', end: '9' },
+				{ text: '~/.bashrc', path: '~/.bashrc' },
+				{ text: 'c/d.go', path: 'c/d.go' }
+			]);
+			expect(root).toHaveTextContent('Edit a/b.ts:4-9 and ~/.bashrc, then c/d.go.');
+		});
+
+		it('escapes the words around a path as the default does', () => {
+			const root = paths('AT&amp;T <b>x</b> "q" \'s\' a/b.go & c');
+			expect(root.querySelector('b')).toBeNull();
+			expect(root).toHaveTextContent('AT&T <b>x</b> "q" \'s\' a/b.go & c');
+			expect(refs(root)).toHaveLength(1);
+		});
+
+		it.each([
+			['a link’s text', '[a/b.go](https://x.test/a/b.go)'],
+			['a link’s code', '[`a/b.go`](./a/b.go)'],
+			['a bare URL', 'https://x.test/a/b.go:12'],
+			['a fenced block', '```\na/b.go:1\n```'],
+			['an indented block', '    a/b.go:1'],
+			['a code span with more than a path', '`a/b.go:1 extra`'],
+			['a code span with no path', '`and/or`'],
+			['an image’s alt text', '![a/b.go](https://x.test/x.png)'],
+			['raw HTML', '<p>a/b.go</p>']
+		])('links nothing in %s', (_, src) => {
+			const root = paths(src);
+			expect(root.querySelector('[data-path]')).toBeNull();
+			expect(root.innerHTML).toBe(dom(src).innerHTML);
+		});
+
+		it('renders text without paths exactly as the default does', () => {
+			const src =
+				'# T\n\nSome **bold**, `code`, [a](https://a.test) AT&amp;T <i>.\n\n- and/or 1.2.3\n';
+			expect(mdToHtml(src, { paths: true })).toBe(mdToHtml(src));
+		});
+
+		it('lets no attribute out of a path', () => {
+			const root = paths('a/b.go" onclick="alert(1) `c/d.go" onclick="alert(1)`');
+			expect(root.querySelector('[onclick]')).toBeNull();
+			expect(refs(root).map((r) => r.text)).toEqual(['a/b.go']);
+		});
+
+		it('leaves the default mode as it was', () => {
+			expect(mdToHtml('See `a/b.go:3` and c/d.go.')).toBe(
+				'<p>See <code>a/b.go:3</code> and c/d.go.</p>\n'
+			);
+		});
+	});
 });

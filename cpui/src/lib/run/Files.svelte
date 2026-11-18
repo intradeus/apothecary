@@ -1,170 +1,188 @@
 <script lang="ts">
-	// Browse the run's checkout as it is right now. Read-only: the agent owns
-	// the files while it works; editing is what "Open editor" is for.
-	import { errorMessage } from '$lib/core/errors';
-	import { api } from '$lib/api';
-	import type { WorkspaceEntry, WorkspaceFile } from '$lib/domain';
+	// Browse the run's workspace as it is right now (DESIGN §7.1): the tree,
+	// the open files as tabs (kept per run, across checkouts and absolute
+	// paths) and one viewer. Read-only: the agent owns the files while it
+	// works; editing is what "Open editor" is for. A selection can be sent
+	// as an annotation into the chat that takes one.
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { fileLines } from '$lib/run/diff';
 	import { fmtBytes } from '$lib/core/format';
-	import { I } from '$lib/design/icons';
-	import Checkbox from '$lib/ui/Checkbox.svelte';
-	import CodeView from '$lib/ui/CodeView.svelte';
+	import CodeViewer from '$lib/ui/CodeViewer.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
+	import AnnotateBox from './AnnotateBox.svelte';
+	import FileTabs from './FileTabs.svelte';
+	import FileTree from './FileTree.svelte';
+	import GoToPath from './GoToPath.svelte';
+	import type { ComposerKind } from './composerTarget.svelte';
+	import type { RunStore } from './store.svelte';
 
-	let { runId, repo = '' }: { runId: string; repo?: string } = $props();
+	let {
+		rs,
+		visible,
+		onannotated
+	}: {
+		rs: RunStore;
+		/** The pane is on screen: live refresh runs only then. */
+		visible: boolean;
+		/** An annotation landed in that chat's composer. */
+		onannotated?: (kind: ComposerKind) => void;
+	} = $props();
 
-	let dirs = $state<Record<string, WorkspaceEntry[]>>({});
-	let open = $state<Record<string, boolean>>({ '': true });
-	let error = $state('');
-	/** The folder `error` is about ('' is the root). */
-	let errorPath = $state('');
-	let selected = $state('');
-	let file = $state<WorkspaceFile | null>(null);
-	let fileError = $state('');
-	let showIgnored = $state(false);
+	const files = $derived(rs.files);
+	const checkouts = $derived(rs.run?.checkouts ?? []);
+	const active = $derived(files.active);
+	const file = $derived(active?.file ?? null);
+	const shownPath = $derived(
+		active ? ('abs' in active.loc ? active.loc.abs : active.loc.path) : ''
+	);
 
-	async function load(path: string) {
-		try {
-			const listed = await api.workspace.tree(runId, path, repo);
-			dirs = { ...dirs, [path]: listed };
-			if (path === errorPath) error = '';
-		} catch (e) {
-			error = errorMessage(e);
-			errorPath = path;
-		}
-	}
+	let goto = $state(false);
+	let viewer = $state<CodeViewer>();
+	/** The selected lines, and the tab they are in. */
+	let selection = $state<{ key: string; from: number; to: number } | null>(null);
+	const picked = $derived(selection && selection.key === active?.key ? selection : null);
+	const quote = $derived(
+		picked && file
+			? file.content
+					.split('\n')
+					.slice(picked.from - 1, picked.to)
+					.join('\n')
+			: ''
+	);
 
-	function toggle(e: WorkspaceEntry) {
-		const next = !open[e.path];
-		open = { ...open, [e.path]: next };
-		if (next && !dirs[e.path]) load(e.path);
-	}
-
-	async function view(path: string) {
-		selected = path;
-		file = null;
-		fileError = '';
-		try {
-			const read = await api.workspace.file(runId, path, repo);
-			if (path === selected) file = read;
-		} catch (e) {
-			if (path === selected) fileError = errorMessage(e);
-		}
-	}
-
-	async function reload() {
-		const paths = Object.keys(dirs);
-		await Promise.all(paths.map(load));
-		if (selected) view(selected);
-	}
-
-	onMount(() => load(''));
-
-	type Row = { entry: WorkspaceEntry; depth: number };
-	/** The visible tree, flattened in display order. */
-	const rows = $derived.by(() => {
-		const out: Row[] = [];
-		const walk = (path: string, depth: number) => {
-			for (const e of dirs[path] ?? []) {
-				if (e.ignored && !showIgnored) continue;
-				out.push({ entry: e, depth });
-				if (e.dir && open[e.path]) walk(e.path, depth + 1);
-			}
-		};
-		walk('', 0);
-		return out;
+	onMount(() => files.show());
+	$effect(() => {
+		const f = files;
+		f.visible = visible;
+		return () => (f.visible = false);
 	});
-	const lines = $derived(file && !file.binary ? fileLines(file.content) : []);
+
+	function close(key: string) {
+		files.close(key);
+		viewer?.forget(key);
+	}
+
+	function sent(kind: ComposerKind) {
+		viewer?.clearSelection();
+		selection = null;
+		onannotated?.(kind);
+	}
 </script>
 
-{#if error && !dirs['']}
-	<div class="pad">
-		<ErrorCard cause={t('run.files.unavailable')} detail={error} onretry={() => load('')} />
+<div class="files">
+	<div class="bar">
+		<button class="btn btn-ghost btn-sm" onclick={() => (goto = true)}>{t('run.files.goTo')}</button
+		>
 	</div>
-{:else}
 	<div class="split">
-		<div class="tree">
-			<div class="nodes">
-				{#if !dirs['']}<Loading />{/if}
-				{#each rows as r (r.entry.path)}
-					<button
-						class="rowbtn node mono"
-						class:on={r.entry.path === selected}
-						class:ignored={r.entry.ignored}
-						style:padding-left="{8 + r.depth * 12}px"
-						aria-expanded={r.entry.dir ? !!open[r.entry.path] : undefined}
-						onclick={() => (r.entry.dir ? toggle(r.entry) : view(r.entry.path))}
-						title={r.entry.path}
-					>
-						<span class="truncate"
-							>{#if r.entry.dir}{open[r.entry.path] ? I.menu : I.caret}&nbsp;{/if}{r.entry.name}{r
-								.entry.dir
-								? '/'
-								: ''}</span
-						>
-					</button>
-				{/each}
-			</div>
-			{#if error}
-				<div class="ferr">
-					<ErrorCard
-						cause={t('run.files.folderError', { path: errorPath || '.' })}
-						detail={error}
-						onretry={() => load(errorPath)}
-						ondismiss={() => (error = '')}
-					/>
-				</div>
-			{/if}
-			<div class="tf">
-				<Checkbox size="sm" bind:checked={showIgnored} label={t('run.files.showIgnored')} />
-				<button
-					class="btn-icon"
-					title={t('run.files.refresh')}
-					aria-label={t('run.files.refresh')}
-					onclick={reload}>{I.retry}</button
-				>
-			</div>
-		</div>
+		<FileTree {files} />
 		<div class="viewer">
-			{#if !selected}
+			{#if files.tabs.length}
+				<FileTabs
+					tabs={files.tabs}
+					active={files.activeKey}
+					{checkouts}
+					onactivate={(key) => files.activate(key)}
+					onclose={close}
+					onmove={(from, to) => files.move(from, to)}
+				/>
+			{/if}
+			{#if !active}
 				<div class="empty-line">{t('run.files.pick')}</div>
 			{:else}
 				<div class="vh mono">
-					{selected}
+					{shownPath}
 					{#if file}<span class="faint"
 							>· {fmtBytes(file.size)}{file.truncated ? ` · ${t('run.files.firstMb')}` : ''}</span
 						>{/if}
 				</div>
-				{#if fileError}
+				{#if active.gone}
+					<div class="pad" role="alert">
+						<p>{t('run.files.gone')}</p>
+						<button class="btn btn-sm" onclick={() => close(active.key)}
+							>{t('run.files.closeTab')}</button
+						>
+					</div>
+				{:else if active.error}
 					<div class="pad">
 						<ErrorCard
 							cause={t('run.files.readError')}
-							detail={fileError}
-							onretry={() => view(selected)}
+							detail={active.error}
+							onretry={() => files.reload(active.key)}
 						/>
 					</div>
 				{:else if !file}
 					<Loading />
 				{:else}
-					<div class="code">
-						<CodeView
-							{lines}
-							binary={file.binary
-								? t('run.files.binary', { size: fmtBytes(file.size) })
-								: undefined}
-							truncated={file.truncated ? t('run.files.firstMb') : undefined}
-						/>
-					</div>
+					{#if active.deleted}
+						<div class="notice" role="status">{t('run.files.deleted')}</div>
+					{/if}
+					{#if file.binary}
+						<div class="bin">{t('run.files.binary', { size: fmtBytes(file.size) })}</div>
+					{:else}
+						<div class="code">
+							<CodeViewer
+								bind:this={viewer}
+								content={file.content}
+								path={shownPath}
+								label={t('run.files.viewer', { path: shownPath })}
+								docKey={active.key}
+								line={active.line}
+								onrevealed={() => files.revealed(active.key)}
+								onselect={(r) => (selection = r && { key: active.key, ...r })}
+							/>
+						</div>
+						{#if picked}
+							<div class="abox">
+								<AnnotateBox
+									registry={rs.composers}
+									loc={active.loc}
+									from={picked.from}
+									to={picked.to}
+									{quote}
+									{checkouts}
+									onsent={sent}
+									oncancel={() => {
+										viewer?.clearSelection();
+										selection = null;
+									}}
+								/>
+							</div>
+						{/if}
+						{#if file.truncated}
+							<div class="diff-foot">
+								{t('ui.code.truncated', { detail: t('run.files.firstMb') })}
+							</div>
+						{/if}
+					{/if}
 				{/if}
 			{/if}
 		</div>
 	</div>
-{/if}
+</div>
+
+<GoToPath
+	runId={rs.runId}
+	open={goto}
+	onclose={() => (goto = false)}
+	onfile={(abs) => files.open({ abs })}
+	ondir={(path) => files.setRoot({ abs: path })}
+/>
 
 <style>
+	.files {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.bar {
+		flex: none;
+		display: flex;
+		justify-content: flex-end;
+		padding: 6px 8px 0;
+	}
 	.pad {
 		padding: 10px;
 	}
@@ -175,43 +193,6 @@
 		grid-template-columns: 200px minmax(0, 1fr);
 		gap: 8px;
 		padding: 8px;
-	}
-	.tree {
-		border-radius: var(--r-card);
-		background: var(--fill-2);
-		padding: 6px;
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
-	}
-	.nodes {
-		flex: 1;
-		min-height: 0;
-		overflow: auto;
-		display: flex;
-		flex-direction: column;
-	}
-	.node {
-		flex: none;
-		padding-top: 2px;
-		padding-bottom: 2px;
-		border-radius: var(--r-tag);
-	}
-	.node.ignored {
-		color: var(--text-faint);
-	}
-	.ferr {
-		flex: none;
-		margin-top: 4px;
-		overflow-wrap: anywhere;
-	}
-	.tf {
-		flex: none;
-		margin-top: 4px;
-		padding: 4px 4px 0 8px;
-		display: flex;
-		justify-content: space-between;
-		align-items: center;
 	}
 	.viewer {
 		min-width: 0;
@@ -231,18 +212,32 @@
 	.vh .faint {
 		font-weight: 400;
 	}
+	.notice {
+		flex: none;
+		padding: 6px 12px;
+		color: var(--warning-text);
+		font-size: var(--fs-meta);
+		border-bottom: 1px solid var(--line);
+	}
 	.code {
 		flex: 1;
 		min-height: 0;
-		overflow: auto;
 		display: flex;
 		flex-direction: column;
 	}
-	.code > :global(.bin) {
+	.bin {
 		flex: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
+		padding: 28px 16px;
+		color: var(--text-muted);
+		font-size: var(--fs-label);
+	}
+	.abox {
+		flex: none;
+		border-top: 1px solid var(--line);
+		padding: 8px;
 	}
 	/* Stack the tree over the file when the window gets narrow (a container
 	 * query on the window, so its own threshold). */

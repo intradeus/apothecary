@@ -32,6 +32,7 @@
 	import ToolCalls from './ToolCalls.svelte';
 	import FileChips, { type StoredFile } from '$lib/artifacts/FileChips.svelte';
 	import type { Attachment } from '$lib/domain';
+	import { pathClick, type PathRef } from '$lib/core/paths';
 
 	let {
 		items,
@@ -39,7 +40,8 @@
 		over = false,
 		attachments = [],
 		onlog,
-		onanswer
+		onanswer,
+		onpath
 	}: {
 		items: ChatItem[];
 		/** The run's files, to name what your messages carried. */
@@ -52,7 +54,10 @@
 		onlog: (stage: string) => void;
 		/** Jump to where a pending question is answered. */
 		onanswer: () => void;
+		/** Open a file the agent mentions: its paths become buttons. */
+		onpath?: (ref: PathRef) => void;
 	} = $props();
+	const clickPath = $derived(pathClick(onpath));
 
 	/** A message's files, as far as the run's list knows them yet. */
 	const filesOf = (ids: string[]): StoredFile[] =>
@@ -179,12 +184,13 @@
 				{#if open}<div class="tt">{it.text}</div>{/if}
 			</details>
 		{:else}
-			<div class="agent" use:arrive={a}>
-				<Markdown src={it.text} />{#if it.live}<span class="caret"></span>{/if}
+			<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (delegated: the path buttons inside take the keys) -->
+			<div class="agent" use:arrive={a} onclick={clickPath}>
+				<Markdown src={it.text} paths={!!onpath} />{#if it.live}<span class="caret"></span>{/if}
 			</div>
 		{/if}
 	{:else if it.kind === 'tools'}
-		<div use:arrive={a}><ToolCalls calls={it.calls} live={it.live} /></div>
+		<div use:arrive={a}><ToolCalls calls={it.calls} live={it.live} {onpath} /></div>
 	{:else if it.kind === 'plan'}
 		<div class="plan card-in">
 			<div class="ph">
@@ -218,11 +224,17 @@
 			</div>
 		</div>
 	{:else if it.kind === 'question'}
-		<div class="q card-in" class:open={it.answer === undefined && !over} use:arrive={a}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (delegated: the path buttons inside take the keys) -->
+		<div
+			class="q card-in"
+			class:open={it.answer === undefined && !over}
+			use:arrive={a}
+			onclick={clickPath}
+		>
 			<div class="qh">
 				<PingPill type={it.type} /><span class="muted small">{t('run.transcript.asked')}</span>
 			</div>
-			<Markdown src={it.question} />
+			<Markdown src={it.question} paths={!!onpath} />
 			{#if it.options.length && it.answer === undefined}
 				<div class="small muted">
 					{t('run.transcript.options', { list: it.options.join(' · ') })}

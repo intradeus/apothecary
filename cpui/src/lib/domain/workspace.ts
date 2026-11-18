@@ -4,12 +4,15 @@
 
 export interface WorkspaceEntry {
 	name: string;
-	/** Repo-relative, slash-separated. */
+	/** Repo-relative, slash-separated; absolute for an absolute listing. */
 	path: string;
 	dir: boolean;
 	size?: number;
 	/** Matched by .gitignore — shown, but dimmed. */
 	ignored: boolean;
+	/** Modification time in nanoseconds since the epoch, as a decimal string
+	 *  (beyond JavaScript's safe integers); '' when unknown. */
+	mtime: string;
 }
 
 export interface WorkspaceFile {
@@ -19,6 +22,29 @@ export interface WorkspaceFile {
 	/** Only the first megabyte is served. */
 	truncated: boolean;
 	content: string;
+	/** As on WorkspaceEntry: taken before the read. */
+	mtime: string;
+}
+
+/** Where a viewed file or folder lives: a checkout ('' is the primary) and a
+ *  repo-relative path, or an absolute path in the workspace. */
+export type FileLoc = { repo: string; path: string } | { abs: string };
+
+/** One path's state, from a stat only: what live refresh compares. */
+export interface PathStat {
+	exists: boolean;
+	dir: boolean;
+	size: number;
+	/** As on WorkspaceEntry. */
+	mtime: string;
+	/** Why it could not be read (permission), when it exists. */
+	error?: string;
+}
+
+/** A path a message mentioned, found in the workspace. */
+export interface ResolvedPath {
+	loc: FileLoc;
+	dir: boolean;
 }
 
 /** A: added, M: modified, D: deleted, R: renamed, C: copied, ?: untracked. */
