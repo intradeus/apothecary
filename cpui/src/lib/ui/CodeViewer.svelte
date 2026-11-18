@@ -11,10 +11,11 @@
 		Compartment,
 		EditorSelection,
 		EditorState,
-		type Extension,
-		type StateEffect
+		StateEffect,
+		StateField,
+		type Extension
 	} from '@codemirror/state';
-	import { EditorView, keymap, lineNumbers, type BlockInfo } from '@codemirror/view';
+	import { Decoration, EditorView, keymap, lineNumbers, type BlockInfo } from '@codemirror/view';
 	import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
 	import { highlightSelectionMatches, search, searchKeymap } from '@codemirror/search';
 	import { tags } from '@lezer/highlight';
@@ -67,6 +68,29 @@
 	let reported: string | null = null;
 	/** The selection was last set by search (a match, not lines to talk about). */
 	let bySearch = false;
+
+	// Lines picked whole (a line number, a revealed line), by the starts of
+	// the first and last: a blank line has no text to select, so its pick
+	// cannot live in the selection alone. Any other selection drops it.
+	const pick = StateEffect.define<{ from: number; to: number }>();
+	const pickedLines = StateField.define<{ from: number; to: number } | null>({
+		create: () => null,
+		update(value, tr) {
+			for (const e of tr.effects) if (e.is(pick)) return e.value;
+			if (tr.selection) return null;
+			return value && { from: tr.changes.mapPos(value.from), to: tr.changes.mapPos(value.to) };
+		},
+		// The selection stops at the last line's start when that line is
+		// blank, so nothing is drawn there: the line is marked instead.
+		provide: (f) =>
+			EditorView.decorations.compute([f], (state) => {
+				const p = state.field(f);
+				const last = p && state.doc.lineAt(p.to);
+				return last && last.length === 0
+					? Decoration.set(Decoration.line({ class: 'cm-picked' }).range(last.from))
+					: Decoration.none;
+			})
+	});
 
 	const hues = HighlightStyle.define([
 		{
@@ -157,8 +181,8 @@
 			{ backgroundColor: 'var(--brand-bg)' },
 		// The page's ::selection sets an on-brand ink for a brand fill; over the
 		// drawn selection the code keeps its own colours.
-		'.cm-content ::selection, .cm-content::selection': { color: 'currentColor' },
-		'.cm-selectionMatch': { backgroundColor: 'var(--fill-2)' },
+		'&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-picked':
+			{ backgroundColor: 'var(--brand-bg)' },
 		'.cm-searchMatch': {
 			backgroundColor: 'var(--warning-bg)',
 			outline: '1px solid var(--warning-line)'
@@ -227,13 +251,20 @@
 		})
 	];
 
-	// The lines the main selection covers; one ending at a line's start
-	// (a drag down to the next line's edge) stops on the line before. A
-	// search match is a selection too, but not lines picked to talk about.
+	// The lines picked whole, else those the main selection covers; one
+	// ending at a line's start (a drag down to the next line's edge) stops
+	// on the line before. A search match is a selection too, but not lines
+	// picked to talk about.
 	function report(state: EditorState, searched = false) {
 		const sel = state.selection.main;
+		const whole = state.field(pickedLines);
 		let range: Lines | null = null;
-		if (!sel.empty && !searched) {
+		if (whole)
+			range = {
+				from: state.doc.lineAt(whole.from).number,
+				to: state.doc.lineAt(whole.to).number
+			};
+		else if (!sel.empty && !searched) {
 			const last = state.doc.lineAt(sel.to);
 			range = {
 				from: state.doc.lineAt(sel.from).number,
@@ -254,11 +285,13 @@
 		const doc = v.state.doc;
 		const target = doc.lineAt(block.from);
 		const anchor = e.shiftKey ? doc.lineAt(v.state.selection.main.anchor) : target;
+		const [first, last] = target.number < anchor.number ? [target, anchor] : [anchor, target];
 		v.dispatch({
 			selection:
 				target.number < anchor.number
 					? EditorSelection.single(anchor.to, target.from)
 					: EditorSelection.single(anchor.from, target.to),
+			effects: pick.of({ from: first.from, to: last.from }),
 			userEvent: 'select.pointer'
 		});
 		v.focus();
@@ -267,6 +300,7 @@
 
 	const fixed: Extension = [
 		minimalSetup,
+		pickedLines,
 		lineNumbers({ domEventHandlers: { mousedown: gutterDown } }),
 		EditorState.readOnly.of(true),
 		search({ top: true }),
@@ -343,9 +377,13 @@
 		const doc = v.state.doc;
 		const at = (n: number) => doc.line(Math.min(Math.max(n, 1), doc.lines));
 		const first = at(lines.from);
+		const last = at(Math.max(lines.to, lines.from));
 		v.dispatch({
-			selection: EditorSelection.single(first.from, at(Math.max(lines.to, lines.from)).to),
-			effects: EditorView.scrollIntoView(first.from, { y: 'center' })
+			selection: EditorSelection.single(first.from, last.to),
+			effects: [
+				pick.of({ from: first.from, to: last.from }),
+				EditorView.scrollIntoView(first.from, { y: 'center' })
+			]
 		});
 		onrevealed?.();
 	}

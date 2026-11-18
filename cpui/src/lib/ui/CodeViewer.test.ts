@@ -285,6 +285,40 @@ describe('CodeViewer', () => {
 			expect(props.onselect).toHaveBeenLastCalledWith({ from: 3, to: 3 });
 		});
 
+		it('picks a blank line from the gutter, inside the file and at its end', () => {
+			const { props, view, container } = setup({ content: 'one\n\nthree\n' });
+			const marked = () =>
+				[...container.querySelectorAll('.cm-line.cm-picked')].map((l) => l.textContent);
+			gutterClick(view, container, 2, {});
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 2, to: 2 });
+			expect(marked()).toEqual(['']);
+			gutterClick(view, container, 4, {});
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 4, to: 4 });
+			expect(marked()).toEqual(['']);
+			gutterClick(view, container, 1, { shiftKey: true });
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 1, to: 4 });
+			// Down to a blank last line, which the selection draws nothing on.
+			gutterClick(view, container, 3, {});
+			gutterClick(view, container, 4, { shiftKey: true });
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 3, to: 4 });
+			expect(marked()).toEqual(['']);
+			// A line with text is drawn by the selection alone.
+			gutterClick(view, container, 3, {});
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 3, to: 3 });
+			expect(marked()).toEqual([]);
+		});
+
+		it('keeps a picked blank line through new content, and drops it for another selection', async () => {
+			const { props, view, container } = setup({ content: 'one\n\nthree' });
+			gutterClick(view, container, 2, {});
+			props.content = 'zero\none\n\nthree';
+			await tick();
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 3, to: 3 });
+			view.dispatch({ selection: { anchor: 0 } });
+			expect(props.onselect).toHaveBeenLastCalledWith(null);
+			expect(container.querySelector('.cm-picked')).toBeNull();
+		});
+
 		it('ignores another button on the gutter', () => {
 			const { props, view, container } = setup();
 			gutterClick(view, container, 2, { button: 2 });
@@ -342,6 +376,11 @@ describe('CodeViewer', () => {
 			expect(lineText(view)).toBe('two\nthree');
 			expect(props.onselect).toHaveBeenLastCalledWith({ from: 2, to: 3 });
 			expect(props.onrevealed).toHaveBeenCalledTimes(1);
+		});
+
+		it('reveals a blank line as a line to talk about', () => {
+			const { props } = setup({ content: 'one\n\nthree', line: { from: 2, to: 2 } });
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 2, to: 2 });
 		});
 
 		it('reveals in the document it arrives with, clamped to it', async () => {

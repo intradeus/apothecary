@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view';
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -355,6 +355,35 @@ describe('Files', () => {
 			expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
 			const sel = editor('README.md').state.selection.main;
 			expect(sel.empty).toBe(true);
+		});
+
+		it('annotates a blank line picked from the gutter, inside the file and at its end', async () => {
+			const rs = aStore();
+			const add = vi.fn();
+			rs.composers.register({ kind: 'ask', add });
+			file.mockImplementation(async (_run, path) =>
+				aWorkspaceFile({ path, content: 'first line\n\nthird line\n' })
+			);
+			await mount(rs);
+			const shown = await openReadme();
+			const v = editor('README.md');
+			// jsdom has no layout: a gutter click lands on whichever line the test names.
+			const gutterClick = (n: number) => {
+				vi.spyOn(v, 'lineBlockAtHeight').mockReturnValue(v.lineBlockAt(v.state.doc.line(n).from));
+				const number = shown
+					.closest('.cm-editor')!
+					.querySelector('.cm-lineNumbers .cm-gutterElement:last-child')!;
+				fireEvent.mouseDown(number, { button: 0 });
+			};
+
+			gutterClick(2);
+			expect(await screen.findByRole('group', { name: /README\.md:2$/ })).toBeInTheDocument();
+
+			gutterClick(4);
+			const last = await screen.findByRole('group', { name: /README\.md:4$/ });
+			await userEvent.click(within(last).getByRole('button', { name: 'Send to Ask' }));
+			expect(add).toHaveBeenCalledOnce();
+			expect(JSON.stringify(add.mock.calls[0][0])).toContain('README.md:4');
 		});
 
 		it('lets the selection go on cancel', async () => {
