@@ -59,10 +59,11 @@
 	// language its state carries.
 	type Doc = { state: EditorState; scroll: StateEffect<unknown>; lang: string | null };
 	const docs = new Map<string, Doc>();
+	/** The document on screen; null after it was forgotten (its state is not kept when left). */
 	let shown: string | null = null;
 	let shownLang: string | null = null;
 	let wanted = '';
-	let keep = true;
+	/** The last selection reported, with its document: what the caller holds. */
 	let reported: string | null = null;
 	/** The selection was last set by search (a match, not lines to talk about). */
 	let bySearch = false;
@@ -239,7 +240,7 @@
 				to: last.from === sel.to ? last.number - 1 : last.number
 			};
 		}
-		const said = range && `${range.from}-${range.to}`;
+		const said = range && `${shown}:${range.from}-${range.to}`;
 		if (said === reported) return;
 		reported = said;
 		onselect?.(range);
@@ -314,9 +315,8 @@
 		const v = (view ??= new EditorView({ parent: host }));
 		if (k === shown) patch(v, text);
 		else {
-			if (shown !== null && keep)
+			if (shown !== null)
 				docs.set(shown, { state: v.state, scroll: v.scrollSnapshot(), lang: shownLang });
-			keep = true;
 			shown = k;
 			const doc = docs.get(k);
 			if (doc) {
@@ -355,10 +355,10 @@
 		view?.dispatch({ selection: EditorSelection.cursor(view.state.selection.main.head) });
 	}
 
-	/** Drop a document's kept state (its tab closed); the shown one is not kept when left. */
+	/** Drop a document's kept state (its tab closed); the shown one is not kept, nor reused, when shown next. */
 	export function forget(k: string) {
 		docs.delete(k);
-		if (k === shown) keep = false;
+		if (k === shown) shown = null;
 	}
 
 	onMount(() => () => view?.destroy());

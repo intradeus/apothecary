@@ -15,6 +15,7 @@
 	import FileTree from './FileTree.svelte';
 	import GoToPath from './GoToPath.svelte';
 	import type { ComposerKind } from './composerTarget.svelte';
+	import type { LineRange } from './openFiles.svelte';
 	import type { RunStore } from './store.svelte';
 
 	let {
@@ -37,14 +38,38 @@
 		active ? ('abs' in active.loc ? active.loc.abs : active.loc.path) : ''
 	);
 
+	/** The active tab's file when it shows as text (not gone, failed, loading or binary). */
+	const text = $derived(
+		active && !active.gone && !active.error && file && !file.binary ? file : null
+	);
+	// The text tab the viewer holds: the active one when it shows text, else
+	// the last one that did. The viewer stays mounted, hidden, while a tab
+	// loads, is binary or failed, so every document keeps its state and scroll.
+	type Held = { key: string; content: string; path: string; line: LineRange | null };
+	let last: Held | null = null;
+	const held = $derived.by(() => {
+		if (!files.tabs.length) return (last = null);
+		if (!active || !text) return last;
+		const next = { key: active.key, content: text.content, path: shownPath, line: active.line };
+		// The same document as held: the same object, so the viewer is not stirred.
+		const same =
+			last &&
+			last.key === next.key &&
+			last.content === next.content &&
+			last.path === next.path &&
+			last.line === next.line;
+		if (!same) last = next;
+		return last;
+	});
+
 	let goto = $state(false);
 	let viewer = $state<CodeViewer>();
 	/** The selected lines, and the tab they are in. */
 	let selection = $state<{ key: string; from: number; to: number } | null>(null);
-	const picked = $derived(selection && selection.key === active?.key ? selection : null);
+	const picked = $derived(text && selection && selection.key === active?.key ? selection : null);
 	const quote = $derived(
-		picked && file
-			? file.content
+		picked && text
+			? text.content
 					.split('\n')
 					.slice(picked.from - 1, picked.to)
 					.join('\n')
@@ -61,6 +86,7 @@
 	function close(key: string) {
 		files.close(key);
 		viewer?.forget(key);
+		if (selection?.key === key) selection = null;
 	}
 
 	function sent(kind: ComposerKind) {
@@ -88,74 +114,81 @@
 					onmove={(from, to) => files.move(from, to)}
 				/>
 			{/if}
-			{#if !active}
-				<div class="empty-line">{t('run.files.pick')}</div>
-			{:else}
+			{#if active}
 				<div class="vh mono">
 					{shownPath}
 					{#if file}<span class="faint"
 							>· {fmtBytes(file.size)}{file.truncated ? ` · ${t('run.files.firstMb')}` : ''}</span
 						>{/if}
 				</div>
-				{#if active.gone}
-					<div class="pad" role="alert">
-						<p>{t('run.files.gone')}</p>
-						<button class="btn btn-sm" onclick={() => close(active.key)}
-							>{t('run.files.closeTab')}</button
-						>
-					</div>
-				{:else if active.error}
-					<div class="pad">
-						<ErrorCard
-							cause={t('run.files.readError')}
-							detail={active.error}
-							onretry={() => files.reload(active.key)}
+				{#if file && active.deleted && !active.gone && !active.error}
+					<div class="notice" role="status">{t('run.files.deleted')}</div>
+				{/if}
+			{/if}
+			<div class="body">
+				{#if held}
+					<div class="code" class:away={!text} inert={!text}>
+						<CodeViewer
+							bind:this={viewer}
+							content={held.content}
+							path={held.path}
+							label={t('run.files.viewer', { path: held.path })}
+							docKey={held.key}
+							line={held.line}
+							onrevealed={() => held && files.revealed(held.key)}
+							onselect={(r) => (selection = r && held && { key: held.key, ...r })}
 						/>
 					</div>
-				{:else if !file}
-					<Loading />
-				{:else}
-					{#if active.deleted}
-						<div class="notice" role="status">{t('run.files.deleted')}</div>
-					{/if}
-					{#if file.binary}
-						<div class="bin">{t('run.files.binary', { size: fmtBytes(file.size) })}</div>
-					{:else}
-						<div class="code">
-							<CodeViewer
-								bind:this={viewer}
-								content={file.content}
-								path={shownPath}
-								label={t('run.files.viewer', { path: shownPath })}
-								docKey={active.key}
-								line={active.line}
-								onrevealed={() => files.revealed(active.key)}
-								onselect={(r) => (selection = r && { key: active.key, ...r })}
-							/>
-						</div>
-						{#if picked}
-							<div class="abox">
-								<AnnotateBox
-									registry={rs.composers}
-									loc={active.loc}
-									from={picked.from}
-									to={picked.to}
-									{quote}
-									{checkouts}
-									onsent={sent}
-									oncancel={() => {
-										viewer?.clearSelection();
-										selection = null;
-									}}
+				{/if}
+				{#if !text}
+					<div class="state">
+						{#if !active}
+							<div class="empty-line">{t('run.files.pick')}</div>
+						{:else if active.gone}
+							<div class="pad" role="alert">
+								<p>{t('run.files.gone')}</p>
+								<button class="btn btn-sm" onclick={() => close(active.key)}
+									>{t('run.files.closeTab')}</button
+								>
+							</div>
+						{:else if active.error}
+							<div class="pad">
+								<ErrorCard
+									cause={t('run.files.readError')}
+									detail={active.error}
+									onretry={() => files.reload(active.key)}
 								/>
 							</div>
+						{:else if !file}
+							<Loading />
+						{:else}
+							<div class="bin">{t('run.files.binary', { size: fmtBytes(file.size) })}</div>
 						{/if}
-						{#if file.truncated}
-							<div class="diff-foot">
-								{t('ui.code.truncated', { detail: t('run.files.firstMb') })}
-							</div>
-						{/if}
-					{/if}
+					</div>
+				{/if}
+			</div>
+			{#if active && text}
+				{#if picked}
+					<div class="abox">
+						<AnnotateBox
+							registry={rs.composers}
+							loc={active.loc}
+							from={picked.from}
+							to={picked.to}
+							{quote}
+							{checkouts}
+							onsent={sent}
+							oncancel={() => {
+								viewer?.clearSelection();
+								selection = null;
+							}}
+						/>
+					</div>
+				{/if}
+				{#if text.truncated}
+					<div class="diff-foot">
+						{t('ui.code.truncated', { detail: t('run.files.firstMb') })}
+					</div>
 				{/if}
 			{/if}
 		</div>
@@ -219,9 +252,29 @@
 		font-size: var(--fs-meta);
 		border-bottom: 1px solid var(--line);
 	}
+	/* The viewer and, over it while the active tab shows no text, that
+	 * tab's state. The viewer stays laid out under it (hidden, not removed)
+	 * so its documents keep their place. */
+	.body {
+		position: relative;
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
 	.code {
 		flex: 1;
 		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.code.away {
+		visibility: hidden;
+	}
+	.state {
+		position: absolute;
+		inset: 0;
+		overflow: auto;
 		display: flex;
 		flex-direction: column;
 	}

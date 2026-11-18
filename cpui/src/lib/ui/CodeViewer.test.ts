@@ -242,7 +242,7 @@ describe('CodeViewer', () => {
 			expect(view.state.doc.toString()).toBe('b1\nb2');
 		});
 
-		it('forgets a closed document, the shown one once it is left', async () => {
+		it('forgets a closed document, the shown one once it is left or shown again', async () => {
 			const { props, view, component } = setup({ docKey: 'A', content: 'a1\na2' });
 			view.dispatch({ selection: { anchor: 0, head: 2 } });
 			props.docKey = 'B';
@@ -259,6 +259,14 @@ describe('CodeViewer', () => {
 			props.docKey = 'A';
 			await tick();
 			expect(view.state.selection.main.empty).toBe(true);
+
+			// Forgotten while shown, then opened again without leaving it: anew.
+			view.dispatch({ selection: { anchor: 0, head: 2 } });
+			component.forget('A');
+			props.content = 'a1\na2\na3';
+			await tick();
+			expect(view.state.selection.main.empty).toBe(true);
+			expect(view.state.doc.toString()).toBe('a1\na2\na3');
 		});
 	});
 
@@ -292,6 +300,20 @@ describe('CodeViewer', () => {
 			expect(props.onselect).toHaveBeenLastCalledWith({ from: 1, to: 2 });
 			view.dispatch({ selection: { anchor: 3 } });
 			expect(props.onselect).toHaveBeenLastCalledWith(null);
+		});
+
+		it('reports the same lines again when another document shows them', async () => {
+			const { props, view } = setup({ docKey: 'A', content: 'a1\na2' });
+			view.dispatch({ selection: { anchor: 0, head: 2 } });
+			props.docKey = 'B';
+			await tick();
+			view.dispatch({ selection: { anchor: 0, head: 2 } });
+			props.onselect.mockClear();
+
+			props.docKey = 'A';
+			await tick();
+
+			expect(props.onselect).toHaveBeenCalledExactlyOnceWith({ from: 1, to: 1 });
 		});
 
 		it('does not report a search match as lines to talk about', () => {

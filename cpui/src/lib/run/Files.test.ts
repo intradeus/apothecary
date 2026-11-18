@@ -131,6 +131,47 @@ describe('Files', () => {
 		expect(await screen.findByRole('textbox', { name: 'Contents of main.go' })).toBeVisible();
 	});
 
+	it.each([
+		['still loading', () => deferred<WorkspaceFile>().promise],
+		['binary', async () => aWorkspaceFile({ path: 'main.go', binary: true })]
+	])('keeps a tab’s place and selection across a tab that is %s', async (_, read) => {
+		await mount();
+		await openReadme();
+		const before = editor('README.md');
+		select('README.md', 2, 3);
+		await waitFor(() => screen.getByRole('group', { name: /README\.md:2-3/ }));
+		before.scrollDOM.scrollTop = 120;
+		file.mockImplementation(read);
+
+		await userEvent.click(entry('main.go'));
+		await waitFor(() =>
+			expect(screen.getByRole('tab', { name: /main\.go/ })).toHaveAttribute('aria-selected', 'true')
+		);
+		expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole('tab', { name: /README\.md/ }));
+
+		const after = editor('README.md');
+		expect(after).toBe(before);
+		expect(after.scrollDOM.scrollTop).toBe(120);
+		const sel = after.state.selection.main;
+		expect(after.state.sliceDoc(sel.from, sel.to)).toBe('second line\nthird line');
+		expect(screen.getByRole('group', { name: /README\.md:2-3/ })).toBeInTheDocument();
+	});
+
+	it('lets a closed tab’s selection go with it', async () => {
+		const { rs } = await mount();
+		await openReadme();
+		select('README.md', 2, 3);
+		await waitFor(() => screen.getByRole('group', { name: /README\.md:2-3/ }));
+
+		await userEvent.click(screen.getByRole('button', { name: /Close .*README\.md/ }));
+		expect(rs.files.tabs).toEqual([]);
+		await openReadme();
+
+		expect(editor('README.md').state.selection.main.empty).toBe(true);
+		expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+	});
+
 	it('keeps tabs from two repos across a remount', async () => {
 		const first = await mount();
 		await openReadme();
