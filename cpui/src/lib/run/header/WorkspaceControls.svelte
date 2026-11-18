@@ -59,23 +59,26 @@
 		onclick={() => (envOpen = !envOpen)}>{t('run.env.button')} {I.menu}</button
 	>
 	<button
-		disabled={!rs.hasWorkspace || actions.has('editor')}
+		disabled={!rs.hasWorkspace || !rs.canShell || actions.has('editor')}
 		aria-busy={actions.has('editor')}
 		onclick={openEditor}
-		title={t('run.header.editorTitle')}>{t('run.header.editor')} {I.external}</button
+		title={rs.canShell ? t('run.header.editorTitle') : t('common.needsPermission')}
+		>{t('run.header.editor')} {I.external}</button
 	>
 	<button
 		bind:this={rebuildBtn}
-		disabled={!canRebuild || rebuilding}
+		disabled={!canRebuild || !rs.canOperate || rebuilding}
 		aria-busy={rebuilding}
 		aria-expanded={rebuildOpen}
-		title={run.envDirty
-			? t(canRebuild ? 'run.rebuild.dirtyTitle' : 'run.rebuild.dirtyTitleBusy')
-			: canRebuild
-				? t('run.rebuild.title')
-				: run.envId
-					? t('run.rebuild.pauseFirst')
-					: t('run.rebuild.noWorkspace')}
+		title={!rs.canOperate
+			? t('common.needsPermission')
+			: run.envDirty
+				? t(canRebuild ? 'run.rebuild.dirtyTitle' : 'run.rebuild.dirtyTitleBusy')
+				: canRebuild
+					? t('run.rebuild.title')
+					: run.envId
+						? t('run.rebuild.pauseFirst')
+						: t('run.rebuild.noWorkspace')}
 		onclick={() => (rebuildOpen = !rebuildOpen)}
 		>{#if run.envDirty}<span class="dirty" aria-hidden="true"></span>{/if}{t('run.rebuild.button')}
 		{I.menu}</button

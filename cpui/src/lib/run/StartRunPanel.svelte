@@ -59,7 +59,16 @@
 		after?: Snippet;
 	} = $props();
 
+	/** Starting a run in a workshop needs run:operate there. */
+	const canOperate = $derived(fleet.can(projectId, 'run:operate'));
+
 	const project = $derived(fleet.projectById.get(projectId));
+
+	/** Stopping the run in the way needs run:operate in its own workshop,
+	 *  this one while it is not listed. */
+	const canStopBusy = $derived(
+		fleet.can(fleet.runById.get(busyRun ?? '')?.projectId ?? projectId, 'run:operate')
+	);
 
 	async function abortBusy() {
 		const id = busyRun;
@@ -113,10 +122,22 @@
 			<div class="busy tint-warning" role="alert">
 				<span>{busyText(shortId(busyRun))}</span>
 				<a class="btn btn-sm" href={to.run(busyRun)}>{t('page.ping.openRun')}</a>
-				<button class="btn-sm btn-danger" onclick={abortBusy}>{t('run.stop.action')}</button>
+				<button
+					class="btn-sm btn-danger"
+					onclick={abortBusy}
+					disabled={!canStopBusy}
+					title={canStopBusy ? undefined : t('common.needsPermission')}
+					>{t('run.stop.action')}</button
+				>
 			</div>
 		{/if}
-		<button class="btn-primary btn-lg go" onclick={onstart} {disabled} aria-busy={starting}>
+		<button
+			class="btn-primary btn-lg go"
+			onclick={onstart}
+			disabled={disabled || !canOperate}
+			title={canOperate ? undefined : t('common.needsPermission')}
+			aria-busy={starting}
+		>
 			<TransportIcon kind="play" />
 			{t('page.ticket.startRunBtn')}
 		</button>

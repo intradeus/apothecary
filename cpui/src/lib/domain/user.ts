@@ -1,6 +1,11 @@
 // Accounts (TODO 25): who is signed in, how they prove it, and their
-// personal tokens. There is no organisation and no role beyond the instance
-// admin, who manages accounts and sees nothing of anyone else's work.
+// personal tokens. There is no organisation: an account's instance role says
+// what it may do on the instance, and a workshop's owner shares it with
+// others (project.ts: ProjectAccess).
+
+/** An instance role: admin manages accounts and the instance, member owns
+ *  workshops, guest works only in workshops shared with it. */
+export type UserRole = 'admin' | 'member' | 'guest';
 
 export interface User {
 	id: string;
@@ -8,8 +13,9 @@ export interface User {
 	handle: string;
 	email: string;
 	name: string;
-	/** Manages accounts. Grants no view into other users' work. */
-	admin: boolean;
+	/** What the account may do on the instance. An admin manages accounts
+	 *  and sees nothing of anyone else's work. */
+	role: UserRole;
 	disabled: boolean;
 	lastSeenAt?: string;
 	createdAt: string;
@@ -43,6 +49,24 @@ export interface Token {
 	/** An inactivity window, in seconds: the token signs out after that long
 	 *  unused, each use sliding it. What the CLI's browser sign-in mints. */
 	idleSeconds?: number;
+	/** The actions the token is limited to; absent = full access. */
+	actions?: string[];
+	/** The workshops a limited token is limited to; absent = every one. */
+	projectIds?: string[];
+}
+
+/** What a new token may do: everything its account may, or only the chosen
+ *  actions, in the chosen workshops (none chosen = every workshop). */
+export type TokenGrant = { full: true } | { full: false; actions: string[]; projectIds: string[] };
+
+/** One action of the vocabulary a token can be limited to: `kind:verb`. */
+export interface Permission {
+	action: string;
+	/** instance, account, project, run, ticket, … */
+	kind: string;
+	doc: string;
+	/** Whether a token may be limited to it (account:manage never is). */
+	grantable: boolean;
 }
 
 /** A terminal sign-in waiting for its approval in the browser

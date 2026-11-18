@@ -47,7 +47,7 @@ func TestGetSwarm(t *testing.T) {
 	seed("r-archived", testUser, testProject, &event.RunCompleted{}, &event.RunArchived{})
 	seed("r-other-workshop", testUser, "prj-second", &event.EnvRequested{}, &event.EnvReady{EnvID: "env-x"},
 		&event.PingRaised{PingID: "p1", Type: "clarification", Question: "?"})
-	seed("r-not-mine", "usr-someone-else", testProject)
+	seed("r-not-mine", "usr-someone-else", "prj-someone-elses")
 	x.srv.EnvState.SetStatus("r-other-workshop", envport.EnvStopped)
 
 	// A run of the caller's with an agent mid-turn and a subagent out.

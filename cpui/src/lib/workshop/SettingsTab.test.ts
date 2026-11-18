@@ -6,7 +6,7 @@ import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aRun } from '$test/fixtures';
+import { aRun, aViewerProject } from '$test/fixtures';
 import { aFlow, anIntegration, aWorkshop, confirmed } from '$test/fixtures/app.svelte';
 import SettingsTab from './SettingsTab.svelte';
 
@@ -76,6 +76,18 @@ describe('SettingsTab', () => {
 		expect(nameField()).toHaveValue('billing');
 		expect(screen.getByRole('heading', { name: 'Delete this workshop' })).toBeInTheDocument();
 		expect(del()).toBeEnabled();
+	});
+
+	it('hides the delete section from all but the owner (project:delete)', () => {
+		const { actions } = aViewerProject().access;
+		setup({
+			project: {
+				...project,
+				access: { role: 'maintainer', actions: [...actions, 'project:write'] }
+			}
+		});
+		expect(nameField()).toBeEnabled();
+		expect(screen.queryByRole('button', { name: 'Delete workshop' })).not.toBeInTheDocument();
 	});
 
 	it('saves, hands the workshop up and starts the form again from it', async () => {

@@ -15,7 +15,8 @@
 		type Flow,
 		type Integration,
 		type Project,
-		type ProjectDraft
+		type ProjectDraft,
+		projectCan
 	} from '$lib/domain';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -341,6 +342,9 @@
 				]
 			: [])
 	]);
+	/** Without project:write the setup is shown, not edited: every control is
+	 *  disabled and the save bar gives way to a notice. */
+	const readonly = $derived(!!existing && !projectCan(existing, 'project:write'));
 	let active = $state<StepId>('repository');
 	let formEl = $state<HTMLFormElement | null>(null);
 
@@ -377,7 +381,7 @@
 		onselect={(id) => jump(id as StepId)}
 	/>
 
-	<div class="secs">
+	<fieldset class="secs" disabled={readonly}>
 		<RepositorySection
 			{repoAccounts}
 			bind:repoAccountId
@@ -414,33 +418,37 @@
 		<ServicesSection bind:rows={serviceList} issues={svcIssues} strict={svcStrict} />
 		<BrowserSection bind:enabled={browserEnabled} projectId={existing?.id} {savedAt} />
 		{#if existing}
-			<SecretsSection projectId={existing.id} />
+			<SecretsSection projectId={existing.id} canEdit={!readonly} />
 		{/if}
 
 		{@render after?.()}
 
 		{#if error}<ErrorCard cause={t('form.project.saveFail')} detail={error} />{/if}
 
-		<!-- The bar's Save is the form's submit button (SaveBar `submit`): the
-		     native required-field checks run, then submit() saves. -->
-		<SaveBar
-			{dirty}
-			{busy}
-			{savedAt}
-			note={existing ? t('form.project.noteEdit') : t('form.project.noteCreate')}
-			saveLabel={existing ? t('form.project.saveSetup') : t('form.project.createWorkshop')}
-			submit
-		>
-			{#snippet extra()}
-				<Toggle
-					bind:checked={runEnvcheck}
-					label={t('form.project.envcheck')}
-					title={t('form.project.envcheckTitle')}
-				/>
-				<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
-			{/snippet}
-		</SaveBar>
-	</div>
+		{#if readonly}
+			<p class="help">{t('common.needsPermission')}</p>
+		{:else}
+			<!-- The bar's Save is the form's submit button (SaveBar `submit`): the
+			     native required-field checks run, then submit() saves. -->
+			<SaveBar
+				{dirty}
+				{busy}
+				{savedAt}
+				note={existing ? t('form.project.noteEdit') : t('form.project.noteCreate')}
+				saveLabel={existing ? t('form.project.saveSetup') : t('form.project.createWorkshop')}
+				submit
+			>
+				{#snippet extra()}
+					<Toggle
+						bind:checked={runEnvcheck}
+						label={t('form.project.envcheck')}
+						title={t('form.project.envcheckTitle')}
+					/>
+					<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
+				{/snippet}
+			</SaveBar>
+		{/if}
+	</fieldset>
 </form>
 
 <style>
@@ -455,6 +463,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
+		border: 0;
+		padding: 0;
+		margin: 0;
 		min-width: 0;
 	}
 	@media (max-width: 1000px) {

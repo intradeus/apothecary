@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/notices"
 )
 
@@ -46,12 +47,12 @@ func (s *Server) noticeRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/notices", ID: "listNotices", Tag: tagNotices,
 			Summary: "One's undismissed notices, newest first",
-			Handler: s.listNotices, Returns: []notices.Notice{}, Enabled: haveNotices},
+			Handler: s.listNotices, Returns: []notices.Notice{}, Enabled: haveNotices, Action: authz.NoticeRead},
 		{Method: "POST", Path: "/api/notices/{id}/dismiss", ID: "dismissNotice", Tag: tagNotices,
 			Summary: "Dismiss a notice",
-			Handler: s.dismissNotice, Status: http.StatusNoContent, Scope: ScopeNotice, Enabled: haveNotices},
+			Handler: s.dismissNotice, Status: http.StatusNoContent, Scope: ScopeNotice, Enabled: haveNotices, Action: authz.NoticeWrite},
 		{Method: "POST", Path: "/api/notices/dismiss", ID: "dismissAllNotices", Tag: tagNotices,
 			Summary: "Dismiss all of one's notices",
-			Handler: s.dismissAllNotices, Status: http.StatusNoContent, Enabled: haveNotices},
+			Handler: s.dismissAllNotices, Status: http.StatusNoContent, Enabled: haveNotices, Action: authz.NoticeWrite},
 	}
 }

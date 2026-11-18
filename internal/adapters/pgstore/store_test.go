@@ -449,7 +449,11 @@ func TestPingListingScopeStatusAndLimit(t *testing.T) {
 		{"", "pending", []string{"p3", "p2"}},
 	}
 	for _, c := range cases {
-		got, err := s.ListPings(ctx, c.user, c.status, 0)
+		var seen *run.Seen
+		if c.user != "" {
+			seen = &run.Seen{UserID: c.user}
+		}
+		got, err := s.ListPings(ctx, seen, c.status, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -468,7 +472,7 @@ func TestPingListingScopeStatusAndLimit(t *testing.T) {
 	if two, _ := s.GetPing(ctx, "p2"); two.Link != "https://x.local/mr" || two.PayloadRef != two.Link {
 		t.Errorf("link ping = %+v", two)
 	}
-	if lim, _ := s.ListPings(ctx, "", "", 2); len(lim) != 2 || lim[0].PingID != "p3" {
+	if lim, _ := s.ListPings(ctx, nil, "", 2); len(lim) != 2 || lim[0].PingID != "p3" {
 		t.Errorf("limit 2 = %+v", lim)
 	}
 }
@@ -484,7 +488,7 @@ func TestPingListLimitClamps(t *testing.T) {
 		t.Fatal(err)
 	}
 	for limit, want := range map[int]int{0: 100, -1: 100, 501: 100, 500: 101, 3: 3} {
-		got, err := s.ListPings(ctx, "", "", limit)
+		got, err := s.ListPings(ctx, nil, "", limit)
 		if err != nil || len(got) != want {
 			t.Errorf("limit %d = %d rows, %v; want %d", limit, len(got), err, want)
 		}
@@ -617,7 +621,7 @@ func TestProjectionMatchesReduceForPings(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := run.ReducePings(evs)
-	got, err := s.ListPings(ctx, "", "all", 0)
+	got, err := s.ListPings(ctx, nil, "all", 0)
 	if err != nil || len(got) != len(want) {
 		t.Fatalf("got %+v, want %+v (%v)", got, want, err)
 	}

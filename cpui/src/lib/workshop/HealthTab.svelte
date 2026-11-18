@@ -8,7 +8,13 @@
 	// and follows it while it runs.
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
-	import type { BuildCache, EnvCheck, Preflight, Project } from '$lib/domain';
+	import {
+		projectCan,
+		type BuildCache,
+		type EnvCheck,
+		type Preflight,
+		type Project
+	} from '$lib/domain';
 	import { ago, fmtAbs, fmtBytes, fmtDuration } from '$lib/core/format';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import Toggle from '$lib/ui/Toggle.svelte';
@@ -22,6 +28,10 @@
 	import TransportIcon from '$lib/ui/TransportIcon.svelte';
 
 	let { project }: { project: Project } = $props();
+
+	/** Preflight, the envcheck and the build cache all need project:write. */
+	const canWrite = $derived(projectCan(project, 'project:write'));
+	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
 	// --- preflight -----------------------------------------------------------
 
@@ -221,20 +231,27 @@
 				title={t('workshop.health.keepTitle')}
 			/>
 			{#if running}
-				<button class="btn-sm" aria-busy={cancelling} onclick={cancelEnvCheck}
+				<button
+					class="btn-sm"
+					aria-busy={cancelling}
+					disabled={!canWrite}
+					title={deny}
+					onclick={cancelEnvCheck}
 					><TransportIcon kind="stop" /> {t('workshop.health.cancel')}</button
 				>
 				<button
 					class="btn-sm"
 					aria-busy={starting}
-					title={t('workshop.health.restartTitle')}
+					disabled={!canWrite}
+					title={deny ?? t('workshop.health.restartTitle')}
 					onclick={startEnvCheck}>{I.retry} {t('workshop.health.restart')}</button
 				>
 			{:else}
 				<button
 					class="btn-sm btn-sel"
 					aria-busy={starting}
-					title={t('workshop.health.runEnvcheckTitle')}
+					disabled={!canWrite}
+					title={deny ?? t('workshop.health.runEnvcheckTitle')}
 					onclick={startEnvCheck}
 					>{#if check}{I.retry} {t('workshop.health.runAgain')}{:else}<TransportIcon kind="play" />
 						{t('workshop.health.runEnvcheck')}{/if}</button
@@ -292,7 +309,8 @@
 				class="btn-sm"
 				onclick={runPreflight}
 				aria-busy={preflight === 'running'}
-				disabled={preflight === 'running'}
+				disabled={!canWrite || preflight === 'running'}
+				title={deny}
 				>{#if preflight === 'running'}{t('workshop.health.checking')}{:else if preflight}{I.retry}
 					{t('workshop.health.checkAgain')}{:else}<TransportIcon kind="play" />
 					{t('workshop.health.runPreflight')}{/if}</button
@@ -338,7 +356,8 @@
 					class="btn-danger btn-sm"
 					onclick={clearBuildCache}
 					aria-busy={clearingCache}
-					disabled={clearingCache || !buildCache.bytes}
+					disabled={!canWrite || clearingCache || !buildCache.bytes}
+					title={deny}
 					>{clearingCache ? t('workshop.health.clearing') : t('workshop.health.clear')}</button
 				>
 			{/if}

@@ -22,7 +22,7 @@ const goodPassword = "correct horse"
 func (x *env) addPasswordUser(t *testing.T, handle string, admin bool) auth.User {
 	t.Helper()
 	res, body := x.do(t, "POST", "/api/users", UserCreateRequest{
-		Handle: handle, Email: handle + "@example.test", Password: goodPassword, Admin: admin,
+		Handle: handle, Email: handle + "@example.test", Password: goodPassword, Role: string(roleOf(admin)),
 	}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("create user = %d %s", res.StatusCode, body)
@@ -237,8 +237,8 @@ func TestProfileEdit(t *testing.T) {
 	}
 	// A body cannot make anyone an admin: no such field on the profile.
 	other := x.addUser(t, "plain", false)
-	res, body = x.do(t, "PUT", "/api/me", map[string]any{"name": "x", "admin": true}, other)
-	if res.StatusCode != http.StatusOK || decode[Me](t, body).User.Admin {
+	res, body = x.do(t, "PUT", "/api/me", map[string]any{"name": "x", "role": "admin"}, other)
+	if res.StatusCode != http.StatusOK || decode[Me](t, body).User.Role != auth.RoleMember {
 		t.Errorf("self-promotion = %d %s", res.StatusCode, body)
 	}
 }
@@ -298,7 +298,7 @@ func TestChangeMyPassword(t *testing.T) {
 func TestChangePasswordOverAToken(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	u := x.addPasswordUser(t, "lu", false)
-	secret, _, err := x.srv.Auth.NewToken(context.Background(), u.ID, "t", nil)
+	secret, _, err := x.srv.Auth.NewToken(context.Background(), u.ID, "t", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -330,9 +330,9 @@ func TestAdminManagesAccounts(t *testing.T) {
 	}
 
 	// Update: profile, admin, and an id that is not there.
-	res, body = x.do(t, "PUT", "/api/users/"+lu.ID, UserUpdateRequest{Name: "Lucas", Admin: ptr(true)}, nil)
+	res, body = x.do(t, "PUT", "/api/users/"+lu.ID, UserUpdateRequest{Name: "Lucas", Role: "admin"}, nil)
 	got := decode[auth.User](t, body)
-	if res.StatusCode != http.StatusOK || got.Name != "Lucas" || !got.Admin {
+	if res.StatusCode != http.StatusOK || got.Name != "Lucas" || got.Role != auth.RoleAdmin {
 		t.Fatalf("update = %d %s", res.StatusCode, body)
 	}
 	if res, body := x.do(t, "PUT", "/api/users/nope", UserUpdateRequest{Name: "x"}, nil); res.StatusCode != http.StatusNotFound {
@@ -345,16 +345,16 @@ func TestAdminManagesAccounts(t *testing.T) {
 		t.Errorf("malformed = %d", res.StatusCode)
 	}
 	// A no-op update changes nothing and touches nothing.
-	res, body = x.do(t, "PUT", "/api/users/"+lu.ID, UserUpdateRequest{Admin: ptr(true), Disabled: ptr(false)}, nil)
-	if res.StatusCode != http.StatusOK || !decode[auth.User](t, body).Admin {
+	res, body = x.do(t, "PUT", "/api/users/"+lu.ID, UserUpdateRequest{Role: "admin", Disabled: ptr(false)}, nil)
+	if res.StatusCode != http.StatusOK || decode[auth.User](t, body).Role != auth.RoleAdmin {
 		t.Errorf("no-op update = %d %s", res.StatusCode, body)
 	}
 
 	// The last admin stays one: step lu down, then try the tester.
-	if res, body := x.do(t, "PUT", "/api/users/"+lu.ID, UserUpdateRequest{Admin: ptr(false)}, nil); res.StatusCode != http.StatusOK {
+	if res, body := x.do(t, "PUT", "/api/users/"+lu.ID, UserUpdateRequest{Role: "member"}, nil); res.StatusCode != http.StatusOK {
 		t.Fatalf("step down = %d %s", res.StatusCode, body)
 	}
-	res, body = x.do(t, "PUT", "/api/users/"+testUser, UserUpdateRequest{Admin: ptr(false)}, nil)
+	res, body = x.do(t, "PUT", "/api/users/"+testUser, UserUpdateRequest{Role: "member"}, nil)
 	if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "last admin") {
 		t.Errorf("last admin stepping down = %d %s", res.StatusCode, body)
 	}

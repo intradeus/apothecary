@@ -1,7 +1,9 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aRun, aViewerProject } from '$test/fixtures';
 import type { Attachment, CurationDocument, CurationView, Ping, PingFile } from '$lib/domain';
 import { deferred } from '$test/helpers';
 import {
@@ -97,6 +99,24 @@ describe('CurationPage', () => {
 			.mockReset()
 			.mockResolvedValue(undefined as never);
 		vi.mocked(api.files.upload).mockReset();
+	});
+
+	describe('for a viewer of the run’s workshop', () => {
+		afterEach(() => {
+			fleet.projects = [];
+			fleet.runs = [];
+		});
+		it('holds both answers and says why', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			fleet.runs = [aRun({ id: 'rv', projectId: 'p1' })];
+			await setup(review(), { ping: { runId: 'rv' } });
+			await userEvent.type(feedbackBox(), 'No.');
+			expect(approve()).toBeDisabled();
+			expect(requestChanges()).toBeDisabled();
+			expect(
+				screen.getByText('Your role in this workshop does not allow this')
+			).toBeInTheDocument();
+		});
 	});
 
 	describe('loading', () => {

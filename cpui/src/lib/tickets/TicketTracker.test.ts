@@ -43,6 +43,24 @@ beforeEach(() => {
 	});
 });
 
+describe('TicketTracker, read only (no ticket:write)', () => {
+	it('shows status, labels and base branch but changes none of them', async () => {
+		render(TicketTracker, {
+			projectId: 'p1',
+			ticket: aTicketDetail({ key: 'P-1', status: 'To Do', labels: ['api'] }),
+			readonly: true,
+			onchange: vi.fn()
+		});
+		await waitFor(() => expect(api.integrations.statuses).toHaveBeenCalled());
+		const why = 'Your role in this workshop does not allow this';
+		expect(screen.getByRole('button', { name: 'Remove label api' })).toBeDisabled();
+		expect(screen.getByLabelText('Add a label…')).toBeDisabled();
+		expect(screen.getByLabelText('Base branch')).toHaveAttribute('title', why);
+		expect(screen.getByLabelText('Base branch')).toBeDisabled();
+		expect(screen.getByRole('button', { name: /Refresh/ })).toBeEnabled();
+	});
+});
+
 describe('TicketTracker, the status', () => {
 	it("moves the ticket by name through its source's statuses, read-only ones too", async () => {
 		const moved = aTicketDetail({ status: 'Done', done: true });

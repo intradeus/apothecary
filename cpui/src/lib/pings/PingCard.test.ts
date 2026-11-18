@@ -2,8 +2,9 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
 import type { PingLike } from '$lib/core/ping';
-import { aPing } from '$test/fixtures';
+import { aPing, aRun, aViewerProject } from '$test/fixtures';
 import { aFile, aForm, options } from '$test/fixtures/run.svelte';
 import { deferred } from '$test/helpers';
 import PingCard from './PingCard.svelte';
@@ -959,5 +960,34 @@ describe('while busy', () => {
 	it('shows busy on nothing when the card did not send it', () => {
 		setup({}, { busy: true });
 		expect(btn('Approve')).toHaveAttribute('aria-busy', 'false');
+	});
+});
+
+describe('for a viewer of the run’s workshop', () => {
+	beforeEach(() => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		fleet.runs = [aRun({ id: 'r1', projectId: 'p1' })];
+	});
+	afterEach(() => {
+		fleet.projects = [];
+		fleet.runs = [];
+	});
+
+	it('holds every answer and says why', () => {
+		setup({ runId: 'r1' } as Partial<PingLike>);
+		expect(btn('Approve')).toBeDisabled();
+		expect(btn(/request changes/i)).toBeDisabled();
+		expect(btn(/attach/i)).toBeDisabled();
+		expect(screen.getByText('Your role in this workshop does not allow this')).toBeInTheDocument();
+	});
+
+	it('keeps a manual stage’s editor and door shut', () => {
+		setup({ type: 'manual', stageId: 'work', question: 'Build it' }, { runId: 'r1' });
+		expect(btn(/open editor/i)).toBeDisabled();
+		expect(btn(/open editor/i)).toHaveAttribute(
+			'title',
+			'Your role in this workshop does not allow this'
+		);
+		expect(api.runs.ssh).not.toHaveBeenCalled();
 	});
 });

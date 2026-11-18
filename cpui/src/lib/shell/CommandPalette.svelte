@@ -11,6 +11,7 @@
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import { prefs } from '$lib/app/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { THEMES } from '$lib/design/themes';
@@ -178,12 +179,17 @@
 						}
 					]
 				: []),
-			{
-				group: 'do' as const,
-				label: t('shell.palette.newWorkshop'),
-				glyph: I.add,
-				run: go(to.newWorkshop())
-			},
+			// A guest creates no workshop.
+			...(session.guest
+				? []
+				: [
+						{
+							group: 'do' as const,
+							label: t('shell.palette.newWorkshop'),
+							glyph: I.add,
+							run: go(to.newWorkshop())
+						}
+					]),
 			...THEMES.filter((th) => th.id !== prefs.theme).map((th) => ({
 				group: 'do' as const,
 				label: t('shell.palette.useTheme', { theme: th.label.toLowerCase() }),

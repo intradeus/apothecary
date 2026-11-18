@@ -7,6 +7,8 @@ import { goto } from '$app/navigation';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { prefs } from '$lib/app/prefs.svelte';
+import { session } from '$lib/app/session.svelte';
+import type { Me } from '$lib/domain';
 import { aPing, aProject, aRun, aTicketRow } from '$test/fixtures';
 import { anIntegration, bindable } from '$test/fixtures/app.svelte';
 import { aHold, anOpenMr } from '$test/fixtures/run-components';
@@ -34,6 +36,7 @@ beforeEach(() => {
 	vi.mocked(api.projects.mergeRequests).mockResolvedValue([]);
 	vi.mocked(api.integrations.list).mockResolvedValue([]);
 	fleet.reset();
+	session.me = null;
 	page.params = {};
 	prefs.theme = 'ember-sky';
 	prefs.collapsed = false;
@@ -84,9 +87,17 @@ describe('CommandPalette, listing', () => {
 
 		const all = labels().join('|');
 		expect(all).toContain('New run');
+		expect(all).toContain('New workshop');
 		expect(all).toContain('Fix the invoice');
 		expect(all).not.toContain('billing');
 		expect(all).not.toContain('A ticket');
+	});
+
+	it('offers a guest no New workshop: it creates none', async () => {
+		session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', role: 'guest' } } as Me;
+		setup();
+		await tick();
+		expect(labels().join('|')).not.toContain('New workshop');
 	});
 
 	it('offers New ticket only where the workshop’s source is the internal tracker', async () => {

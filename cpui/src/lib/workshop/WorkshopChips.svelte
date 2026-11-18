@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
 	import { portLabel } from '$lib/core/format';
-	// A workshop's repository / harness chips (DESIGN 7.7).
+	// A workshop's repository / harness chips (DESIGN 7.7). None on a workshop
+	// shared with the caller: its integrations are the owner's, which the
+	// caller cannot read, so every one would look missing.
 	import type { Integration, Project } from '$lib/domain';
 
 	let { project, integrations }: { project: Project; integrations: Integration[] | null } =
@@ -12,10 +14,14 @@
 		byId.get(id)?.name ?? (integrations ? t('workshop.chips.missing') : '…');
 	const missing = (id: string) => !!integrations && !byId.has(id);
 
-	const chips = $derived([
-		{ k: 'repository', ids: [project.repoAccountId] },
-		{ k: 'harness', ids: project.harnessIds ?? [] }
-	]);
+	const chips = $derived(
+		project.ownerHandle
+			? []
+			: [
+					{ k: 'repository', ids: [project.repoAccountId] },
+					{ k: 'harness', ids: project.harnessIds ?? [] }
+				]
+	);
 </script>
 
 <span class="chips wc">

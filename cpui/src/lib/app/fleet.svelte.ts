@@ -11,7 +11,8 @@
 import { errorMessage } from '$lib/core/errors';
 import { api } from '$lib/api';
 import { isTerminal, stateTab } from '$lib/core/format';
-import type { Limits, Notice, Ping, Project, Run } from '$lib/domain';
+import type { Limits, Notice, Ping, Project, ProjectAction, Run } from '$lib/domain';
+import { projectCan } from '$lib/domain';
 
 const POLL_MS = 4000;
 
@@ -60,6 +61,13 @@ class Fleet {
 	/** What the inbox badge counts: pending pings and held runs. */
 	readonly inboxCount = $derived(this.pending.length + this.held.length);
 	readonly projectById = $derived(new Map(this.projects.map((p) => [p.id, p])));
+
+	/** Whether the caller may do `action` in a run's or ticket's workshop.
+	 *  No workshop = a personal run, only ever its owner's: everything. A
+	 *  workshop not (yet) listed grants nothing. Reactive inside components. */
+	can(projectId: string | undefined, action: ProjectAction): boolean {
+		return !projectId || projectCan(this.projectById.get(projectId), action);
+	}
 
 	/** A workshop's name, or a short id while projects are loading (or for
 	 *  one that was deleted). Reactive inside components. */

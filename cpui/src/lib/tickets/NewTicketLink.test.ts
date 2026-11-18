@@ -1,12 +1,13 @@
 import { render, screen } from '@testing-library/svelte';
 import { describe, expect, it } from 'vitest';
+import { aProject, aViewerProject } from '$test/fixtures';
 import { anIntegration } from '$test/fixtures/app.svelte';
 import NewTicketLink from './NewTicketLink.svelte';
 
-const project = { id: 'p1', ticketSourceId: 'src' };
-const setup = (integrations: Parameters<typeof anIntegration>[0][] | null) =>
+const project = aProject({ id: 'p1', ticketSourceId: 'src' });
+const setup = (integrations: Parameters<typeof anIntegration>[0][] | null, p = project) =>
 	render(NewTicketLink, {
-		project,
+		project: p,
 		integrations: integrations && integrations.map(anIntegration),
 		label: 'New ticket',
 		cls: 'btn-sm'
@@ -18,6 +19,14 @@ describe('NewTicketLink', () => {
 		const a = screen.getByRole('link', { name: /New ticket/ });
 		expect(a).toHaveAttribute('href', '/tickets/new?project=p1');
 		expect(a).toHaveClass('btn', 'btn-sm');
+	});
+
+	it('offers nothing to a role that may not write tickets (ticket:write)', () => {
+		setup(
+			[{ id: 'src', kind: 'internal', port: 'ticketsource' }],
+			aViewerProject({ id: 'p1', ticketSourceId: 'src' })
+		);
+		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
 	});
 
 	it('opens a remote tracker instead', () => {

@@ -17,12 +17,14 @@ import type {
 	CliLogin,
 	Limits,
 	Me,
+	Permission,
 	SshKey,
 	Token,
-	User
+	User,
+	UserRole
 } from '$lib/domain';
 import type { Credential, Notice, ProviderInfo, SignInPending } from '$lib/domain';
-import { asChangeType } from '$lib/domain';
+import { asChangeType, MEMBER_ROLES } from '$lib/domain';
 import type {
 	Skill,
 	SkillDetail,
@@ -115,7 +117,10 @@ import type {
 	Port,
 	Preflight,
 	PreflightStep,
+	Member,
+	MemberRole,
 	Project,
+	ProjectRole,
 	ProjectSecret,
 	Repo,
 	ResolvedPath,
@@ -847,7 +852,7 @@ export function fromTrackerType(t: TrackerType): Wire.TrackerType {
 
 // --- projects ----------------------------------------------------------------
 
-function toWorkspacePolicy(w: Wire.Project['workspace']): WorkspacePolicy {
+function toWorkspacePolicy(w: Wire.ProjectView['workspace']): WorkspacePolicy {
 	return {
 		extraDomains: list(w?.extra_domains),
 		egressMode: w?.egress_mode,
@@ -872,7 +877,16 @@ function toWorkspacePolicy(w: Wire.Project['workspace']): WorkspacePolicy {
 	};
 }
 
-export function toProject(w: Wire.Project): Project {
+const PROJECT_ROLES: readonly ProjectRole[] = ['owner', 'maintainer', 'operator', 'viewer'];
+
+/** An unknown role reads as the least one: it grants what its actions say,
+ *  nothing more. */
+const asProjectRole = (r: string): ProjectRole =>
+	(PROJECT_ROLES as readonly string[]).includes(r) ? (r as ProjectRole) : 'viewer';
+const asMemberRole = (r: string): MemberRole =>
+	(MEMBER_ROLES as readonly string[]).includes(r) ? (r as MemberRole) : 'viewer';
+
+export function toProject(w: Wire.ProjectView): Project {
 	return {
 		id: w.id ?? '',
 		name: w.name ?? '',
@@ -896,8 +910,21 @@ export function toProject(w: Wire.Project): Project {
 		workspace: toWorkspacePolicy(w.workspace),
 		defaultFlow: w.default_flow ?? '',
 		ticketSourceId: w.ticket_source_id ?? '',
+		ownerId: w.user_id ?? '',
+		ownerHandle: w.owner_handle || undefined,
+		access: { role: asProjectRole(w.access?.role ?? ''), actions: list(w.access?.actions) },
 		createdAt: w.created_at ?? '',
 		updatedAt: w.updated_at ?? ''
+	};
+}
+
+export function toMember(w: Wire.Member): Member {
+	return {
+		userId: w.user_id,
+		handle: w.handle,
+		name: w.name,
+		role: asMemberRole(w.role),
+		createdAt: w.created_at
 	};
 }
 
@@ -1334,13 +1361,16 @@ export function toLimits(w: Wire.LimitsInfo): Limits {
 
 // --- accounts ----------------------------------------------------------------
 
+/** An unknown instance role reads as the least one. */
+const asUserRole = (r: string): UserRole => (r === 'admin' || r === 'member' ? r : 'guest');
+
 export function toUser(w: Wire.User): User {
 	return {
 		id: w.id,
 		handle: w.handle,
 		email: w.email,
 		name: w.name,
-		admin: w.admin,
+		role: asUserRole(w.role),
 		disabled: !!w.disabled_at,
 		lastSeenAt: w.last_seen_at || undefined,
 		createdAt: w.created_at
@@ -1363,8 +1393,14 @@ export function toToken(w: Wire.Token): Token {
 		createdAt: w.created_at,
 		lastUsedAt: w.last_used_at || undefined,
 		expiresAt: w.expires_at || undefined,
-		idleSeconds: w.idle_seconds || undefined
+		idleSeconds: w.idle_seconds || undefined,
+		actions: w.actions ?? undefined,
+		projectIds: w.project_ids?.length ? w.project_ids : undefined
 	};
+}
+
+export function toPermission(w: Wire.Permission): Permission {
+	return { action: w.action, kind: w.kind, doc: w.doc, grantable: w.grantable };
 }
 
 export function toCliLogin(w: Wire.CliLoginInfo): CliLogin {

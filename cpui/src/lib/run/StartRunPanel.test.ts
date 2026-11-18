@@ -6,6 +6,7 @@ import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { aFlow, aWorkshop, bindable } from '$test/fixtures/app.svelte';
+import { aRun, aViewerProject } from '$test/fixtures';
 import StartRunPanel from './StartRunPanel.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -55,6 +56,7 @@ beforeEach(() => {
 });
 afterEach(() => {
 	fleet.projects = [];
+	fleet.runs = [];
 });
 
 describe('StartRunPanel', () => {
@@ -87,6 +89,14 @@ describe('StartRunPanel', () => {
 		expect(start).toHaveAttribute('aria-busy', 'true');
 	});
 
+	it('holds Start where the role may not start a run (run:operate)', () => {
+		fleet.projects = [aViewerProject({ id: 'p1', defaultFlow: 'builder' })];
+		setup();
+		const start = screen.getByRole('button', { name: /Start run/ });
+		expect(start).toBeDisabled();
+		expect(start).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
+
 	describe('a run in the way', () => {
 		const busy = '01BUSY0000000000000000WXYZ';
 
@@ -113,6 +123,15 @@ describe('StartRunPanel', () => {
 			setup({ busyRun: busy });
 			await userEvent.click(screen.getByRole('button', { name: 'Abort run' }));
 			expect(api.runs.abort).not.toHaveBeenCalled();
+		});
+
+		it('holds the stop where the run’s workshop does not allow it (run:operate)', () => {
+			fleet.projects = [aWorkshop({ id: 'p1' }), aViewerProject({ id: 'p2' })];
+			fleet.runs = [aRun({ id: busy, projectId: 'p2' })];
+			setup({ busyRun: busy });
+			const stop = screen.getByRole('button', { name: 'Abort run' });
+			expect(stop).toBeDisabled();
+			expect(stop).toHaveAttribute('title', 'Your role in this workshop does not allow this');
 		});
 
 		it('says why a stop failed', async () => {

@@ -15,9 +15,9 @@ exec deploy/apothecaryd -- apothecaryd <cmd>`):
 | `apothecaryd envcheck -project <name> [-keep]` | the compliance gate, from the terminal |
 | `apothecaryd validate <flow.yaml>` | check a flow file before pasting it into the UI |
 | `apothecaryd rebuild-projections` | rebuild read models from the event log |
-| `apothecaryd user list` | every account |
+| `apothecaryd user list` | every account, with its role |
 | `apothecaryd user reset-password <handle> [-password <pw>]` | set an account's password from the terminal (the way back in after a lockout) |
-| `apothecaryd user set-admin <handle> [-off]` | make or unmake an instance admin |
+| `apothecaryd user set-role <handle> admin\|member\|guest` | change an account's instance role (the way back to an admin) |
 | `apothecaryd shim-hash` | the shim source hash a published shim image must carry |
 | `apothecaryd tools-hash` | the tools bundle hash a published tools image carries |
 | `apothecaryd version` | build version |

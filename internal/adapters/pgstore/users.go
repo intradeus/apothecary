@@ -16,11 +16,11 @@ import (
 // Accounts (TODO 25): pgstore implements auth.DB. Secrets (password hashes)
 // are opaque bytes to this layer; sessions and tokens are stored by hash.
 
-const userCols = `id, handle, email, name, admin, disabled_at, last_seen_at, created_at, updated_at`
+const userCols = `id, handle, email, name, role, disabled_at, last_seen_at, created_at, updated_at`
 
 func scanUser(row pgx.Row) (auth.User, error) {
 	var u auth.User
-	err := row.Scan(&u.ID, &u.Handle, &u.Email, &u.Name, &u.Admin, &u.DisabledAt, &u.LastSeenAt, &u.CreatedAt, &u.UpdatedAt)
+	err := row.Scan(&u.ID, &u.Handle, &u.Email, &u.Name, &u.Role, &u.DisabledAt, &u.LastSeenAt, &u.CreatedAt, &u.UpdatedAt)
 	return u, err
 }
 
@@ -42,15 +42,15 @@ func userConflict(err error, u auth.User) error {
 
 func (s *Store) CreateUser(ctx context.Context, u auth.User) error {
 	_, err := s.pool.Exec(ctx, `
-		INSERT INTO users (`+userCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		u.ID, u.Handle, u.Email, u.Name, u.Admin, u.DisabledAt, u.LastSeenAt, u.CreatedAt, u.UpdatedAt)
+		INSERT INTO users (`+userCols+`) VALUES ($1,$2,$3,$4,COALESCE(NULLIF($5,''),'member'),$6,$7,$8,$9)`,
+		u.ID, u.Handle, u.Email, u.Name, string(u.Role), u.DisabledAt, u.LastSeenAt, u.CreatedAt, u.UpdatedAt)
 	return userConflict(err, u)
 }
 
 func (s *Store) UpdateUser(ctx context.Context, u auth.User) error {
 	tag, err := s.pool.Exec(ctx, `
-		UPDATE users SET handle=$2, email=$3, name=$4, admin=$5, disabled_at=$6, updated_at=$7 WHERE id=$1`,
-		u.ID, u.Handle, u.Email, u.Name, u.Admin, u.DisabledAt, u.UpdatedAt)
+		UPDATE users SET handle=$2, email=$3, name=$4, role=COALESCE(NULLIF($5,''),'member'), disabled_at=$6, updated_at=$7 WHERE id=$1`,
+		u.ID, u.Handle, u.Email, u.Name, string(u.Role), u.DisabledAt, u.UpdatedAt)
 	if err != nil {
 		return userConflict(err, u)
 	}
@@ -235,12 +235,12 @@ func (s *Store) DeleteSessionsOf(ctx context.Context, userID string) error {
 
 // --- tokens -------------------------------------------------------------------
 
-const tokenCols = `id, user_id, name, hash, prefix, created_at, last_used_at, expires_at, idle_seconds`
+const tokenCols = `id, user_id, name, hash, prefix, created_at, last_used_at, expires_at, idle_seconds, actions, project_ids`
 
 func scanToken(row pgx.Row) (auth.Token, error) {
 	var t auth.Token
 	var idle *int
-	err := row.Scan(&t.ID, &t.UserID, &t.Name, &t.Hash, &t.Prefix, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt, &idle)
+	err := row.Scan(&t.ID, &t.UserID, &t.Name, &t.Hash, &t.Prefix, &t.CreatedAt, &t.LastUsedAt, &t.ExpiresAt, &idle, &t.Actions, &t.ProjectIDs)
 	if idle != nil {
 		t.IdleSeconds = int(*idle)
 	}
@@ -252,8 +252,8 @@ func (s *Store) CreateToken(ctx context.Context, t auth.Token) error {
 	if t.IdleSeconds > 0 {
 		idle = &t.IdleSeconds
 	}
-	_, err := s.pool.Exec(ctx, `INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-		t.ID, t.UserID, t.Name, t.Hash, t.Prefix, t.CreatedAt, t.LastUsedAt, t.ExpiresAt, idle)
+	_, err := s.pool.Exec(ctx, `INSERT INTO api_tokens (`+tokenCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+		t.ID, t.UserID, t.Name, t.Hash, t.Prefix, t.CreatedAt, t.LastUsedAt, t.ExpiresAt, idle, t.Actions, t.ProjectIDs)
 	return err
 }
 

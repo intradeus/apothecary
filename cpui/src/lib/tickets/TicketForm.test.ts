@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { TicketDetail, TrackerType } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aProject, aTicketDetail } from '$test/fixtures';
+import { aProject, aTicketDetail, aViewerProject } from '$test/fixtures';
 import { choose } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import TicketForm from './TicketForm.svelte';
@@ -43,6 +43,16 @@ beforeEach(() => {
 	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.files.limits).mockResolvedValue(null as never);
 	toasts.list = [];
+});
+
+describe('TicketForm, without ticket:write', () => {
+	it('cannot create, and says why', async () => {
+		setup({ project: aViewerProject({ id: 'p1', ticketSourceId: 'own' }) });
+		await userEvent.type(title(), 'T');
+		await userEvent.type(goal(), 'G');
+		expect(create()).toBeDisabled();
+		expect(create()).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
 });
 
 describe('TicketForm, creating', () => {

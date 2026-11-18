@@ -2,8 +2,9 @@ package main
 
 // Accounts from the terminal (TODO 25): what an operator with shell access
 // can do when the UI cannot — list who exists, reset a password (the way
-// back in after a lockout), make or unmake an admin. Everything else about
-// accounts is the UI's.
+// back in after a lockout), change an account's role (admin, member,
+// guest: the way back to an admin). Everything else about accounts is the
+// UI's.
 
 import (
 	"bufio"
@@ -21,7 +22,7 @@ import (
 
 func cmdUser(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: apothecaryd user list | reset-password <handle> [-password <pw>] | set-admin <handle> [-off]")
+		return errors.New("usage: apothecaryd user list | reset-password <handle> [-password <pw>] | set-role <handle> admin|member|guest")
 	}
 	boot, err := config.FromEnv()
 	if err != nil {
@@ -46,10 +47,7 @@ func cmdUser(args []string) error {
 			return nil
 		}
 		for _, u := range users {
-			flags := ""
-			if u.Admin {
-				flags += " admin"
-			}
+			flags := " " + string(u.Role)
 			if u.Disabled() {
 				flags += " disabled"
 			}
@@ -78,25 +76,18 @@ func cmdUser(args []string) error {
 		}
 		fmt.Printf("password set for %s; every session signed out\n", u.Handle)
 		return nil
-	case "set-admin":
-		fs := flag.NewFlagSet("user set-admin", flag.ExitOnError)
-		off := fs.Bool("off", false, "remove instance administration instead")
-		_ = fs.Parse(args[1:])
-		if fs.NArg() != 1 {
-			return errors.New("usage: apothecaryd user set-admin <handle|email> [-off]")
+	case "set-role":
+		if len(args) != 3 {
+			return errors.New("usage: apothecaryd user set-role <handle|email> admin|member|guest")
 		}
-		u, err := svc.GetUserByLogin(ctx, fs.Arg(0))
+		u, err := svc.GetUserByLogin(ctx, args[1])
 		if err != nil {
 			return err
 		}
-		if _, err := svc.SetAdmin(ctx, u.ID, !*off); err != nil {
+		if _, err := svc.SetRole(ctx, u.ID, auth.Role(args[2])); err != nil {
 			return err
 		}
-		if *off {
-			fmt.Printf("%s is no longer an admin\n", u.Handle)
-		} else {
-			fmt.Printf("%s is an admin\n", u.Handle)
-		}
+		fmt.Printf("%s is now %s\n", u.Handle, args[2])
 		return nil
 	default:
 		return fmt.Errorf("unknown user command %q", args[0])

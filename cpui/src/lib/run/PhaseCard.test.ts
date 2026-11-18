@@ -12,6 +12,7 @@ type Props = {
 	spent: boolean;
 	busy: boolean;
 	locked: boolean;
+	allowed: boolean;
 	onrun: (ev: MouseEvent) => void;
 };
 
@@ -43,6 +44,12 @@ const hold = (why: string, seen: boolean): PhaseHold => ({
 });
 
 describe('PhaseCard', () => {
+	it('holds Run now from a role that cannot operate the run, saying why', () => {
+		show({}, { allowed: false });
+		expect(runNow()).toBeDisabled();
+		expect(runNow()).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
+
 	describe('what opens it', () => {
 		it.each([
 			[

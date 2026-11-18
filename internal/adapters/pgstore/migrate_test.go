@@ -621,6 +621,86 @@ func TestInstanceProvisionerMigration(t *testing.T) {
 	}
 }
 
+// 0010: the admin flag becomes a role, in one step — an admin is an admin,
+// everyone else a member — and the column refuses any fourth role.
+func TestUserRolesMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 9))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO users (id, handle, email, name, admin, created_at, updated_at) VALUES
+		  ('u1', 'root', 'r@x', 'Root', true, now(), now()),
+		  ('u2', 'lu', 'l@x', 'Lu', false, now(), now())`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	for id, want := range map[string]auth.Role{"u1": auth.RoleAdmin, "u2": auth.RoleMember} {
+		if u, err := s.GetUser(ctx, id); err != nil || u.Role != want {
+			t.Errorf("%s = %q, %v; want %s", id, u.Role, err, want)
+		}
+	}
+	if _, err := s.pool.Exec(ctx, `UPDATE users SET role = 'owner' WHERE id = 'u2'`); err == nil {
+		t.Error("the column took a fourth role")
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM information_schema.columns WHERE table_name = 'users' AND column_name = 'admin'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("the admin column is still there (%d, %v)", n, err)
+	}
+}
+
+// 0011: a workshop's members go with the workshop.
+func TestProjectMembersMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 10))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO users (id, handle, email, name, created_at, updated_at) VALUES
+		  ('u1', 'one', 'o@x', 'One', now(), now()), ('u2', 'two', 't@x', 'Two', now(), now());
+		INSERT INTO integrations (id, port, kind, name, created_at, updated_at, user_id) VALUES
+		  ('repo1', 'repository', 'github', 'gh', now(), now(), 'u1');
+		INSERT INTO projects (id, name, repo_account_id, provisioner_id, ticket_source_id, repo, default_flow, created_at, updated_at, user_id) VALUES
+		  ('p1', 'mine', 'repo1', 'repo1', 'repo1', '{}', 'builder', now(), now(), 'u1')`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	if _, err := s.pool.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ('p1', 'u2', 'viewer', now())`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.pool.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role, created_at) VALUES ('p1', 'u1', 'owner', now())`); err == nil {
+		t.Error("a member row took the owner role")
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM projects WHERE id = 'p1'`); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := s.pool.QueryRow(ctx, `SELECT count(*) FROM project_members`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("members after the project went = %d, %v", n, err)
+	}
+}
+
+// 0012: every token minted before grants existed reads back as full.
+func TestTokenGrantsMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 11))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO users (id, handle, email, name, created_at, updated_at) VALUES ('u1', 'one', 'o@x', 'One', now(), now());
+		INSERT INTO api_tokens (id, user_id, name, hash, prefix, created_at) VALUES ('t1', 'u1', 'ci', 'h1', 'apo_x', now())`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	tok, err := s.GetTokenByHash(ctx, "h1")
+	if err != nil || tok.Scoped() || tok.Actions != nil || tok.ProjectIDs != nil {
+		t.Errorf("an old token = %+v, %v; want full", tok, err)
+	}
+}
+
 // TestInitMigrationIsFrozen: 0001_init.sql is the v1.0.0 schema, and every
 // database out there has applied version 1. An edit to the file reaches NONE
 // of them (the runner never re-runs an applied version), so the daemon boots

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/project/channels"
 )
@@ -73,12 +74,12 @@ func (s *Server) channelRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/channels", ID: "listChannels", Tag: tagChannels,
 			Summary: "One's notification channels (secrets masked)",
-			Handler: s.listChannels, Returns: []channels.Entry{}},
+			Handler: s.listChannels, Returns: []channels.Entry{}, Action: authz.ChannelRead},
 		{Method: "POST", Path: "/api/channels", ID: "addChannel", Tag: tagChannels,
 			Summary: "Add a notification channel",
-			Handler: s.addChannel, Body: ChannelRequest{}, Returns: channels.Entry{}, Status: http.StatusCreated},
+			Handler: s.addChannel, Body: ChannelRequest{}, Returns: channels.Entry{}, Status: http.StatusCreated, Action: authz.ChannelWrite},
 		{Method: "DELETE", Path: "/api/channels/{id}", ID: "deleteChannel", Tag: tagChannels,
 			Summary: "Remove a notification channel",
-			Handler: s.deleteChannel, Status: http.StatusNoContent, Scope: ScopeChannel},
+			Handler: s.deleteChannel, Status: http.StatusNoContent, Scope: ScopeChannel, Action: authz.ChannelWrite},
 	}
 }

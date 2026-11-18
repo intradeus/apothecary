@@ -174,6 +174,8 @@ describe('RunHeader', () => {
 		};
 
 		beforeEach(() => {
+			// The run's workshop is the caller's own: a rerun is theirs to start.
+			fleet.projects = [aProject({ id: 'p1' })];
 			vi.mocked(api.runs.rerun).mockResolvedValue('01NEWRUN00000000000000WXYZ');
 		});
 

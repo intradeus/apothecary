@@ -44,12 +44,12 @@ func (f *fakeStore) Values(_ context.Context, c Compiled) ([]string, error) {
 	return f.values, f.err
 }
 
-func (f *fakeStore) FlowVersionLabels(_ context.Context, _ string, hashes []string) (map[string]string, error) {
+func (f *fakeStore) FlowVersionLabels(_ context.Context, _ []string, hashes []string) (map[string]string, error) {
 	f.labelAsks = append(f.labelAsks, hashes)
 	return f.flows, f.labelErr
 }
 
-func (f *fakeStore) ProjectNames(_ context.Context, _ string, ids []string) (map[string]string, error) {
+func (f *fakeStore) ProjectNames(_ context.Context, _ []string, ids []string) (map[string]string, error) {
 	f.labelAsks = append(f.labelAsks, ids)
 	return f.projects, f.labelErr
 }
@@ -138,12 +138,12 @@ func TestQueryTruncatesFlagsAndLabels(t *testing.T) {
 		f.rows = append(f.rows, Row{Dims: []string{"p1", []string{"h1", "abcdef0123", ""}[i]}, Values: []*float64{new(float64(i))}, N: int64(4 + i)})
 	}
 	s := newService(f)
-	res, err := s.Query(context.Background(), "u1", Query{Grain: GrainRuns, GroupBy: []string{"project_id", "flow_hash"},
+	res, err := s.Query(context.Background(), "u1", []string{"p1"}, Query{Grain: GrainRuns, GroupBy: []string{"project_id", "flow_hash"},
 		Measures: []MeasureRef{{Field: "cost_usd", Agg: AggSum}}, Limit: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.last.Args[0] != "u1" || !strings.HasSuffix(f.last.SQL, "LIMIT 3") {
+	if bound(f.last) != "[p1]" || !strings.HasSuffix(f.last.SQL, "LIMIT 3") {
 		t.Errorf("compiled %v %s", f.last.Args, f.last.SQL)
 	}
 	if !res.Truncated || len(res.Rows) != 2 || !res.Rows[0].Small || res.Rows[1].Small {
@@ -159,21 +159,21 @@ func TestQueryTruncatesFlagsAndLabels(t *testing.T) {
 
 	// No rows is an empty list, not null; no label lookups for no values.
 	f.rows, f.labelAsks = nil, nil
-	res, err = s.Query(context.Background(), "u1", Query{Grain: GrainRuns, GroupBy: []string{"flow_hash"}})
+	res, err = s.Query(context.Background(), "u1", []string{"p1"}, Query{Grain: GrainRuns, GroupBy: []string{"flow_hash"}})
 	if err != nil || res.Rows == nil || len(res.Rows) != 0 || res.Truncated || len(f.labelAsks) != 0 {
 		t.Errorf("empty = %+v, %v, asks %v", res, err, f.labelAsks)
 	}
 
 	f.labelErr = errors.New("boom")
 	f.rows = []Row{{Dims: []string{"h"}, N: 9}}
-	if _, err := s.Query(context.Background(), "u1", Query{Grain: GrainRuns, GroupBy: []string{"flow_hash"}}); err == nil {
+	if _, err := s.Query(context.Background(), "u1", []string{"p1"}, Query{Grain: GrainRuns, GroupBy: []string{"flow_hash"}}); err == nil {
 		t.Error("label error swallowed")
 	}
 	f.labelErr, f.err = nil, ErrTimeout
-	if _, err := s.Query(context.Background(), "u1", Query{Grain: GrainRuns}); !errors.Is(err, ErrTimeout) {
+	if _, err := s.Query(context.Background(), "u1", []string{"p1"}, Query{Grain: GrainRuns}); !errors.Is(err, ErrTimeout) {
 		t.Errorf("store error = %v", err)
 	}
-	if _, err := s.Query(context.Background(), "u1", Query{Grain: "x"}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Query(context.Background(), "u1", []string{"p1"}, Query{Grain: "x"}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("bad query = %v", err)
 	}
 }
@@ -188,7 +188,7 @@ func TestQueryScoresByAScorecardTheCallerMayUse(t *testing.T) {
 	}
 	s := newService(f)
 	q := Query{Grain: GrainRuns, GroupBy: []string{"flow_name"}, Score: &ScoreSpec{Scorecard: "mine"}, Order: &OrderBy{By: "score", Desc: true}}
-	res, err := s.Query(context.Background(), "u1", q)
+	res, err := s.Query(context.Background(), "u1", []string{"p1"}, q)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,12 +196,12 @@ func TestQueryScoresByAScorecardTheCallerMayUse(t *testing.T) {
 		t.Errorf("scored %+v", res.Rows)
 	}
 	q.Score = &ScoreSpec{Scorecard: "builtin-cheapest", Baseline: []string{"zz"}}
-	if _, err := s.Query(context.Background(), "u1", q); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Query(context.Background(), "u1", []string{"p1"}, q); !errors.Is(err, ErrInvalid) {
 		t.Errorf("missing baseline = %v", err)
 	}
 	for _, id := range []string{"theirs", "nope", "builtin-nope"} {
 		q.Score = &ScoreSpec{Scorecard: id}
-		if _, err := s.Query(context.Background(), "u1", q); !errors.Is(err, ErrNotFound) {
+		if _, err := s.Query(context.Background(), "u1", []string{"p1"}, q); !errors.Is(err, ErrNotFound) {
 			t.Errorf("%s = %v", id, err)
 		}
 	}
@@ -212,7 +212,7 @@ func TestValuesAndDrill(t *testing.T) {
 	f.values = []string{"", "h1", "h2"}
 	f.flows = map[string]string{"h1": "f v1"}
 	s := newService(f)
-	vals, err := s.Values(context.Background(), "u1", GrainRuns, "flow_hash", TimeRange{Bucket: BucketWeek})
+	vals, err := s.Values(context.Background(), []string{"p1"}, GrainRuns, "flow_hash", TimeRange{Bucket: BucketWeek})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,27 +220,27 @@ func TestValuesAndDrill(t *testing.T) {
 	if fmt.Sprint(vals) != fmt.Sprint(want) {
 		t.Errorf("values %v", vals)
 	}
-	if strings.Contains(f.last.SQL, "date_trunc") || f.last.Args[0] != "u1" {
+	if strings.Contains(f.last.SQL, "date_trunc") || bound(f.last) != "[p1]" {
 		t.Errorf("values SQL %s", f.last.SQL)
 	}
 	f.values = []string{"completed"}
-	if vals, err := s.Values(context.Background(), "u1", GrainRuns, "state", TimeRange{}); err != nil || vals[0] != (Value{"completed", "completed"}) {
+	if vals, err := s.Values(context.Background(), []string{"p1"}, GrainRuns, "state", TimeRange{}); err != nil || vals[0] != (Value{"completed", "completed"}) {
 		t.Errorf("state values %v %v", vals, err)
 	}
-	if _, err := s.Values(context.Background(), "u1", GrainRuns, "nope", TimeRange{}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Values(context.Background(), []string{"p1"}, GrainRuns, "nope", TimeRange{}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("bad field = %v", err)
 	}
 	f.err = errors.New("down")
-	if _, err := s.Values(context.Background(), "u1", GrainRuns, "state", TimeRange{}); err == nil {
+	if _, err := s.Values(context.Background(), []string{"p1"}, GrainRuns, "state", TimeRange{}); err == nil {
 		t.Error("store error swallowed")
 	}
 	f.err = nil
 
-	runs, err := s.Drill(context.Background(), "u1", GrainPings, []Filter{{Field: "type", Op: OpEq, Values: []string{"gate"}}}, TimeRange{})
+	runs, err := s.Drill(context.Background(), []string{"p1"}, GrainPings, []Filter{{Field: "type", Op: OpEq, Values: []string{"gate"}}}, TimeRange{})
 	if err != nil || runs == nil || len(runs) != 0 || !strings.Contains(f.last.SQL, "p.run_id") {
 		t.Errorf("drill %v %v %s", runs, err, f.last.SQL)
 	}
-	if _, err := s.Drill(context.Background(), "u1", GrainTickets, nil, TimeRange{}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.Drill(context.Background(), []string{"p1"}, GrainTickets, nil, TimeRange{}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("tickets drill = %v", err)
 	}
 }
@@ -443,7 +443,7 @@ func TestLabelsWhenTheStoreHasNone(t *testing.T) {
 	f := newFake()
 	f.rows = []Row{{Dims: []string{"p1", "abcdef0123"}, N: 9}}
 	s := newService(f)
-	res, err := s.Query(context.Background(), "u1", Query{Grain: GrainRuns, GroupBy: []string{"project_id", "flow_hash"}})
+	res, err := s.Query(context.Background(), "u1", []string{"p1"}, Query{Grain: GrainRuns, GroupBy: []string{"project_id", "flow_hash"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -451,12 +451,12 @@ func TestLabelsWhenTheStoreHasNone(t *testing.T) {
 		t.Errorf("labels = %v", res.Labels)
 	}
 	f.values = []string{"p1"}
-	vals, err := s.Values(context.Background(), "u1", GrainRuns, "project_id", TimeRange{})
+	vals, err := s.Values(context.Background(), []string{"p1"}, GrainRuns, "project_id", TimeRange{})
 	if err != nil || len(vals) != 1 || vals[0] != (Value{"p1", "p1"}) {
 		t.Errorf("unlabelled values = %v, %v", vals, err)
 	}
 	f.labelErr = errors.New("down")
-	if _, err := s.Values(context.Background(), "u1", GrainRuns, "project_id", TimeRange{}); err == nil {
+	if _, err := s.Values(context.Background(), []string{"p1"}, GrainRuns, "project_id", TimeRange{}); err == nil {
 		t.Error("label error swallowed by values")
 	}
 }

@@ -122,7 +122,7 @@ func TestUserCommands(t *testing.T) {
 	if got := stdout(t, func() { mainWith("user", "list") }); !strings.Contains(got, "no accounts yet") {
 		t.Errorf("empty list = %q", got)
 	}
-	lu, err := svc.CreateUser(ctx, auth.NewUser{Handle: "lu", Email: "lu@example.test", Name: "Lu", Password: "correct horse", Admin: true})
+	lu, err := svc.CreateUser(ctx, auth.NewUser{Handle: "lu", Email: "lu@example.test", Name: "Lu", Password: "correct horse", Role: auth.RoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -134,7 +134,7 @@ func TestUserCommands(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := stdout(t, func() { mainWith("user", "list") })
-	if !strings.Contains(got, lu.ID+"\tlu\tlu@example.test\tLu admin\n") || !strings.Contains(got, "bob@example.test\tbob disabled\n") {
+	if !strings.Contains(got, lu.ID+"\tlu\tlu@example.test\tLu admin\n") || !strings.Contains(got, "bob@example.test\tbob member disabled\n") {
 		t.Errorf("list = %q", got)
 	}
 
@@ -161,18 +161,21 @@ func TestUserCommands(t *testing.T) {
 		t.Errorf("login with the piped password = %v", err)
 	}
 
-	// Admin on and off.
-	if got := stdout(t, func() { mainWith("user", "set-admin", "bob") }); !strings.Contains(got, "bob is an admin") {
-		t.Errorf("set-admin = %q", got)
+	// A role on and off, and the list says it.
+	if got := stdout(t, func() { mainWith("user", "set-role", "bob", "admin") }); !strings.Contains(got, "bob is now admin") {
+		t.Errorf("set-role = %q", got)
 	}
-	if u, _ := svc.GetUser(ctx, bob.ID); !u.Admin {
+	if u, _ := svc.GetUser(ctx, bob.ID); u.Role != auth.RoleAdmin {
 		t.Error("bob is not an admin")
 	}
-	if got := stdout(t, func() { mainWith("user", "set-admin", "-off", "bob") }); !strings.Contains(got, "no longer an admin") {
-		t.Errorf("set-admin -off = %q", got)
+	if got := stdout(t, func() { mainWith("user", "list") }); !strings.Contains(got, "bob") || !strings.Contains(got, " admin") {
+		t.Errorf("list = %q", got)
+	}
+	if got := stdout(t, func() { mainWith("user", "set-role", "bob", "guest") }); !strings.Contains(got, "bob is now guest") {
+		t.Errorf("set-role guest = %q", got)
 	}
 	// The last enabled admin stays.
-	if err := cmdUser([]string{"set-admin", "-off", "lu"}); err == nil || !strings.Contains(err.Error(), "last admin") {
+	if err := cmdUser([]string{"set-role", "lu", "member"}); err == nil || !strings.Contains(err.Error(), "last admin") {
 		t.Errorf("last admin = %v", err)
 	}
 
@@ -185,13 +188,15 @@ func TestUserCommands(t *testing.T) {
 		args []string
 		want string
 	}{
-		"unknown command":   {[]string{"nonsense"}, "unknown user command"},
-		"reset, no handle":  {[]string{"reset-password"}, "usage"},
-		"reset, two":        {[]string{"reset-password", "a", "b"}, "usage"},
-		"reset, nobody":     {[]string{"reset-password", "-password", "x", "nobody"}, "not found"},
-		"reset, weak":       {[]string{"reset-password", "-password", "x", "lu"}, "at least"},
-		"set-admin, none":   {[]string{"set-admin"}, "usage"},
-		"set-admin, nobody": {[]string{"set-admin", "nobody"}, "not found"},
+		"unknown command":    {[]string{"nonsense"}, "unknown user command"},
+		"reset, no handle":   {[]string{"reset-password"}, "usage"},
+		"reset, two":         {[]string{"reset-password", "a", "b"}, "usage"},
+		"reset, nobody":      {[]string{"reset-password", "-password", "x", "nobody"}, "not found"},
+		"reset, weak":        {[]string{"reset-password", "-password", "x", "lu"}, "at least"},
+		"set-role, none":     {[]string{"set-role"}, "usage"},
+		"set-role, no role":  {[]string{"set-role", "lu"}, "usage"},
+		"set-role, nobody":   {[]string{"set-role", "nobody", "admin"}, "not found"},
+		"set-role, bad role": {[]string{"set-role", "lu", "root"}, "role must be"},
 	} {
 		if err := cmdUser(c.args); err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s = %v, want %q", name, err, c.want)

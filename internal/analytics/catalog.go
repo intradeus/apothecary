@@ -7,8 +7,8 @@
 // stage_attempts, run_skillsets, pings). A query is never SQL from the
 // client: it is a whitelisted shape (a grain, measures, group-by dimensions,
 // filters, a time range) checked against the catalog below and compiled here,
-// with the caller's user id bound as $1 in every source. That is the whole
-// tenancy story, so it lives in one place and nothing else builds analytics
+// with the caller's visible project ids bound as $1 (a text[]) in every
+// source. That is the whole tenancy story, so it lives in one place and nothing else builds analytics
 // SQL. The package imports nothing from the module: it knows the tables, not
 // the domain that writes them.
 package analytics
@@ -107,7 +107,7 @@ type field struct {
 }
 
 // grain is a grain's source. from is the FROM clause; where its own
-// predicate (it binds the user as $1 unless from already does). runID is
+// predicate (it binds the visible projects as $1 unless from already does). runID is
 // the run a row belongs to (drill), "" when a row is not one run's.
 type grain struct {
 	id        Grain
@@ -191,7 +191,7 @@ func runDerived() []field {
 // runs there, whether any shipped (completed), and what it took to ship —
 // the runs up to and including the first success (after marks a run that
 // came after one).
-const ticketsSource = `(SELECT user_id, ticket_id, project_id,
+const ticketsSource = `(SELECT ticket_id, project_id,
   min(ticket_change_type) ticket_change_type, min(created_at) created_at,
   count(*) runs, bool_or(success) shipped,
   count(*) FILTER (WHERE NOT after) runs_to_ship,
@@ -199,15 +199,15 @@ const ticketsSource = `(SELECT user_id, ticket_id, project_id,
   sum(cost_usd) total_cost_usd
  FROM (SELECT *, coalesce(bool_or(success) OVER (PARTITION BY ticket_id, project_id ORDER BY created_at
          ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING), false) after
-       FROM run_facts WHERE user_id = $1 AND ticket_id <> '') r
- GROUP BY user_id, ticket_id, project_id) t
+       FROM run_facts WHERE project_id = ANY($1) AND ticket_id <> '') r
+ GROUP BY ticket_id, project_id) t
 LEFT JOIN tickets tk ON tk.id = t.ticket_id`
 
 var grains = []*grain{
 	{
 		id: GrainRuns, label: "Runs",
 		from:      "run_facts f LEFT JOIN tickets tk ON tk.id = f.ticket_id",
-		where:     "f.user_id = $1",
+		where:     "f.project_id = ANY($1)",
 		timeField: "created_at", timeExpr: "f.created_at",
 		runID: "f.run_id",
 		dims: []field{
@@ -234,7 +234,7 @@ var grains = []*grain{
 	{
 		id: GrainAttempts, label: "Stage attempts",
 		from:      "stage_attempts a",
-		where:     "a.user_id = $1",
+		where:     "a.project_id = ANY($1)",
 		timeField: "started_at", timeExpr: "a.started_at",
 		runID: "a.run_id",
 		dims: []field{
@@ -267,7 +267,7 @@ var grains = []*grain{
 	{
 		id: GrainSkillsets, label: "Skillsets",
 		from:      "run_skillsets s JOIN run_facts f ON f.run_id = s.run_id",
-		where:     "s.user_id = $1",
+		where:     "f.project_id = ANY($1)",
 		timeField: "created_at", timeExpr: "f.created_at",
 		runID: "s.run_id",
 		dims: []field{
@@ -287,7 +287,7 @@ var grains = []*grain{
 	{
 		id: GrainPings, label: "Pings",
 		from:      "pings p JOIN run_facts f ON f.run_id = p.run_id",
-		where:     "p.user_id = $1",
+		where:     "f.project_id = ANY($1)",
 		timeField: "raised_at", timeExpr: "p.raised_at",
 		runID: "p.run_id",
 		dims: []field{

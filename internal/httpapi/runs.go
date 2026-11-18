@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"strings"
 
-	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
@@ -32,10 +32,15 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 	// error transitions (env_id alone can't, see run.View.EnvStatus).
 	envStatus := s.EnvState.Badges()
 	envDirty := s.EnvState.Dirty()
-	// Scoped to the caller (and project/ticket) in the store's query, newest
-	// first: a list never reads someone else's runs.
+	// Scoped to what the caller sees (and project/ticket) in the store's
+	// query, newest first: a list never reads a run its guard would hide.
+	seen, err := s.runsSeen(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	views, err := (&run.Reader{Store: s.Store}).List(r.Context(),
-		run.ListFilter{UserID: auth.UserID(r.Context()), ProjectID: project, TicketID: ticket})
+		run.ListFilter{Seen: seen, ProjectID: project, TicketID: ticket})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -49,6 +54,13 @@ func (s *Server) listRuns(w http.ResponseWriter, r *http.Request) {
 		views[i].EnvDirty = envDirty[views[i].RunID]
 	}
 	writeJSON(w, http.StatusOK, views)
+}
+
+// runsSeen is the runs the caller's lists may hold: its own and those of
+// the workshops it may read runs in (authz.Visibility).
+func (s *Server) runsSeen(ctx context.Context) (run.Seen, error) {
+	v, err := s.visible(ctx, authz.KindRun)
+	return run.Seen{UserID: v.UserID, ProjectIDs: v.ProjectIDs}, err
 }
 
 // runDetailTail is how much of its log a run's detail carries.
@@ -247,18 +259,18 @@ func (s *Server) runRoutes() []Route {
 				{Name: "project", Doc: "only runs of this project"},
 				{Name: "ticket", Doc: "only runs of this ticket"},
 			},
-			Handler: s.listRuns, Returns: []run.View{}},
+			Handler: s.listRuns, Returns: []run.View{}, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}", ID: "getRun", Tag: tagRuns,
 			Summary: "One run with the tail of its event log",
-			Handler: s.getRun, Returns: RunDetail{}, Scope: ScopeRun},
+			Handler: s.getRun, Returns: RunDetail{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/events", ID: "streamRunEvents", Tag: tagRuns,
 			Summary: "Server-sent event stream of a run's events",
 			Doc:     "Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).",
 			Query:   []Param{{Name: "after_seq", Doc: "resume after this sequence number", Type: "integer"}},
-			Handler: s.streamEvents, Produces: "text/event-stream", Scope: ScopeRun},
+			Handler: s.streamEvents, Produces: "text/event-stream", Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/logs/{stage}", ID: "getStageLog", Tag: tagRuns,
 			Summary: "A stage's captured log (latest attempt)",
-			Query:   tailQuery, Handler: s.getLog, Produces: "text/plain", Scope: ScopeRun},
+			Query:   tailQuery, Handler: s.getLog, Produces: "text/plain", Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace-log", ID: "getWorkspaceLog", Tag: tagWorkspace,
 			Summary: "A range of the workspace's live exec log",
 			Doc:     "Without from: the last n bytes. With from: up to n bytes from that offset — the end of the last read, to keep up, or a range ending at the start of what is on screen, to go back. A size below the offset kept up to means the log was replaced: read the tail again.",
@@ -266,38 +278,38 @@ func (s *Server) runRoutes() []Route {
 				{Name: "from", Doc: "byte offset to read from (default: the tail)", Type: "integer"},
 				{Name: "n", Doc: "bytes to read (default 64 KiB, at most 8 MiB)", Type: "integer"},
 			},
-			Handler: s.getWorkspaceLog, Returns: WorkspaceLog{}, Scope: ScopeRun},
+			Handler: s.getWorkspaceLog, Returns: WorkspaceLog{}, Scope: ScopeRun, Action: authz.RunRead},
 
 		{Method: "POST", Path: "/api/runs/{id}/abort", ID: "abortRun", Tag: tagRuns,
-			Summary: "Stop a run for good", Handler: s.postAbort, Status: http.StatusAccepted, Scope: ScopeRun},
+			Summary: "Stop a run for good", Handler: s.postAbort, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "GET", Path: "/api/runs/{id}/phases", ID: "getRunPhases", Tag: tagRuns,
 			Summary: "Every phase of the run's flow: what opens it, its runs per merge request, its live run and the signals holding for it",
-			Handler: s.getRunPhases, Returns: []engine.PhaseInfo{}, Scope: ScopeRun},
+			Handler: s.getRunPhases, Returns: []engine.PhaseInfo{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "POST", Path: "/api/runs/{id}/phases/{phase}/start", ID: "startPhase", Tag: tagRuns,
 			Summary: "Start a phase now, by hand",
 			Doc:     "Only while the cursor is at the hub: no chain is running or parked at a wait point. The phase's signal need not hold — a person's start is its own decision — and its max still applies. Acts on the named checkout's merge request, else the run's single open one, else on none.",
-			Body:    StartPhaseRequest{}, Handler: s.postStartPhase, Status: http.StatusAccepted, Scope: ScopeRun},
+			Body:    StartPhaseRequest{}, Handler: s.postStartPhase, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/pause", ID: "pauseRun", Tag: tagRuns,
 			Summary: "Park a run; nothing moves until play",
 			Doc:     "Works on a run that is parked waiting for an answer too: pausing one says it must not pick up when the answer lands.",
-			Handler: s.postPause, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postPause, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/play", ID: "playRun", Tag: tagRuns,
 			Summary: "Continue a paused run where it left off",
-			Handler: s.postPlay, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postPlay, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/archive", ID: "archiveRun", Tag: tagRuns,
 			Summary: "Archive a finished run and destroy its workspace",
 			Doc: "The destroy outlives the request. One that fails is recorded on the run (env_destroy_failed, env_destroy_error) " +
 				"and retried by the reaper; archiving an archived run that still has a workspace retries it now, and answers 409 with the reason when it fails again.",
-			Handler: s.postArchive, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postArchive, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/retry", ID: "retryRun", Tag: tagRuns,
 			Summary: "Try again: re-enter the failed stage in the same workspace",
-			Handler: s.postRetry, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postRetry, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/rerun", ID: "rerunRun", Tag: tagRuns,
 			Summary: "Run the ticket again as a new run in a fresh workspace",
-			Handler: s.postRerun, Body: RerunRequest{}, Returns: RunRef{}, Status: http.StatusCreated, Scope: ScopeRun},
+			Handler: s.postRerun, Body: RerunRequest{}, Returns: RunRef{}, Status: http.StatusCreated, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/rebuild", ID: "rebuildWorkspace", Tag: tagWorkspace,
 			Summary: "Recreate the run's container in place, keeping the checkout",
 			Doc:     "no_cache rebuilds the image from scratch — for the staleness a cache key cannot see, like a floating base tag that moved.",
-			Handler: s.postRebuild, Body: RebuildRequest{}, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postRebuild, Body: RebuildRequest{}, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 	}
 }

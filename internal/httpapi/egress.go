@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine/egress"
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/ports/egressport"
@@ -191,21 +192,21 @@ func (s *Server) egressRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/egress-defaults", ID: "getEgressDefaults", Tag: tagEgress,
 			Summary: "The built-in allowlist every project starts from",
-			Handler: s.getEgressDefaults, Returns: EgressDefaults{}},
+			Handler: s.getEgressDefaults, Returns: EgressDefaults{}, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/runs/{id}/egress-denials", ID: "listEgressDenials", Tag: tagEgress,
 			Summary: "Hosts the gateway blocked for this run",
-			Handler: s.getEgressDenials, Returns: []egressport.EgressDenial{}, Scope: ScopeRun},
+			Handler: s.getEgressDenials, Returns: []egressport.EgressDenial{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "POST", Path: "/api/runs/{id}/egress-allow", ID: "allowEgressHost", Tag: tagEgress,
 			Summary: "Unblock a host for a live run and persist it to the project",
-			Handler: s.postEgressAllow, Body: EgressHostRequest{}, Returns: EgressAllowResult{}, Scope: ScopeRun},
+			Handler: s.postEgressAllow, Body: EgressHostRequest{}, Returns: EgressAllowResult{}, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/egress-rule", ID: "setEgressRule", Tag: tagEgress,
 			Summary: "Allow or force-block a host for a run",
-			Handler: s.postEgressRule, Body: EgressRuleRequest{}, Returns: EgressRuleResult{}, Scope: ScopeRun},
+			Handler: s.postEgressRule, Body: EgressRuleRequest{}, Returns: EgressRuleResult{}, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "GET", Path: "/api/runs/{id}/egress-audit", ID: "getRunEgressAudit", Tag: tagEgress,
 			Summary: "Everything this run's workspace reached or was blocked from",
-			Query:   auditQuery, Handler: s.getRunEgressAudit, Returns: []egressport.EgressAuditRow{}, Scope: ScopeRun},
+			Query:   auditQuery, Handler: s.getRunEgressAudit, Returns: []egressport.EgressAuditRow{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/egress-policy", ID: "getRunEgressPolicy", Tag: tagEgress,
 			Summary: "The firewall policy in force for a run right now",
-			Handler: s.getRunEgressPolicy, Returns: EgressPolicy{}, Scope: ScopeRun},
+			Handler: s.getRunEgressPolicy, Returns: EgressPolicy{}, Scope: ScopeRun, Action: authz.RunRead},
 	}
 }

@@ -6,7 +6,7 @@ import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import type { Run, RunHold } from '$lib/domain';
 import { applyDelta, emptyLive } from '$lib/run/transcriptItems';
-import { aRun } from '$test/fixtures';
+import { aRun, aViewerProject } from '$test/fixtures';
 import {
 	AT,
 	aLiveRun,
@@ -178,6 +178,14 @@ describe('SessionView', () => {
 		it('counts a harness as an agent', () => {
 			show({ events: [anEvent(1, 'stage_started', { stage_id: 'build', harness: 'acme' })] });
 			expect(takeOverBtn()).toBeInTheDocument();
+		});
+
+		it('offers no take-over, message or hand-back to a viewer of the workshop', () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			show({ events: [agentStage] }, aLiveRun({ projectId: 'p1', hold: HOLD }));
+			expect(takeOverBtn()).not.toBeInTheDocument();
+			expect(screen.queryByRole('textbox', { name: 'Message the agent' })).not.toBeInTheDocument();
+			fleet.projects = [];
 		});
 
 		it('offers nothing while a command stage runs', () => {

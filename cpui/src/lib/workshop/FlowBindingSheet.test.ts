@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { ActionSpec, Flow, FlowBinding, ParamDecl, TrackerStatus } from '$lib/domain';
 import { aFlow, anIntegration, aWorkshop } from '$test/fixtures/app.svelte';
+import { aViewerProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import FlowBindingSheet from './FlowBindingSheet.svelte';
 
@@ -47,6 +48,19 @@ describe('FlowBindingSheet', () => {
 		expect(screen.getByRole('dialog', { name: 'Configure builder' })).toBeInTheDocument();
 		await ready();
 		expect(api.flows.binding).toHaveBeenCalledWith('p1', 'builder');
+	});
+
+	it('without project:write, shows the binding but cannot save or reset it', async () => {
+		render(FlowBindingSheet, {
+			project: aViewerProject({ id: 'p1' }),
+			flow: flow(),
+			onclose: vi.fn(),
+			onsaved: vi.fn()
+		});
+		await ready();
+		expect(save()).toBeDisabled();
+		expect(reset()).toBeDisabled();
+		expect(save()).toHaveAttribute('title', 'Your role in this workshop does not allow this');
 	});
 
 	it('holds its buttons while loading', async () => {

@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"slices"
 
+	"apothecary/internal/account/authz"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/tickets"
 )
@@ -57,12 +58,14 @@ type Route struct {
 	Accepts  string
 	Produces string
 	// Auth is how the endpoint is reached (auth.go): a signed-in user by
-	// default, the instance admin, the in-workspace shim's run token, or
-	// anyone. Scope names the resource the path's id must belong to the
-	// caller through; a user route with an id and no scope is refused by
-	// TestEveryRouteDeclaresItsAccess.
-	Auth  Access
-	Scope Scope
+	// default, the in-workspace shim's run token, or anyone. Scope names
+	// the resource the path's id is; a user route with an id and no scope
+	// is refused by TestEveryRouteDeclaresItsAccess. Action is what a
+	// user route does (authz's vocabulary): the guard asks the authorizer
+	// for it on the scoped resource, or on the instance when there is none.
+	Auth   Access
+	Scope  Scope
+	Action authz.Action
 }
 
 // conf / kinds / cpui are the registration gates.
@@ -126,6 +129,7 @@ func (s *Server) routes() []Route {
 		s.credentialRoutes(),
 		s.skillRoutes(),
 		s.projectRoutes(),
+		s.memberRoutes(),
 		s.ticketRoutes(),
 		s.flowRoutes(),
 		s.analyticsRoutes(),
@@ -143,24 +147,24 @@ func (s *Server) Handler() http.Handler {
 		mux.Handle(rt.Method+" "+rt.Path, s.traced(rt, s.guard(rt)))
 	}
 	// A WebSocket, so outside the table (and the spec): see serveTerminal.
-	// The run's owner only, from the UI's own origin.
-	mux.HandleFunc("GET /api/runs/{id}/terminal", s.guard(Route{Scope: ScopeRun, Handler: func(w http.ResponseWriter, r *http.Request) {
+	// run:shell on the run, from the UI's own origin.
+	mux.HandleFunc("GET /api/runs/{id}/terminal", s.guard(Route{Scope: ScopeRun, Action: authz.RunShell, Handler: func(w http.ResponseWriter, r *http.Request) {
 		if !s.sameOriginUpgrade(w, r) {
 			return
 		}
 		s.serveTerminal(w, r)
 	}}))
 	// The tunnels (tunnel.go): a workspace port onto a person's localhost,
-	// and the SSH door. The caller's session or bearer token; a browser only
-	// from the UI's own origin. The SSH tunnel's ownership check is the
-	// door's own.
-	mux.HandleFunc("GET /api/runs/{id}/ports/{port}/tunnel", s.guard(Route{Scope: ScopeRun, Handler: func(w http.ResponseWriter, r *http.Request) {
+	// and the SSH door. The caller's session or bearer token holding
+	// run:shell; a browser only from the UI's own origin. The SSH tunnel's
+	// check on the run is the door's own.
+	mux.HandleFunc("GET /api/runs/{id}/ports/{port}/tunnel", s.guard(Route{Scope: ScopeRun, Action: authz.RunShell, Handler: func(w http.ResponseWriter, r *http.Request) {
 		if !s.sameOriginUpgrade(w, r) {
 			return
 		}
 		s.servePortTunnel(w, r)
 	}}))
-	mux.HandleFunc("GET /api/ssh/tunnel", s.guard(Route{Handler: func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET /api/ssh/tunnel", s.guard(Route{Action: authz.RunShell, Handler: func(w http.ResponseWriter, r *http.Request) {
 		if !s.sameOriginUpgrade(w, r) {
 			return
 		}

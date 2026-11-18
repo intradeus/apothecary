@@ -11,7 +11,9 @@ import LimitsSection from './LimitsSection.svelte';
 vi.mock('$lib/api', () => ({ api: { system: { setLimits: vi.fn() } } }));
 
 const signIn = (admin: boolean) =>
-	(session.me = { user: { id: 'u1', handle: 'lu', name: 'Lu', admin } } as Me);
+	(session.me = {
+		user: { id: 'u1', handle: 'lu', name: 'Lu', role: admin ? 'admin' : 'member' }
+	} as Me);
 const runs = () => screen.getByRole('spinbutton', { name: 'Max concurrent runs' });
 const save = () => screen.getByRole('button', { name: 'Save' });
 

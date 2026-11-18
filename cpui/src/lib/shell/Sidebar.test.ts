@@ -30,7 +30,7 @@ beforeEach(() => {
 	fleet.limits = null;
 	fleet.projects = [billing, alpha, zeta];
 	prefs.collapsed = false;
-	session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', admin: true } } as Me;
+	session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', role: 'admin' } } as Me;
 });
 
 describe('Sidebar, full', () => {

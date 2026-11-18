@@ -9,7 +9,8 @@ import { activeDesk } from '$lib/desk/active.svelte';
 import type { EgressDenial, Run, RunEvent, RunServices } from '$lib/domain';
 import { NEUTRAL_MIX, noise } from '$lib/ui/noiseState.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aRun } from '$test/fixtures';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aRun, aViewerProject } from '$test/fixtures';
 import { aSample, settled } from '$test/fixtures/run-components';
 import { sizeDesk, tab, windows } from '$test/fixtures/desk';
 import { aLiveRun, anAskMessage, anAskState, anEvent, aRaise } from '$test/fixtures/run-views';
@@ -433,6 +434,17 @@ describe('RunPage', () => {
 					.map((b) => b.textContent)
 			).toEqual(['Dismiss']);
 			expect(within(banner()).queryByText(/Pause the run/)).not.toBeInTheDocument();
+		});
+
+		it('offers a viewer of the workshop neither remedy', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			await setup({ ...broken('paused'), projectId: 'p1' });
+			expect(
+				within(banner())
+					.getAllByRole('button')
+					.map((b) => b.textContent)
+			).toEqual(['Dismiss']);
+			fleet.projects = [];
 		});
 
 		it('can be dismissed', async () => {

@@ -5,7 +5,7 @@ import { goto } from '$app/navigation';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
-import { aProject, aTicketRow } from '$test/fixtures';
+import { aProject, aTicketRow, aViewerProject } from '$test/fixtures';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aFlow, anIntegration } from '$test/fixtures/app.svelte';
 import { anOpenMr, bound } from '$test/fixtures/run-components';
@@ -127,6 +127,19 @@ describe('NewRunDialog', () => {
 
 		expect(api.projects.tickets).toHaveBeenCalledExactlyOnceWith('p1', { limit: 50 });
 		expect(screen.queryByRole('combobox', { name: 'Workshop' })).not.toBeInTheDocument();
+	});
+
+	it('offers only the workshops where the role may start a run (run:operate)', async () => {
+		fleet.projects = [
+			aViewerProject({ id: 'p1', name: 'ledger', ticketSourceId: 'src' }),
+			aProject({ id: 'p2', name: 'docs', ticketSourceId: 'src' })
+		];
+		open();
+		await waitFor(() => expect(api.projects.tickets).toHaveBeenCalledWith('p2', { limit: 50 }));
+		expect(api.projects.tickets).not.toHaveBeenCalledWith('p1', expect.anything());
+		await userEvent.click(screen.getByRole('combobox', { name: 'Workshop' }));
+		expect(screen.getByRole('option', { name: 'docs' })).toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: 'ledger' })).not.toBeInTheDocument();
 	});
 
 	describe('with no tickets', () => {
@@ -363,6 +376,16 @@ describe('NewRunDialog', () => {
 			expect(await screen.findByRole('combobox', { name: 'Start from' })).toHaveTextContent('main');
 			expect(api.projects.tickets).not.toHaveBeenCalled();
 			expect(api.projects.mergeRequests).not.toHaveBeenCalled();
+		});
+
+		it('holds Start in a workshop where the role may not start a run', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1', name: 'ledger' })];
+			open({ projectId: 'p1' });
+			await userEvent.click(nothingTab());
+			expect(
+				await screen.findByText('Your role in this workshop does not allow this')
+			).toBeInTheDocument();
+			await waitFor(() => expect(screen.getByRole('button', { name: /Start run/ })).toBeDisabled());
 		});
 
 		it('starts one in a click: named for the time, on a fresh branch off the default', async () => {

@@ -6,6 +6,7 @@ import type { BuildCache, EnvCheck, Preflight } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aWorkshop, confirmed } from '$test/fixtures/app.svelte';
+import { aViewerProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import HealthTab from './HealthTab.svelte';
 
@@ -342,5 +343,30 @@ describe('HealthTab, the build cache', () => {
 
 		await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
 		expect(await screen.findByText('No cache here')).toBeInTheDocument();
+	});
+});
+
+describe('HealthTab, without project:write', () => {
+	const viewer = () => render(HealthTab, { project: aViewerProject({ id: 'p1' }) });
+	const why = 'Your role in this workshop does not allow this';
+
+	it('disables starting an envcheck, preflight and clearing the cache', async () => {
+		vi.mocked(api.projects.buildCache).mockResolvedValue({ available: true, bytes: 9 });
+		viewer();
+		const clear = await screen.findByRole('button', { name: 'Clear…' });
+		expect(clear).toBeDisabled();
+		expect(clear).toHaveAttribute('title', why);
+		expect(screen.getByRole('button', { name: /Run envcheck/ })).toBeDisabled();
+		expect(screen.getByRole('button', { name: /Run preflight/ })).toBeDisabled();
+	});
+
+	it('disables cancelling and restarting a check under way', async () => {
+		vi.mocked(api.projects.latestEnvCheck).mockResolvedValue(
+			check({ status: 'running', finishedAt: undefined })
+		);
+		vi.mocked(api.projects.envCheck).mockResolvedValue(check({ status: 'running' }));
+		viewer();
+		expect(await screen.findByRole('button', { name: /Cancel/ })).toBeDisabled();
+		expect(screen.getByRole('button', { name: /Restart/ })).toHaveAttribute('title', why);
 	});
 });

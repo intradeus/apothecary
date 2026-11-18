@@ -1003,6 +1003,23 @@ export type Me = {
 	user: User;
 };
 
+export type Member = {
+	created_at: string;
+	handle: string;
+	name: string;
+	role: string;
+	user_id: string;
+};
+
+export type MemberRequest = {
+	login: string;
+	role: string;
+};
+
+export type MemberRoleRequest = {
+	role: string;
+};
+
 export type Message = {
 	at: string;
 	attachment_ids?: Array<string>;
@@ -1127,6 +1144,13 @@ export type Pending = {
 	provider: string;
 	url: string;
 	user_code?: string;
+};
+
+export type Permission = {
+	action: string;
+	doc: string;
+	grantable: boolean;
+	kind: string;
 };
 
 export type PhaseInfo = {
@@ -1283,23 +1307,9 @@ export type ProfileRequest = {
 	name?: string;
 };
 
-export type Project = {
-	commands: {
-		[key: string]: string;
-	} | null;
-	created_at: string;
-	default_flow: string;
-	harness_ids: Array<string> | null;
-	id: string;
-	name: string;
-	provisioner_id: string;
-	repo: RepoConfig;
-	repo_account_id: string;
-	repos?: Array<ExtraRepo>;
-	ticket_source_id: string;
-	updated_at: string;
-	user_id: string;
-	workspace: WorkspaceConfig;
+export type ProjectAccess = {
+	actions: Array<string> | null;
+	role: string;
 };
 
 export type ProjectRequest = {
@@ -1324,6 +1334,27 @@ export type ProjectSecret = {
 
 export type ProjectSecretRequest = {
 	value: string;
+};
+
+export type ProjectView = {
+	access: ProjectAccess;
+	commands?: {
+		[key: string]: string;
+	} | null;
+	created_at?: string;
+	default_flow?: string;
+	harness_ids?: Array<string> | null;
+	id?: string;
+	name?: string;
+	owner_handle?: string;
+	provisioner_id?: string;
+	repo?: RepoConfig;
+	repo_account_id?: string;
+	repos?: Array<ExtraRepo>;
+	ticket_source_id?: string;
+	updated_at?: string;
+	user_id?: string;
+	workspace?: WorkspaceConfig;
 };
 
 export type ProviderCredential = {
@@ -2042,6 +2073,7 @@ export type TicketStatusRequest = {
 };
 
 export type Token = {
+	actions?: Array<string>;
 	created_at: string;
 	expires_at?: string;
 	id: string;
@@ -2049,6 +2081,7 @@ export type Token = {
 	last_used_at?: string;
 	name: string;
 	prefix: string;
+	project_ids?: Array<string>;
 };
 
 export type TokenCreated = {
@@ -2057,8 +2090,11 @@ export type TokenCreated = {
 };
 
 export type TokenRequest = {
+	actions?: Array<string>;
 	expires_at?: string;
+	full_access?: boolean;
 	name: string;
+	project_ids?: Array<string>;
 };
 
 export type TrackerStatus = {
@@ -2126,7 +2162,6 @@ export type Uploaded = {
 };
 
 export type User = {
-	admin: boolean;
 	created_at: string;
 	disabled_at?: string;
 	email: string;
@@ -2134,23 +2169,24 @@ export type User = {
 	id: string;
 	last_seen_at?: string;
 	name: string;
+	role: string;
 	updated_at: string;
 };
 
 export type UserCreateRequest = {
-	admin?: boolean;
 	email: string;
 	handle: string;
 	name?: string;
 	password: string;
+	role?: string;
 };
 
 export type UserUpdateRequest = {
-	admin?: boolean | null;
 	disabled?: boolean | null;
 	email?: string;
 	handle?: string;
 	name?: string;
+	role?: string;
 };
 
 export type ValidateFlowRequest = {
@@ -2298,6 +2334,10 @@ export type ListActionsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -2326,6 +2366,10 @@ export type GetAnalyticsCatalogErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2361,6 +2405,10 @@ export type ListDashboardsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -2389,6 +2437,10 @@ export type CreateDashboardErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2426,6 +2478,10 @@ export type DeleteDashboardErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2470,6 +2526,10 @@ export type GetDashboardErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -2504,6 +2564,10 @@ export type UpdateDashboardErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2546,6 +2610,10 @@ export type DrillAnalyticsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	409: unknown;
 	/**
 	 * error
@@ -2578,6 +2646,10 @@ export type QueryAnalyticsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2616,6 +2688,10 @@ export type ListScorecardsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -2644,6 +2720,10 @@ export type CreateScorecardErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2681,6 +2761,10 @@ export type DeleteScorecardErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2725,6 +2809,10 @@ export type GetScorecardErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -2759,6 +2847,10 @@ export type UpdateScorecardErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2801,6 +2893,10 @@ export type AnalyticsValuesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	409: unknown;
 	/**
 	 * error
@@ -2835,6 +2931,10 @@ export type UploadAttachmentsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2876,6 +2976,10 @@ export type DownloadAttachmentErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -2909,6 +3013,10 @@ export type GetAttachmentLimitsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -2972,6 +3080,10 @@ export type LogoutErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3068,6 +3180,10 @@ export type ListChannelsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -3098,6 +3214,10 @@ export type AddChannelErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3135,6 +3255,10 @@ export type DeleteChannelErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3210,6 +3334,10 @@ export type GetCliLoginErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -3244,6 +3372,10 @@ export type ApproveCliLoginErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3285,6 +3417,10 @@ export type DenyCliLoginErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3358,6 +3494,10 @@ export type ListCredentialsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -3386,6 +3526,10 @@ export type CreateCredentialErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3423,6 +3567,10 @@ export type DeleteCredentialErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3467,6 +3615,10 @@ export type GetCredentialErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -3501,6 +3653,10 @@ export type RenameCredentialErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3545,6 +3701,10 @@ export type TestCredentialErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -3584,6 +3744,10 @@ export type ImportCredentialsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	409: unknown;
 	/**
 	 * error
@@ -3617,6 +3781,10 @@ export type StartSignInErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3654,6 +3822,10 @@ export type CompleteSignInErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3696,6 +3868,10 @@ export type GetEgressDefaultsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -3727,6 +3903,10 @@ export type CancelEnvCheckErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3771,6 +3951,10 @@ export type GetEnvCheckErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -3806,6 +3990,10 @@ export type ListFlowTemplatesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -3837,6 +4025,10 @@ export type CopyFlowTemplateErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3879,6 +4071,10 @@ export type ListAllFlowsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -3907,6 +4103,10 @@ export type GetFlowSchemaErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3940,6 +4140,10 @@ export type ValidateFlowErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -3978,6 +4182,10 @@ export type ListHarnessOptionsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4010,6 +4218,10 @@ export type ListIntegrationsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4038,6 +4250,10 @@ export type CreateIntegrationErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4076,6 +4292,10 @@ export type DeleteIntegrationErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4121,6 +4341,10 @@ export type GetIntegrationErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -4155,6 +4379,10 @@ export type UpdateIntegrationErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4200,6 +4428,10 @@ export type ListIntegrationModelsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -4235,6 +4467,10 @@ export type ListIntegrationReposErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4281,6 +4517,10 @@ export type ListTrackerStatusesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -4316,6 +4556,10 @@ export type PutTrackerStatusesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4358,6 +4602,10 @@ export type TestIntegrationErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4407,6 +4655,10 @@ export type ListTrackerTypesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -4441,6 +4693,10 @@ export type PutTrackerTypesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4483,6 +4739,10 @@ export type ListKindsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4511,6 +4771,10 @@ export type GetLimitsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4584,6 +4848,10 @@ export type GetMeErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4612,6 +4880,10 @@ export type UpdateMeErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4650,6 +4922,10 @@ export type ChangeMyPasswordErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	409: unknown;
 	/**
 	 * error
@@ -4685,6 +4961,10 @@ export type ListMySshKeysErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4713,6 +4993,10 @@ export type AddMySshKeyErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4750,6 +5034,10 @@ export type DeleteMySshKeyErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4792,6 +5080,10 @@ export type ListMyTokensErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4820,6 +5112,10 @@ export type CreateMyTokenErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4857,6 +5153,10 @@ export type DeleteMyTokenErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4899,6 +5199,10 @@ export type ListNoticesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -4929,6 +5233,10 @@ export type DismissNoticeErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -4968,6 +5276,10 @@ export type DismissAllNoticesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5023,6 +5335,41 @@ export type GetObservabilityResponses = {
 
 export type GetObservabilityResponse = GetObservabilityResponses[keyof GetObservabilityResponses];
 
+export type ListPermissionsData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/permissions';
+};
+
+export type ListPermissionsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListPermissionsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Permission> | null;
+};
+
+export type ListPermissionsResponse = ListPermissionsResponses[keyof ListPermissionsResponses];
+
 export type ListPingsData = {
 	body?: never;
 	path?: never;
@@ -5048,6 +5395,10 @@ export type ListPingsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5081,6 +5432,10 @@ export type GetPingErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5118,6 +5473,10 @@ export type AnswerPingErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5162,6 +5521,10 @@ export type GetPingCurationErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5196,6 +5559,10 @@ export type GetPingFilesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5234,6 +5601,10 @@ export type ListProjectsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -5241,7 +5612,7 @@ export type ListProjectsResponses = {
 	/**
 	 * OK
 	 */
-	200: Array<Project> | null;
+	200: Array<ProjectView> | null;
 };
 
 export type ListProjectsResponse = ListProjectsResponses[keyof ListProjectsResponses];
@@ -5265,6 +5636,10 @@ export type CreateProjectErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	409: unknown;
 	/**
 	 * error
@@ -5276,7 +5651,7 @@ export type CreateProjectResponses = {
 	/**
 	 * Created
 	 */
-	201: Project;
+	201: ProjectView;
 };
 
 export type CreateProjectResponse = CreateProjectResponses[keyof CreateProjectResponses];
@@ -5299,6 +5674,10 @@ export type DeleteProjectErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5343,6 +5722,10 @@ export type GetProjectErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5354,7 +5737,7 @@ export type GetProjectResponses = {
 	/**
 	 * OK
 	 */
-	200: Project;
+	200: ProjectView;
 };
 
 export type GetProjectResponse = GetProjectResponses[keyof GetProjectResponses];
@@ -5380,6 +5763,10 @@ export type UpdateProjectErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5395,7 +5782,7 @@ export type UpdateProjectResponses = {
 	/**
 	 * OK
 	 */
-	200: Project;
+	200: ProjectView;
 };
 
 export type UpdateProjectResponse = UpdateProjectResponses[keyof UpdateProjectResponses];
@@ -5418,6 +5805,10 @@ export type ListAutomationsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5455,6 +5846,10 @@ export type CreateAutomationErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5500,6 +5895,10 @@ export type DeleteAutomationErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5542,6 +5941,10 @@ export type GetAutomationErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5577,6 +5980,10 @@ export type UpdateAutomationErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5621,6 +6028,10 @@ export type ListProjectBranchesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5656,6 +6067,10 @@ export type GetProjectBrowserErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5697,6 +6112,10 @@ export type ClearBuildCacheErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5735,6 +6154,10 @@ export type GetBuildCacheErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5788,6 +6211,10 @@ export type GetProjectEgressAuditErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5826,6 +6253,10 @@ export type GetLatestEnvCheckErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5861,6 +6292,10 @@ export type StartEnvCheckErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5905,6 +6340,10 @@ export type ListFlowBindingsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -5940,6 +6379,10 @@ export type GetFlowVersionErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -5980,6 +6423,10 @@ export type ListFlowsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6014,6 +6461,10 @@ export type CreateFlowErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6059,6 +6510,10 @@ export type DeleteFlowErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6101,6 +6556,10 @@ export type GetFlowErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6136,6 +6595,10 @@ export type UpdateFlowErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6178,6 +6641,10 @@ export type DeleteFlowBindingErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6224,6 +6691,10 @@ export type GetFlowBindingErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6259,6 +6730,10 @@ export type PutFlowBindingErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6304,6 +6779,10 @@ export type CopyFlowErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6346,6 +6825,10 @@ export type ListFlowVersionsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6361,6 +6844,229 @@ export type ListFlowVersionsResponses = {
 };
 
 export type ListFlowVersionsResponse = ListFlowVersionsResponses[keyof ListFlowVersionsResponses];
+
+export type ListMembersData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/members';
+};
+
+export type ListMembersErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListMembersResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<Member> | null;
+};
+
+export type ListMembersResponse = ListMembersResponses[keyof ListMembersResponses];
+
+export type AddMemberData = {
+	body: MemberRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/members';
+};
+
+export type AddMemberErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type AddMemberResponses = {
+	/**
+	 * Created
+	 */
+	201: Member;
+};
+
+export type AddMemberResponse = AddMemberResponses[keyof AddMemberResponses];
+
+export type RemoveMemberData = {
+	body?: never;
+	path: {
+		id: string;
+		uid: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/members/{uid}';
+};
+
+export type RemoveMemberErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RemoveMemberResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type RemoveMemberResponse = RemoveMemberResponses[keyof RemoveMemberResponses];
+
+export type UpdateMemberData = {
+	body: MemberRoleRequest;
+	path: {
+		id: string;
+		uid: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/members/{uid}';
+};
+
+export type UpdateMemberErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type UpdateMemberResponses = {
+	/**
+	 * OK
+	 */
+	200: Member;
+};
+
+export type UpdateMemberResponse = UpdateMemberResponses[keyof UpdateMemberResponses];
+
+export type LeaveProjectData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/members/me';
+};
+
+export type LeaveProjectErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type LeaveProjectResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type LeaveProjectResponse = LeaveProjectResponses[keyof LeaveProjectResponses];
 
 export type ListProjectMrsData = {
 	body?: never;
@@ -6385,6 +7091,10 @@ export type ListProjectMrsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6431,6 +7141,10 @@ export type GetProjectMrErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6466,6 +7180,10 @@ export type StartMrRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6510,6 +7228,10 @@ export type PreflightProjectErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6548,6 +7270,10 @@ export type StartNothingRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6592,6 +7318,10 @@ export type ListProjectSecretsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6628,6 +7358,10 @@ export type DeleteProjectSecretErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6671,6 +7405,10 @@ export type SetProjectSecretErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6736,6 +7474,10 @@ export type ListWorkshopTicketsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6771,6 +7513,10 @@ export type CreateWorkshopTicketErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6814,6 +7560,10 @@ export type DeleteWorkshopTicketErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6865,6 +7615,10 @@ export type GetWorkshopTicketErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -6901,6 +7655,10 @@ export type UpdateWorkshopTicketErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6944,6 +7702,10 @@ export type GetWorkshopTicketAttachmentsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -6991,6 +7753,10 @@ export type ListWorkshopTicketCommentsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7027,6 +7793,10 @@ export type AddWorkshopTicketCommentErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7073,6 +7843,10 @@ export type SetWorkshopTicketLabelsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7116,6 +7890,10 @@ export type StartWorkshopTicketRunErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7156,6 +7934,10 @@ export type SetWorkshopTicketStatusErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7204,6 +7986,10 @@ export type ListProvidersErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -7232,6 +8018,10 @@ export type GetProvisionerErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7354,6 +8144,10 @@ export type ListRunsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -7384,6 +8178,10 @@ export type GetRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7421,6 +8219,10 @@ export type AbortRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7463,6 +8265,10 @@ export type ArchiveRunErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7502,6 +8308,10 @@ export type GetAskErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7536,6 +8346,10 @@ export type AskRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7577,6 +8391,10 @@ export type SetAskModelErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7626,6 +8444,10 @@ export type StreamAskErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7660,6 +8482,10 @@ export type NewAskThreadErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7823,6 +8649,10 @@ export type AllowEgressHostErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7877,6 +8707,10 @@ export type GetRunEgressAuditErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7912,6 +8746,10 @@ export type ListEgressDenialsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -7953,6 +8791,10 @@ export type GetRunEgressPolicyErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -7988,6 +8830,10 @@ export type SetEgressRuleErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8037,6 +8883,10 @@ export type StreamRunEventsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8071,6 +8921,10 @@ export type ExposeRunPortErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8115,6 +8969,10 @@ export type GetRunFilesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8149,6 +9007,10 @@ export type DownloadRunFilesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8189,6 +9051,10 @@ export type ReleaseRunErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8225,6 +9091,10 @@ export type TakeOverRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8353,6 +9223,10 @@ export type GetStageLogErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8387,6 +9261,10 @@ export type SendRunMessageErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8428,6 +9306,10 @@ export type GetRunMrStatusErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8510,6 +9392,10 @@ export type OpenEditorErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8548,6 +9434,10 @@ export type PauseRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8590,6 +9480,10 @@ export type GetRunPhasesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8625,6 +9519,10 @@ export type StartPhaseErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8762,6 +9660,10 @@ export type PlayRunErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8798,6 +9700,10 @@ export type GetRunPortsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8838,6 +9744,10 @@ export type RebuildWorkspaceErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8874,6 +9784,10 @@ export type RerunRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8918,6 +9832,10 @@ export type GetRunResourcesErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -8952,6 +9870,10 @@ export type RetryRunErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -8991,6 +9913,10 @@ export type GetRunServicesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9037,6 +9963,10 @@ export type GetRunServiceLogsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9073,6 +10003,10 @@ export type RestartRunServiceErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9119,6 +10053,10 @@ export type StartRunServiceErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9161,6 +10099,10 @@ export type StopRunServiceErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9199,6 +10141,10 @@ export type GetRunSshErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9248,6 +10194,10 @@ export type GetWorkspaceLogErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9287,6 +10237,10 @@ export type GetWorkspaceChangesErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9337,6 +10291,10 @@ export type GetWorkspaceDiffErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9383,6 +10341,10 @@ export type GetWorkspaceFileErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9422,6 +10384,10 @@ export type GetWorkspacePathFileErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9468,6 +10434,10 @@ export type GetWorkspacePathTreeErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9503,6 +10473,10 @@ export type GetWorkspaceReposErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9553,6 +10527,10 @@ export type ResolveWorkspacePathErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9588,6 +10566,10 @@ export type StatWorkspacePathsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9642,6 +10624,10 @@ export type GetWorkspaceTreeErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9677,6 +10663,10 @@ export type GetSettingsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -9705,6 +10695,10 @@ export type UpdateSettingsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9743,6 +10737,10 @@ export type ListSignalsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -9774,6 +10772,10 @@ export type ListSkillsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -9802,6 +10804,10 @@ export type CreateSkillErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9839,6 +10845,10 @@ export type DeleteSkillErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9883,6 +10893,10 @@ export type GetSkillErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -9917,6 +10931,10 @@ export type UpdateSkillErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -9961,6 +10979,10 @@ export type RefreshSkillErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -10000,6 +11022,10 @@ export type ImportSkillsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	409: unknown;
 	/**
 	 * error
@@ -10035,6 +11061,10 @@ export type ListSkillsetsErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -10063,6 +11093,10 @@ export type CreateSkillsetErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -10100,6 +11134,10 @@ export type DeleteSkillsetErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -10144,6 +11182,10 @@ export type GetSkillsetErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -10178,6 +11220,10 @@ export type UpdateSkillsetErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -10222,6 +11268,10 @@ export type RefreshSkillsetErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -10260,6 +11310,10 @@ export type ListSkillsetVersionsErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */
@@ -10302,6 +11356,10 @@ export type GetSkillsetVersionErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -10340,6 +11398,10 @@ export type DownloadSnapshotErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	404: unknown;
 	/**
 	 * error
@@ -10375,6 +11437,10 @@ export type GetSwarmErrors = {
 	/**
 	 * error
 	 */
+	403: unknown;
+	/**
+	 * error
+	 */
 	503: unknown;
 };
 
@@ -10405,6 +11471,10 @@ export type GetTicketRecordErrors = {
 	 * error
 	 */
 	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
 	/**
 	 * error
 	 */

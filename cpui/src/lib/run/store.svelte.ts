@@ -112,6 +112,11 @@ export class RunStore {
 	}
 
 	readonly terminal = $derived(this.run !== null && isTerminal(this.run.state));
+	/** What the caller's role in the run's workshop allows: every control that
+	 *  changes the run asks `canOperate`, everything that opens a shell, an
+	 *  editor or a port into the workspace asks `canShell`. */
+	readonly canOperate = $derived(fleet.can(this.run?.projectId, 'run:operate'));
+	readonly canShell = $derived(fleet.can(this.run?.projectId, 'run:shell'));
 	/** A container is (probably) up behind the workspace views. */
 	readonly hasWorkspace = $derived(
 		this.run !== null && !!this.run.envId && !this.run.archivedAt && this.run.envStatus !== 'absent'

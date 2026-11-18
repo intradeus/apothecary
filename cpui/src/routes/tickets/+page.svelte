@@ -8,6 +8,7 @@
 	import { api } from '$lib/api';
 	import { to } from '$lib/core/urls';
 	import { fleet } from '$lib/app/fleet.svelte';
+	import NewWorkshopLink from '$lib/workshop/NewWorkshopLink.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { Integration } from '$lib/domain';
 	import { sourceOf } from '$lib/tickets/tracker';
@@ -79,7 +80,7 @@
 		<Skeleton pane lines={6} />
 	{:else if !project}
 		<EmptyState title={t('page.tickets.noWorkshop')} text={t('page.tickets.noWorkshopText')}>
-			<a class="btn btn-primary" href={to.newWorkshop()}>{t('page.tickets.newWorkshop')}</a>
+			<NewWorkshopLink label={t('page.tickets.newWorkshop')} />
 		</EmptyState>
 	{:else}
 		<TicketList projectId={project.id}>

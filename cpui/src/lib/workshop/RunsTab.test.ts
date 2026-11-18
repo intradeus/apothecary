@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import type { Run } from '$lib/domain';
-import { aRun } from '$test/fixtures';
+import { aRun, aViewerProject } from '$test/fixtures';
 import { anIntegration, aWorkshop, choose } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import RunsTab from './RunsTab.svelte';
@@ -35,6 +35,18 @@ beforeEach(() => {
 });
 
 describe('RunsTab', () => {
+	it('holds New run where the role may not start one (run:operate)', () => {
+		render(WithHeader, {
+			props: {
+				page: RunsTab,
+				props: { project: aViewerProject({ id: 'p1' }), runs: [], integrations: internal }
+			}
+		});
+		const btn = screen.getByRole('button', { name: /New run/ });
+		expect(btn).toBeDisabled();
+		expect(btn).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
+
 	it('shows active runs, counting both tabs', () => {
 		setup([live, done]);
 		expect(screen.getByRole('link', { name: /Live one/ })).toBeInTheDocument();

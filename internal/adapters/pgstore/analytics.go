@@ -87,18 +87,19 @@ func (s *Store) Values(ctx context.Context, c analytics.Compiled) ([]string, err
 }
 
 // FlowVersionLabels numbers each flow's versions within its project by
-// creation, over the user's projects only.
-func (s *Store) FlowVersionLabels(ctx context.Context, userID string, hashes []string) (map[string]string, error) {
+// creation, over the given projects only.
+func (s *Store) FlowVersionLabels(ctx context.Context, projects []string, hashes []string) (map[string]string, error) {
 	rows, _ := s.pool.Query(ctx, `
 		SELECT hash, name || ' v' || n FROM (
 			SELECT v.hash, v.name, row_number() OVER (PARTITION BY v.project_id, v.name ORDER BY v.created_at, v.hash) n
-			FROM flow_versions v JOIN projects p ON p.id = v.project_id AND p.user_id = $1) x
-		WHERE hash = ANY($2)`, userID, hashes)
+			FROM flow_versions v WHERE v.project_id = ANY($1)) x
+		WHERE hash = ANY($2)`, nonNil(projects), hashes)
 	return collectPairs(rows)
 }
 
-func (s *Store) ProjectNames(ctx context.Context, userID string, ids []string) (map[string]string, error) {
-	rows, _ := s.pool.Query(ctx, `SELECT id, name FROM projects WHERE user_id = $1 AND id = ANY($2)`, userID, ids)
+// ProjectNames names the ids among the given projects.
+func (s *Store) ProjectNames(ctx context.Context, projects []string, ids []string) (map[string]string, error) {
+	rows, _ := s.pool.Query(ctx, `SELECT p.id, p.name FROM projects p WHERE p.id = ANY($1) AND p.id = ANY($2)`, nonNil(projects), ids)
 	return collectPairs(rows)
 }
 

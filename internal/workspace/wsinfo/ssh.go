@@ -22,13 +22,14 @@ import (
 // sidecar's SSH server admits that key and no other.
 const sshDoorKeyPath = "/apothecary/ssh_door.pub"
 
-// SSHTarget is a workspace as the door sees it: whose run, and a dial into
-// its sidecar's SSH server.
+// SSHTarget is a workspace as the door sees it: whose run, in which
+// workshop, and a dial into its sidecar's SSH server.
 type SSHTarget struct {
-	RunID   string
-	OwnerID string
-	EnvID   string
-	Dial    func(ctx context.Context) (net.Conn, error)
+	RunID     string
+	OwnerID   string
+	ProjectID string
+	EnvID     string
+	Dial      func(ctx context.Context) (net.Conn, error)
 }
 
 // SetDoorKey installs the door's public key, an authorized_keys line.
@@ -39,8 +40,8 @@ func (s *Service) SetDoorKey(authorizedKey string) {
 }
 
 // SSHTarget resolves a workspace name (a run's env id) to the live run it
-// belongs to and a way into its sidecar. The ownership decision is the
-// door's; this only says whose the workspace is. A name no live run carries,
+// belongs to and a way into its sidecar. Who may enter is the door's
+// decision; this only says whose the workspace is. A name no live run carries,
 // an archived run, and a workspace the engine knows to be stopped or gone
 // are ErrNoWorkspace, so the door answers before a dial that cannot
 // succeed.
@@ -59,7 +60,7 @@ func (s *Service) SSHTarget(ctx context.Context, workspace string) (SSHTarget, e
 	doorKey := s.doorKey
 	s.mu.Unlock()
 	projectID := v.ProjectID
-	return SSHTarget{RunID: v.RunID, OwnerID: v.UserID, EnvID: workspace, Dial: func(ctx context.Context) (net.Conn, error) {
+	return SSHTarget{RunID: v.RunID, OwnerID: v.UserID, ProjectID: v.ProjectID, EnvID: workspace, Dial: func(ctx context.Context) (net.Conn, error) {
 		if doorKey == "" {
 			return nil, errors.New("the engine has no SSH door key")
 		}

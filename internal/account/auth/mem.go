@@ -63,7 +63,18 @@ func storable(fields ...string) error {
 // Not EqualFold: that folds ſ onto s, which lower() leaves alone.
 func sameLower(a, b string) bool { return strings.ToLower(a) == strings.ToLower(b) }
 
+// storableRole is the role column's CHECK; empty takes its default.
+func storableRole(r Role) error {
+	if r != "" && !r.Valid() {
+		return fmt.Errorf("role %q violates check constraint", r)
+	}
+	return nil
+}
+
 func userRow(u User) User {
+	if u.Role == "" {
+		u.Role = RoleMember // the column's default
+	}
 	u.DisabledAt, u.LastSeenAt = optional(u.DisabledAt), optional(u.LastSeenAt)
 	u.CreatedAt, u.UpdatedAt = instant(u.CreatedAt), instant(u.UpdatedAt)
 	return u
@@ -112,6 +123,7 @@ func tokenRow(t Token) Token {
 	t.CreatedAt = instant(t.CreatedAt)
 	t.LastUsedAt, t.ExpiresAt = optional(t.LastUsedAt), optional(t.ExpiresAt)
 	t.IdleSeconds = max(t.IdleSeconds, 0) // Postgres keeps no window as NULL
+	t.Actions, t.ProjectIDs = slices.Clone(t.Actions), slices.Clone(t.ProjectIDs)
 	return t
 }
 
@@ -173,6 +185,9 @@ func (m *Mem) CreateUser(_ context.Context, u User) error {
 	if err := storable(u.ID, u.Handle, u.Email, u.Name); err != nil {
 		return err
 	}
+	if err := storableRole(u.Role); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, dup := m.users[u.ID]; dup {
@@ -189,6 +204,9 @@ func (m *Mem) CreateUser(_ context.Context, u User) error {
 // update's to change, so a row read before a touch cannot lose it.
 func (m *Mem) UpdateUser(_ context.Context, u User) error {
 	if err := storable(u.ID, u.Handle, u.Email, u.Name); err != nil {
+		return err
+	}
+	if err := storableRole(u.Role); err != nil {
 		return err
 	}
 	m.mu.Lock()
@@ -401,7 +419,7 @@ func (m *Mem) DeleteSessionsOf(_ context.Context, userID string) error {
 // --- tokens -------------------------------------------------------------------
 
 func (m *Mem) CreateToken(_ context.Context, t Token) error {
-	if err := storable(t.ID, t.UserID, t.Name, t.Hash, t.Prefix); err != nil {
+	if err := storable(append([]string{t.ID, t.UserID, t.Name, t.Hash, t.Prefix}, append(t.Actions, t.ProjectIDs...)...)...); err != nil {
 		return err
 	}
 	m.mu.Lock()

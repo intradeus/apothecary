@@ -143,7 +143,7 @@ func TestBuildAppBootsOnPostgres(t *testing.T) {
 		t.Fatalf("status = %d %s", code, body)
 	}
 	c.setup()
-	if code, body := c.do("GET", "/api/me", nil); code != http.StatusOK || !strings.Contains(body, `"admin":true`) {
+	if code, body := c.do("GET", "/api/me", nil); code != http.StatusOK || !strings.Contains(body, `"role":"admin"`) {
 		t.Fatalf("me = %d %s", code, body)
 	}
 

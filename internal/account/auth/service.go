@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -29,6 +30,10 @@ type Service struct {
 	SessionTTL time.Duration
 	// HashCost prices new password hashes; zero is the production cost.
 	HashCost HashCost
+	// CheckGrant validates a scoped token's actions against the action
+	// vocabulary (authz.ValidateGrant: the vocabulary lives with the
+	// policies, which import this package). Nil refuses every scoped token.
+	CheckGrant func(actions []string) error
 
 	now   func() time.Time
 	newID func() string
@@ -84,7 +89,8 @@ type NewUser struct {
 	Email    string
 	Name     string
 	Password string
-	Admin    bool
+	// Role is the instance role; empty is a member.
+	Role Role
 }
 
 // Setup claims the instance: creates the first user as admin, with a
@@ -97,7 +103,7 @@ func (s *Service) Setup(ctx context.Context, in NewUser) (User, error) {
 	if n > 0 {
 		return User{}, ErrSetupDone
 	}
-	in.Admin = true
+	in.Role = RoleAdmin
 	return s.CreateUser(ctx, in)
 }
 
@@ -123,7 +129,13 @@ func normalizeUser(u *User) error {
 
 // CreateUser makes an account with a password (admin: inviting a colleague).
 func (s *Service) CreateUser(ctx context.Context, in NewUser) (User, error) {
-	u := User{Handle: in.Handle, Email: in.Email, Name: in.Name, Admin: in.Admin}
+	if in.Role == "" {
+		in.Role = RoleMember
+	}
+	if !in.Role.Valid() {
+		return User{}, invalidf("role must be admin, member or guest")
+	}
+	u := User{Handle: in.Handle, Email: in.Email, Name: in.Name, Role: in.Role}
 	if err := normalizeUser(&u); err != nil {
 		return User{}, err
 	}
@@ -181,19 +193,22 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, p Profile) (
 	return u, nil
 }
 
-// SetAdmin grants or removes instance administration. The last admin
-// cannot step down: someone must be able to manage accounts.
-func (s *Service) SetAdmin(ctx context.Context, userID string, admin bool) (User, error) {
+// SetRole changes an account's instance role. The last admin cannot step
+// down: someone must be able to manage accounts.
+func (s *Service) SetRole(ctx context.Context, userID string, role Role) (User, error) {
+	if !role.Valid() {
+		return User{}, invalidf("role must be admin, member or guest")
+	}
 	u, err := s.db.GetUser(ctx, userID)
 	if err != nil {
 		return User{}, err
 	}
-	if !admin && u.Admin {
+	if role != RoleAdmin && u.Role == RoleAdmin {
 		if err := s.checkNotLastAdmin(ctx, userID); err != nil {
 			return User{}, err
 		}
 	}
-	u.Admin = admin
+	u.Role = role
 	u.UpdatedAt = s.now().UTC()
 	return u, s.db.UpdateUser(ctx, u)
 }
@@ -205,7 +220,7 @@ func (s *Service) SetDisabled(ctx context.Context, userID string, disabled bool)
 	if err != nil {
 		return User{}, err
 	}
-	if disabled && u.Admin {
+	if disabled && u.Role == RoleAdmin {
 		if err := s.checkNotLastAdmin(ctx, userID); err != nil {
 			return User{}, err
 		}
@@ -232,7 +247,7 @@ func (s *Service) checkNotLastAdmin(ctx context.Context, userID string) error {
 		return err
 	}
 	for _, o := range all {
-		if o.ID != userID && o.Admin && !o.Disabled() {
+		if o.ID != userID && o.Role == RoleAdmin && !o.Disabled() {
 			return nil
 		}
 	}
@@ -440,10 +455,35 @@ func (s *Service) Logout(ctx context.Context, cookie string) error {
 // file or a log, and never mistaken for a run token.
 const TokenPrefix = "apo_"
 
+// Grant is what a token may do: the zero value is a full token (the
+// account itself); Actions scope it, and ProjectIDs, with Actions, limit
+// it to some workshops (empty: no limit).
+type Grant struct {
+	Actions    []string
+	ProjectIDs []string
+}
+
 // NewToken mints a personal token. The secret is returned once; the row
 // keeps its hash.
-func (s *Service) NewToken(ctx context.Context, userID, name string, expires *time.Time) (string, Token, error) {
-	return s.newToken(ctx, userID, name, expires, 0)
+func (s *Service) NewToken(ctx context.Context, userID, name string, expires *time.Time, g Grant) (string, Token, error) {
+	if g.Actions == nil && g.ProjectIDs != nil {
+		return "", Token{}, invalidf("only a limited token can be limited to workshops")
+	}
+	if g.Actions != nil {
+		if s.CheckGrant == nil {
+			return "", Token{}, invalidf("this server cannot mint limited tokens")
+		}
+		if err := s.CheckGrant(g.Actions); err != nil {
+			return "", Token{}, invalidf("%v", err)
+		}
+		g.Actions = slices.Clone(g.Actions)
+		if len(g.ProjectIDs) == 0 {
+			g.ProjectIDs = nil
+		} else {
+			g.ProjectIDs = slices.Compact(slices.Sorted(slices.Values(g.ProjectIDs)))
+		}
+	}
+	return s.newToken(ctx, userID, name, expires, 0, g)
 }
 
 // NewIdleToken mints a token with no fixed expiry that is refused after idle
@@ -453,10 +493,10 @@ func (s *Service) NewIdleToken(ctx context.Context, userID, name string, idle ti
 	if idle < time.Second {
 		return "", Token{}, invalidf("an inactivity window must be at least a second")
 	}
-	return s.newToken(ctx, userID, name, nil, int(idle/time.Second))
+	return s.newToken(ctx, userID, name, nil, int(idle/time.Second), Grant{})
 }
 
-func (s *Service) newToken(ctx context.Context, userID, name string, expires *time.Time, idleSeconds int) (string, Token, error) {
+func (s *Service) newToken(ctx context.Context, userID, name string, expires *time.Time, idleSeconds int, g Grant) (string, Token, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return "", Token{}, invalidf("token name is required")
@@ -473,6 +513,7 @@ func (s *Service) newToken(ctx context.Context, userID, name string, expires *ti
 		ID: s.newID(), UserID: userID, Name: name,
 		Hash: hashSecret(secret), Prefix: secret[:len(TokenPrefix)+6],
 		CreatedAt: s.now().UTC(), ExpiresAt: expires, IdleSeconds: idleSeconds,
+		Actions: g.Actions, ProjectIDs: g.ProjectIDs,
 	}
 	if err := s.db.CreateToken(ctx, t); err != nil {
 		return "", Token{}, err

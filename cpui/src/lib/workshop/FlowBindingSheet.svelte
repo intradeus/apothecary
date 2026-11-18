@@ -7,7 +7,15 @@
 	// workshop's ticket source's statuses suggested.
 	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
-	import type { Flow, FlowBinding, Integration, Model, ParamDecl, Project } from '$lib/domain';
+	import {
+		projectCan,
+		type Flow,
+		type FlowBinding,
+		type Integration,
+		type Model,
+		type ParamDecl,
+		type Project
+	} from '$lib/domain';
 	import { KNOWN_PARAMS } from '$lib/domain/flowdoc';
 	import ParamFields from '$lib/flow/ParamFields.svelte';
 	import { modelHarnessKinds } from '$lib/flow/paramValues';
@@ -30,6 +38,10 @@
 		 *  flow's defaults. */
 		onsaved: (binding: FlowBinding | null) => void;
 	} = $props();
+
+	/** Binding a flow's parameters needs project:write. */
+	const canWrite = $derived(projectCan(project, 'project:write'));
+	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
 	let open = $state(true);
 	let values = $state<Record<string, string>>({});
@@ -186,8 +198,12 @@
 		{#if error}<div class="error">{error}</div>{/if}
 	</form>
 	{#snippet footer()}
-		<button type="button" class="btn-ghost" onclick={reset} disabled={busy || loading}
-			>{t('workshop.flows.binding.reset')}</button
+		<button
+			type="button"
+			class="btn-ghost"
+			onclick={reset}
+			disabled={!canWrite || busy || loading}
+			title={deny}>{t('workshop.flows.binding.reset')}</button
 		>
 		<span class="grow"></span>
 		<button type="button" class="btn-ghost" onclick={onclose}>{t('common.cancel')}</button>
@@ -195,7 +211,8 @@
 			class="btn-primary"
 			type="submit"
 			form="flow-binding"
-			disabled={busy || loading}
+			disabled={!canWrite || busy || loading}
+			title={deny}
 			aria-busy={busy}
 			>{busy ? t('workshop.flows.binding.saving') : t('workshop.flows.binding.save')}</button
 		>

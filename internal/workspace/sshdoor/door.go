@@ -46,12 +46,20 @@ type KeyAuth interface {
 	TouchSSHKey(ctx context.Context, id string, at time.Time) error
 }
 
-// Target is the workspace a username names: whose run it is, and how to
-// reach its sidecar's SSH server.
+// Target is the workspace a username names: whose run it is, in which
+// workshop, and how to reach its sidecar's SSH server.
 type Target struct {
-	RunID   string
-	OwnerID string
-	Dial    func(ctx context.Context) (net.Conn, error)
+	RunID     string
+	OwnerID   string
+	ProjectID string
+	Dial      func(ctx context.Context) (net.Conn, error)
+}
+
+// Authorizer decides whether an account may open a shell in a target's
+// workspace (authz's run:shell: the run's owner, or a maintainer of a
+// workshop shared with it).
+type Authorizer interface {
+	MayShell(ctx context.Context, user auth.User, t Target) (bool, error)
 }
 
 // Targets looks a workspace up by the name a person logs in as.
@@ -68,6 +76,7 @@ type Config struct {
 	HostKey, DoorKey ssh.Signer
 	Keys             KeyAuth
 	Targets          Targets
+	Authorizer       Authorizer
 	// Advertise is the host:port people connect to when the door listens
 	// on a TCP port of its own (Serve): what the run page prints and links
 	// to. Empty when the door is reached only through the HTTPS tunnel.
@@ -118,8 +127,8 @@ func New(cfg Config) (*Door, error) {
 	switch {
 	case cfg.HostKey == nil || cfg.DoorKey == nil:
 		return nil, errors.New("sshdoor: a host key and a door key are required")
-	case cfg.Keys == nil || cfg.Targets == nil:
-		return nil, errors.New("sshdoor: key authentication and targets are required")
+	case cfg.Keys == nil || cfg.Targets == nil || cfg.Authorizer == nil:
+		return nil, errors.New("sshdoor: key authentication, targets and an authorizer are required")
 	}
 	var host string
 	var port int
@@ -364,8 +373,8 @@ func (d *Door) serverConfig(c *conn) *ssh.ServerConfig {
 
 // authenticate is the door's whole decision: the workspace (the tunnel's,
 // else the username) is one, the key is a registered one, the key's account
-// is not disabled, the workspace belongs to a run of that account's, and the
-// workspace is there to be reached. Any miss is errDenied, with the reason in
+// is not disabled, the account may open a shell in the run (the
+// authorizer), and the workspace is there to be reached. Any miss is errDenied, with the reason in
 // the log only.
 func (d *Door) authenticate(c *conn, username string, key ssh.PublicKey) (*ssh.Permissions, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -385,8 +394,8 @@ func (d *Door) authenticate(c *conn, username string, key ssh.PublicKey) (*ssh.P
 		d.cfg.Log.Debug("ssh door: no workspace for username", "remote", c.remote, "username", username, logs.UserID, user.ID, "err", err)
 		return nil, errDenied
 	}
-	if target.OwnerID == "" || target.OwnerID != user.ID {
-		d.cfg.Log.Debug("ssh door: not the owner", "remote", c.remote, "username", username, logs.UserID, user.ID, logs.RunID, target.RunID)
+	if ok, err := d.cfg.Authorizer.MayShell(ctx, user, target); !ok {
+		d.cfg.Log.Debug("ssh door: no shell for this account", "remote", c.remote, "username", username, logs.UserID, user.ID, logs.RunID, target.RunID, "err", err)
 		return nil, errDenied
 	}
 	c.userID, c.keyID, c.key, c.target = user.ID, k.ID, key, target

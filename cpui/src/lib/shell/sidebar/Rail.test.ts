@@ -34,7 +34,7 @@ beforeEach(() => {
 	fleet.limits = null;
 	fleet.projects = [billing, web];
 	prefs.collapsed = true;
-	session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', admin: false } } as Me;
+	session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', role: 'member' } } as Me;
 });
 
 describe('Rail', () => {

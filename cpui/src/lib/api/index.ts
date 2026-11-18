@@ -25,9 +25,12 @@ import type {
 	Limits,
 	Me,
 	Notice,
+	Permission,
 	SshKey,
 	Token,
-	User
+	TokenGrant,
+	User,
+	UserRole
 } from '$lib/domain';
 import type { Credential, CredentialImport, ProviderInfo, SignInPending } from '$lib/domain';
 import type { Swarm } from '$lib/domain';
@@ -90,6 +93,8 @@ import type {
 	PingAnswerInput,
 	PingPayload,
 	CurationView,
+	Member,
+	MemberRole,
 	Preflight,
 	Project,
 	ProjectDraft,
@@ -872,6 +877,26 @@ export const projects = {
 
 	remove: (id: string) => unwrapVoid(gen.deleteProject({ path: { id } })),
 
+	// Sharing: the accounts a workshop is shared with, and their roles. Only
+	// the owner may add, change or remove a maintainer (403).
+
+	members: async (id: string): Promise<Member[]> =>
+		many(await unwrap(gen.listMembers({ path: { id } })), map.toMember),
+
+	/** Share the workshop with an account, by handle or email. An unknown
+	 *  account is a 404; the owner itself a 400. */
+	addMember: async (id: string, login: string, role: MemberRole): Promise<Member> =>
+		map.toMember(await unwrap(gen.addMember({ path: { id }, body: { login, role } }))),
+
+	updateMember: async (id: string, userId: string, role: MemberRole): Promise<Member> =>
+		map.toMember(await unwrap(gen.updateMember({ path: { id, uid: userId }, body: { role } }))),
+
+	removeMember: (id: string, userId: string) =>
+		unwrapVoid(gen.removeMember({ path: { id, uid: userId } })),
+
+	/** A member leaving a workshop shared with them. */
+	leave: (id: string) => unwrapVoid(gen.leaveProject({ path: { id } })),
+
 	/** One page of the workshop's tickets, read live from its source. done
 	 *  defaults to open; pass the last page's next as cursor for the one
 	 *  after it. A tracker holding off for its rate limit with nothing cached
@@ -1473,11 +1498,32 @@ export const auth = {
 
 	tokens: async (): Promise<Token[]> => many(await unwrap(gen.listMyTokens()), map.toToken),
 
-	/** Mint a token; the secret is in the answer and nowhere else. */
-	createToken: async (name: string): Promise<{ token: Token; secret: string }> => {
-		const w = await unwrap(gen.createMyToken({ body: { name } }));
+	/** Mint a token with what it may do; the secret is in the answer and
+	 *  nowhere else. A limited token with no workshop chosen reaches every
+	 *  workshop its actions apply to. */
+	createToken: async (
+		name: string,
+		grant: TokenGrant
+	): Promise<{ token: Token; secret: string }> => {
+		const w = await unwrap(
+			gen.createMyToken({
+				body: {
+					name,
+					...(grant.full
+						? { full_access: true }
+						: {
+								actions: grant.actions,
+								...(grant.projectIds.length ? { project_ids: grant.projectIds } : {})
+							})
+				}
+			})
+		);
 		return { token: map.toToken(w.token), secret: w.secret };
 	},
+
+	/** The actions a token can be limited to, with what each allows. */
+	permissions: async (): Promise<Permission[]> =>
+		many(await unwrap(gen.listPermissions()), map.toPermission),
 
 	revokeToken: (id: string) => unwrapVoid(gen.deleteMyToken({ path: { id } })),
 
@@ -1517,7 +1563,7 @@ export const users = {
 		email: string;
 		name: string;
 		password: string;
-		admin: boolean;
+		role: UserRole;
 	}): Promise<User> =>
 		map.toUser(
 			await unwrap(
@@ -1527,16 +1573,17 @@ export const users = {
 						email: d.email,
 						name: d.name,
 						password: d.password,
-						admin: d.admin
+						role: d.role
 					}
 				})
 			)
 		),
 
-	/** Change an account: profile fields, the admin flag, whether it is disabled. */
+	/** Change an account: profile fields, its role, whether it is disabled.
+	 *  Demoting or disabling the last admin is a 400. */
 	update: async (
 		id: string,
-		d: { handle?: string; email?: string; name?: string; admin?: boolean; disabled?: boolean }
+		d: { handle?: string; email?: string; name?: string; role?: UserRole; disabled?: boolean }
 	): Promise<User> => map.toUser(await unwrap(gen.updateUser({ path: { id }, body: d }))),
 
 	resetPassword: (id: string, password: string) =>

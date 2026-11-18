@@ -15,6 +15,10 @@ type Principal struct {
 // header does not.
 func (p Principal) ViaCookie() bool { return p.Session != nil }
 
+// Admin reports the instance admin role. What a route needs is authz's to
+// decide; this is for the few readers that only label (the users list).
+func (p Principal) Admin() bool { return p.User.Role == RoleAdmin }
+
 type ctxKey struct{}
 
 // WithPrincipal attaches the request's principal to a context.

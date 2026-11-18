@@ -15,7 +15,7 @@
 		TicketDraft,
 		TrackerType
 	} from '$lib/domain';
-	import { CHANGE_TYPES } from '$lib/domain';
+	import { CHANGE_TYPES, projectCan } from '$lib/domain';
 	import FileChips from '$lib/artifacts/FileChips.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
@@ -34,6 +34,9 @@
 		/** Show a Cancel button that calls this. */
 		oncancel?: () => void;
 	} = $props();
+
+	/** Writing a ticket needs ticket:write in its workshop. */
+	const canWrite = $derived(projectCan(project, 'ticket:write'));
 
 	// svelte-ignore state_referenced_locally
 	const init = $state.snapshot(existing) as TicketDetail | null;
@@ -196,7 +199,8 @@
 			class="btn-primary btn-lg"
 			type="submit"
 			aria-busy={submitting}
-			disabled={!title.trim() || !goal.trim()}
+			disabled={!canWrite || !title.trim() || !goal.trim()}
+			title={canWrite ? undefined : t('common.needsPermission')}
 		>
 			{init ? t('form.ticket.save') : t('form.ticket.create')}
 		</button>

@@ -36,7 +36,9 @@ const prov = anIntegration({
 	config: { namespace: 'ws' }
 });
 const signIn = (admin: boolean) =>
-	(session.me = { user: { id: 'u1', handle: 'lu', name: 'Lu', admin } } as Me);
+	(session.me = {
+		user: { id: 'u1', handle: 'lu', name: 'Lu', role: admin ? 'admin' : 'member' }
+	} as Me);
 
 beforeEach(() => {
 	vi.resetAllMocks();

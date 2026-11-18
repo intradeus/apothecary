@@ -16,6 +16,7 @@
 		spent,
 		busy,
 		locked,
+		allowed = true,
 		onrun
 	}: {
 		phase: RunPhase;
@@ -31,6 +32,8 @@
 		busy: boolean;
 		/** A start is in flight, this one's or another's. */
 		locked: boolean;
+		/** The caller's workshop role may start a phase (run:operate). */
+		allowed?: boolean;
 		onrun: (ev: MouseEvent) => void;
 	} = $props();
 
@@ -93,17 +96,19 @@
 					? { hue: 'tint-muted', word: t('run.phases.maxReached'), pulse: false }
 					: { hue: 'tint-muted', word: t('run.phases.idle'), pulse: false }
 	);
-	const disabled = $derived(!free || spent || locked);
+	const disabled = $derived(!allowed || !free || spent || locked);
 	const why = $derived(
-		phase.live
-			? t('run.phases.live')
-			: spent
-				? t('run.phases.spent')
-				: !free
-					? t('run.phases.otherRunning')
-					: locked
-						? t('run.phases.starting')
-						: t('run.phases.startNow')
+		!allowed
+			? t('common.needsPermission')
+			: phase.live
+				? t('run.phases.live')
+				: spent
+					? t('run.phases.spent')
+					: !free
+						? t('run.phases.otherRunning')
+						: locked
+							? t('run.phases.starting')
+							: t('run.phases.startNow')
 	);
 </script>
 

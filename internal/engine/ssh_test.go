@@ -106,6 +106,14 @@ func (k envDoorKey) doorKey() []byte {
 	return data
 }
 
+// ownerOnly is the door's authorizer reduced to the case this test is
+// about: a run's owner (authz's own matrix is sshdoor's and authz's tests).
+type ownerOnly struct{}
+
+func (ownerOnly) MayShell(_ context.Context, u auth.User, t sshdoor.Target) (bool, error) {
+	return t.OwnerID == u.ID, nil
+}
+
 // sshTargets adapts the workspace service for the door.
 type sshTargets struct{ ws *wsinfo.Service }
 
@@ -179,7 +187,7 @@ func TestSSHDoorReachesTheRunsWorkspace(t *testing.T) {
 	hostKey, _ := sshdoor.KeyFromSeed(seed)
 	_, _ = rand.Read(seed)
 	doorKey, _ := sshdoor.KeyFromSeed(seed)
-	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: users, Targets: sshTargets{ws}, Advertise: "door.test:2222"})
+	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: users, Targets: sshTargets{ws}, Authorizer: ownerOnly{}, Advertise: "door.test:2222"})
 	if err != nil {
 		t.Fatal(err)
 	}

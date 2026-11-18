@@ -653,10 +653,16 @@ type PasswordChangeRequest struct {
 	Password string `json:"password"`
 }
 
-// TokenRequest mints a personal API token.
+// TokenRequest mints a personal API token: either full access (the
+// account itself) or limited to Actions (GET /api/permissions lists the
+// grantable ones) and, optionally, to the workshops in ProjectIDs. Exactly
+// one of full_access and a non-empty actions list.
 type TokenRequest struct {
-	Name      string     `json:"name"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Name       string     `json:"name"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	FullAccess bool       `json:"full_access,omitempty"`
+	Actions    []string   `json:"actions,omitempty"`
+	ProjectIDs []string   `json:"project_ids,omitempty"`
 }
 
 // TokenCreated carries the secret, the one time it is ever shown.
@@ -703,23 +709,72 @@ type RunSSH struct {
 	Keys       int      `json:"keys"`
 }
 
-// UserCreateRequest is an admin creating an account.
+// UserCreateRequest is an admin creating an account. Role is admin, member
+// (the default) or guest.
 type UserCreateRequest struct {
 	Handle   string `json:"handle"`
 	Email    string `json:"email"`
 	Name     string `json:"name,omitempty"`
 	Password string `json:"password"`
-	Admin    bool   `json:"admin,omitempty"`
+	Role     string `json:"role,omitempty"`
 }
 
-// UserUpdateRequest is an admin changing an account: profile fields
-// (absent = keep), the admin flag, and whether it is disabled.
+// UserUpdateRequest is an admin changing an account: profile fields and the
+// role (absent = keep), and whether it is disabled.
 type UserUpdateRequest struct {
 	Handle   string `json:"handle,omitempty"`
 	Email    string `json:"email,omitempty"`
 	Name     string `json:"name,omitempty"`
-	Admin    *bool  `json:"admin,omitempty"`
+	Role     string `json:"role,omitempty"`
 	Disabled *bool  `json:"disabled,omitempty"`
+}
+
+// Permission is one action of the vocabulary (GET /api/permissions): what
+// it is about, and whether a limited token may hold it.
+type Permission struct {
+	Action    string `json:"action"`
+	Kind      string `json:"kind"`
+	Doc       string `json:"doc"`
+	Grantable bool   `json:"grantable"`
+}
+
+// ProjectAccess is what the caller may do in a workshop: its role there
+// (owner, maintainer, operator, viewer) and the actions it holds on the
+// workshop and its runs and tickets — what the UI enables.
+type ProjectAccess struct {
+	Role    string   `json:"role"`
+	Actions []string `json:"actions"`
+}
+
+// ProjectView is a workshop as its reader sees it: the project, whose it
+// is, and the reader's access.
+type ProjectView struct {
+	confstore.Project
+	// OwnerHandle is the owner's handle, for a workshop shared with the
+	// reader ("shared by @handle").
+	OwnerHandle string        `json:"owner_handle,omitempty"`
+	Access      ProjectAccess `json:"access"`
+}
+
+// Member is one account a workshop is shared with, as its list shows it.
+type Member struct {
+	UserID    string    `json:"user_id"`
+	Handle    string    `json:"handle"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MemberRequest shares a workshop with an account, named by handle or
+// email, as viewer, operator or maintainer.
+type MemberRequest struct {
+	Login string `json:"login"`
+	Role  string `json:"role"`
+}
+
+// MemberRoleRequest changes a member's role.
+type MemberRoleRequest struct {
+	Role string `json:"role"`
 }
 
 // PasswordResetRequest is an admin setting an account's password.

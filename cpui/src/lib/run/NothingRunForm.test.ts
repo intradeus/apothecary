@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { aFlow, aWorkshop, bindable } from '$test/fixtures/app.svelte';
+import { aViewerProject } from '$test/fixtures';
 import NothingRunForm from './NothingRunForm.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -193,6 +194,13 @@ describe('NothingRunForm', () => {
 		await userEvent.click(await branchPick());
 		await userEvent.click(screen.getByRole('option', { name: 'dev' }));
 		expect(itself('dev')).toBeInTheDocument();
+	});
+
+	it('holds the start where the role may not start a run (run:operate)', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		const props = setup();
+		expect(screen.getByText('Your role in this workshop does not allow this')).toBeInTheDocument();
+		await waitFor(() => expect(props.blocked).toBe(true));
 	});
 
 	it('says the default branch when the workshop is not known yet', async () => {

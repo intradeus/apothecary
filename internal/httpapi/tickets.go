@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/trackerport"
@@ -305,7 +306,7 @@ func (s *Server) activeTicketRuns(ctx context.Context, owner string, ticketIDs [
 	for _, id := range ticketIDs {
 		want[id] = true
 	}
-	views, err := (&run.Reader{Store: s.Store}).List(ctx, run.ListFilter{UserID: owner})
+	views, err := (&run.Reader{Store: s.Store}).List(ctx, run.ListFilter{Seen: run.Seen{UserID: owner}})
 	if err != nil {
 		return nil, err
 	}
@@ -657,8 +658,15 @@ func (s *Server) getTicketRecord(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
+	// The owner's workshops on the source, as far as the caller sees them:
+	// a member is not told the names of the owner's other workshops.
+	v, err := s.visible(ctx, authz.KindProject)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	for _, p := range projects {
-		if p.TicketSourceID == t.SourceID {
+		if p.TicketSourceID == t.SourceID && v.Sees(p.UserID, p.ID) {
 			out.Workshops = append(out.Workshops, WorkshopRef{ID: p.ID, Name: p.Name})
 		}
 	}
@@ -704,55 +712,55 @@ func (s *Server) ticketRoutes() []Route {
 				{Name: "limit", Doc: "page size (default: the tracker's)", Type: "integer"},
 				refresh,
 			},
-			Handler: s.listWorkshopTickets, Returns: TicketPage{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listWorkshopTickets, Returns: TicketPage{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead},
 		{Method: "POST", Path: "/api/projects/{id}/tickets", ID: "createWorkshopTicket", Tag: tagTickets,
 			Summary: "Create a ticket on a workshop's internal tracker",
 			Doc:     "A workshop reading a remote tracker creates its tickets there (400).",
 			Handler: s.createWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
 		{Method: "GET", Path: one, ID: "getWorkshopTicket", Tag: tagTickets,
 			Summary: "One ticket of a workshop's source, by its key",
 			Doc:     "Read live; a record takes what the issue shows now. An issue the tracker does not have is 404.",
 			Query:   []Param{refresh},
-			Handler: s.getWorkshopTicket, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getWorkshopTicket, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead},
 		{Method: "PUT", Path: one, ID: "updateWorkshopTicket", Tag: tagTickets,
 			Summary: "Edit a ticket",
 			Doc: "An internal ticket takes title, goal, base_branch, change_type, type_id and attachment_ids. " +
 				"A remote issue takes base_branch only (the rest is its tracker's), its record made when it has none.",
-			Handler: s.updateWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.updateWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
 		{Method: "DELETE", Path: one, ID: "deleteWorkshopTicket", Tag: tagTickets,
 			Summary: "Delete an internal ticket",
 			Doc:     "A remote issue is its tracker's (400).",
-			Handler: s.deleteWorkshopTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.deleteWorkshopTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
 		{Method: "GET", Path: one + "/attachments", ID: "getWorkshopTicketAttachments", Tag: tagTickets,
 			Summary: "Files of a ticket: its record's, and the remote issue's",
-			Handler: s.getWorkshopTicketAttachments, Returns: TicketAttachments{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getWorkshopTicketAttachments, Returns: TicketAttachments{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead},
 		{Method: "POST", Path: one + "/runs", ID: "startWorkshopTicketRun", Tag: tagTickets,
 			Summary: "Start one attempt on a ticket, in this workshop",
 			Doc: "The issue's record is made first when it has none; an issue that has one starts from it even while its tracker cannot be read. " +
 				"A ticket has at most one active (non-terminal) run across workshops: while one is going the start is refused with 409, the error's run_id naming it.",
 			Handler: s.startWorkshopTicketRun, Body: StartRunRequest{}, Returns: RunRef{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.RunOperate},
 		{Method: "POST", Path: one + "/status", ID: "setWorkshopTicketStatus", Tag: tagTickets,
 			Summary: "Move a ticket to a status of its tracker, by name",
 			Doc:     "A status the issue cannot reach is 400, naming those it can; the remote tracker failing 502.",
-			Handler: s.setTicketStatus, Body: TicketStatusRequest{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.setTicketStatus, Body: TicketStatusRequest{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
 		{Method: "PUT", Path: one + "/labels", ID: "setWorkshopTicketLabels", Tag: tagTickets,
 			Summary: "Replace a ticket's labels on its tracker",
-			Handler: s.setTicketLabels, Body: TicketLabelsRequest{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.setTicketLabels, Body: TicketLabelsRequest{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
 		{Method: "GET", Path: one + "/comments", ID: "listWorkshopTicketComments", Tag: tagTickets,
 			Summary: "A ticket's comments, oldest first",
 			Doc:     "A remote issue's are read live.",
 			Query:   []Param{refresh},
-			Handler: s.listTicketComments, Returns: []TicketComment{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listTicketComments, Returns: []TicketComment{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead},
 		{Method: "POST", Path: one + "/comments", ID: "addWorkshopTicketComment", Tag: tagTickets,
 			Summary: "Comment on a ticket, on its tracker",
 			Doc:     "Answers with the ticket's comments.",
 			Handler: s.addTicketComment, Body: TicketCommentRequest{}, Returns: []TicketComment{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
 		{Method: "GET", Path: "/api/tickets/{id}", ID: "getTicketRecord", Tag: tagTickets,
 			Summary: "A ticket record by id, for links from runs",
 			Doc:     "With the key it is opened by, its source (absent once the integration is deleted) and the workshops that read that source.",
-			Handler: s.getTicketRecord, Returns: TicketRecord{}, Enabled: haveConf, Scope: ScopeTicket},
+			Handler: s.getTicketRecord, Returns: TicketRecord{}, Enabled: haveConf, Scope: ScopeTicket, Action: authz.TicketRead},
 	}
 }

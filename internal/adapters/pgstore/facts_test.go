@@ -278,11 +278,11 @@ func TestListRunViewsScopesInSQL(t *testing.T) {
 		f    run.ListFilter
 		want []string
 	}{
-		{run.ListFilter{UserID: "u1"}, []string{"a3", "a2", "a1"}},
-		{run.ListFilter{UserID: "u1", ProjectID: "p1"}, []string{"a3", "a1"}},
-		{run.ListFilter{UserID: "u1", TicketID: "t2"}, []string{"a3", "a2"}},
-		{run.ListFilter{UserID: "u1", ProjectID: "p1", TicketID: "t1"}, []string{"a1"}},
-		{run.ListFilter{UserID: "nobody"}, []string{}},
+		{run.ListFilter{Seen: run.Seen{UserID: "u1"}}, []string{"a3", "a2", "a1"}},
+		{run.ListFilter{Seen: run.Seen{UserID: "u1"}, ProjectID: "p1"}, []string{"a3", "a1"}},
+		{run.ListFilter{Seen: run.Seen{UserID: "u1"}, TicketID: "t2"}, []string{"a3", "a2"}},
+		{run.ListFilter{Seen: run.Seen{UserID: "u1"}, ProjectID: "p1", TicketID: "t1"}, []string{"a1"}},
+		{run.ListFilter{Seen: run.Seen{UserID: "nobody"}}, []string{}},
 	} {
 		vs, err := s.ListRunViews(ctx, c.f)
 		if err != nil {

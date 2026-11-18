@@ -7,6 +7,7 @@ import type { Project, ProjectDraft } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aFlow, anIntegration, aWorkshop, choose } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
+import { aViewerProject } from '$test/fixtures';
 import ProjectForm from './ProjectForm.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -750,5 +751,15 @@ describe('ProjectForm, the step rail', () => {
 		expect(step(/Repository/)).not.toHaveTextContent(tick);
 		await userEvent.type(screen.getByLabelText('Locator'), '1');
 		expect(step(/Repository/)).toHaveTextContent(tick);
+	});
+});
+
+describe('ProjectForm, without project:write', () => {
+	it('shows the setup read-only: no save, disabled fields, no secrets listed', () => {
+		edit({ access: aViewerProject().access });
+		expect(screen.queryByRole('button', { name: 'Save setup' })).not.toBeInTheDocument();
+		expect(screen.getAllByText('Your role in this workshop does not allow this')).toHaveLength(2);
+		expect(screen.getByLabelText('Locator')).toBeDisabled();
+		expect(api.projects.secrets).not.toHaveBeenCalled();
 	});
 });

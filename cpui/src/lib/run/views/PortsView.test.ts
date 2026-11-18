@@ -1,7 +1,9 @@
 import { render, screen, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aViewerProject } from '$test/fixtures';
 import type { ExposedPort, ObservedPort } from '$lib/domain';
 import { CODE_SERVER_PORT } from '$lib/run/derive';
 import { toasts } from '$lib/ui/toast.svelte';
@@ -456,6 +458,24 @@ describe('PortsView', () => {
 		it('keeps what is exposed reachable', () => {
 			render(PortsView, { rs: over(), visible: true });
 			expect(openLink(5000)).toHaveAttribute('href', URL);
+		});
+	});
+
+	describe('for a viewer of the workshop', () => {
+		afterEach(() => {
+			fleet.projects = [];
+		});
+		it('forwards and exposes nothing, like a finished run', () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			const feed = { observed: [{ port: 4000 }], exposed: [], links: true };
+			vi.mocked(api.runs.ports).mockResolvedValue(feed);
+			const rs = aViewStore(aLiveRun({ projectId: 'p1' }), feed);
+			rs.portLinks = true;
+			render(PortsView, { rs, visible: true });
+			expect(screen.queryByRole('button', { name: /forward/ })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: /in the browser/ })).not.toBeInTheDocument();
+			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+			expect(screen.queryByText(/apothecary forward/)).not.toBeInTheDocument();
 		});
 	});
 });

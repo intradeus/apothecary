@@ -63,7 +63,7 @@ func TestLimitsAreAnAdminSetting(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	tok, _, err := x.srv.Auth.NewToken(context.Background(), "u2", "t", nil)
+	tok, _, err := x.srv.Auth.NewToken(context.Background(), "u2", "t", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}

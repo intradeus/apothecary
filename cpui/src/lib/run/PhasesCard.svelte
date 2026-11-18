@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import type { MergeRequestLive, RunPhase } from '$lib/domain';
 	import { PHASE_KINDS } from '$lib/domain/flowdoc';
 	import { toast } from '$lib/ui/toast.svelte';
@@ -40,6 +41,8 @@
 	let anchor = $state<HTMLElement | null>(null);
 
 	const open = $derived(mrs.filter((m) => m.state === 'open'));
+	// Starting a phase is run:operate in the run's workshop.
+	const allowed = $derived(fleet.can(fleet.runById.get(runId)?.projectId, 'run:operate'));
 
 	async function load() {
 		try {
@@ -130,6 +133,7 @@
 								spent={spent(p)}
 								busy={busy === p.id}
 								locked={busy !== ''}
+								{allowed}
 								onrun={(ev) => run(p, ev)}
 							/>
 						{/each}

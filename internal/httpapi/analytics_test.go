@@ -38,11 +38,11 @@ func (m *memAnalytics) Values(_ context.Context, c analytics.Compiled) ([]string
 	return []string{"completed"}, m.err
 }
 
-func (m *memAnalytics) FlowVersionLabels(context.Context, string, []string) (map[string]string, error) {
+func (m *memAnalytics) FlowVersionLabels(context.Context, []string, []string) (map[string]string, error) {
 	return nil, nil
 }
 
-func (m *memAnalytics) ProjectNames(context.Context, string, []string) (map[string]string, error) {
+func (m *memAnalytics) ProjectNames(context.Context, []string, []string) (map[string]string, error) {
 	return nil, nil
 }
 
@@ -135,7 +135,8 @@ func TestAnalyticsQueriesAreTheCallers(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(data), `"r1"`) {
 		t.Errorf("drill = %d %s", resp.StatusCode, data)
 	}
-	if fmt.Sprint(m.asked) != fmt.Sprintf("[%s bob %s %s]", testUser, testUser, testUser) {
+	// Each query is over the workshops its caller sees: bob sees none.
+	if fmt.Sprint(m.asked) != fmt.Sprintf("[[%s] [] [%s] [%s]]", testProject, testProject, testProject) {
 		t.Errorf("compiled for %v", m.asked)
 	}
 

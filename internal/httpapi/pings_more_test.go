@@ -140,11 +140,11 @@ type brokenPings struct {
 	list, get error
 }
 
-func (b brokenPings) ListPings(ctx context.Context, u, s string, n int) ([]run.PingView, error) {
+func (b brokenPings) ListPings(ctx context.Context, seen *run.Seen, s string, n int) ([]run.PingView, error) {
 	if b.list != nil {
 		return nil, b.list
 	}
-	return b.EventPingStore.ListPings(ctx, u, s, n)
+	return b.EventPingStore.ListPings(ctx, seen, s, n)
 }
 
 func (b brokenPings) GetPing(ctx context.Context, id string) (run.PingView, error) {
@@ -231,17 +231,30 @@ func TestEventPingStore(t *testing.T) {
 	if _, err := store.Append(ctx, "r2", &event.PingRaised{PingID: "b", Type: "clarification", Question: "q"}); err != nil {
 		t.Fatal(err)
 	}
-	if rows, err := s.ListPings(ctx, "", "all", 0); err != nil || len(rows) != 4 {
+	if _, err := store.Append(ctx, "r3", &event.RunCreated{UserID: "u3", ProjectID: "shared"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Append(ctx, "r3", &event.PingRaised{PingID: "c", Type: "clarification", Question: "q"}); err != nil {
+		t.Fatal(err)
+	}
+	if rows, err := s.ListPings(ctx, nil, "all", 0); err != nil || len(rows) != 5 {
 		t.Errorf("everyone's = %d, %v", len(rows), err)
 	}
-	if rows, _ := s.ListPings(ctx, "u2", "", 0); len(rows) != 1 || rows[0].PingID != "b" {
+	if rows, _ := s.ListPings(ctx, &run.Seen{UserID: "u2"}, "", 0); len(rows) != 1 || rows[0].PingID != "b" {
 		t.Errorf("one user's = %+v", rows)
 	}
-	if rows, _ := s.ListPings(ctx, "u1", "pending", 2); len(rows) != 2 {
+	// A workshop shared with u2: its runs' pings join u2's own.
+	if rows, _ := s.ListPings(ctx, &run.Seen{UserID: "u2", ProjectIDs: []string{"shared"}}, "", 0); len(rows) != 2 {
+		t.Errorf("own and shared = %+v", rows)
+	}
+	if rows, _ := s.ListPings(ctx, &run.Seen{}, "all", 0); len(rows) != 0 {
+		t.Errorf("seeing nothing = %+v", rows)
+	}
+	if rows, _ := s.ListPings(ctx, &run.Seen{UserID: "u1"}, "pending", 2); len(rows) != 2 {
 		t.Errorf("limit = %+v", rows)
 	}
 	// An absurd limit falls back rather than serving the table.
-	if rows, _ := s.ListPings(ctx, "", "all", 100000); len(rows) != 4 {
+	if rows, _ := s.ListPings(ctx, nil, "all", 100000); len(rows) != 5 {
 		t.Errorf("oversized limit = %d", len(rows))
 	}
 	if _, err := s.GetPing(ctx, "nope"); !errors.Is(err, engine.ErrPingNotFound) {
@@ -256,7 +269,7 @@ func TestEventPingStore(t *testing.T) {
 		"ids":    {Store: brokenStore{Store: store, ids: boom}},
 		"events": {Store: brokenStore{Store: store, events: boom}},
 	} {
-		if _, err := broken.ListPings(ctx, "", "", 0); !errors.Is(err, boom) {
+		if _, err := broken.ListPings(ctx, nil, "", 0); !errors.Is(err, boom) {
 			t.Errorf("%s = %v", name, err)
 		}
 		if _, err := broken.GetPing(ctx, "b"); !errors.Is(err, boom) {
@@ -369,10 +382,10 @@ func TestPingOwnerFallsBackToTheRegistry(t *testing.T) {
 	}
 	x.srv.Pings = brokenPings{EventPingStore: EventPingStore{Store: x.store}, get: errors.New("db down")}
 	ctx := context.Background()
-	if owner, err := x.srv.ownerOf(ctx, ScopePing, p.ID); err != nil || owner != testUser {
+	if owner, project, err := x.srv.ownerOf(ctx, ScopePing, p.ID); err != nil || owner != testUser || project != testProject {
 		t.Errorf("owner = %q, %v", owner, err)
 	}
-	if _, err := x.srv.ownerOf(ctx, ScopePing, "nope"); err == nil {
+	if _, _, err := x.srv.ownerOf(ctx, ScopePing, "nope"); err == nil {
 		t.Error("an unknown ping has an owner")
 	}
 }
@@ -384,14 +397,14 @@ func TestOwnerOfWithoutStores(t *testing.T) {
 	s := &Server{Runs: x.e, Store: x.store, Registry: x.reg, EnvCheck: x.srv.EnvCheck}
 	ctx := context.Background()
 	for _, sc := range []Scope{ScopeProject, ScopeTicket, ScopeIntegration, ScopeCredential, ScopeAttachment, ScopeSnapshot, ScopeSkill, ScopeSkillset, ScopeChannel, ScopeEnvCheck, ScopePing, ScopeRun, ScopeNotice} {
-		if owner, err := s.ownerOf(ctx, sc, "nope"); err == nil {
+		if owner, _, err := s.ownerOf(ctx, sc, "nope"); err == nil {
 			t.Errorf("%s of nothing has owner %q", scopeName(sc), owner)
 		}
 	}
-	if _, err := s.ownerOf(ctx, Scope(99), "x"); err == nil {
+	if _, _, err := s.ownerOf(ctx, Scope(99), "x"); err == nil {
 		t.Error("an unknown scope answered")
 	}
-	if _, err := s.ownerOf(ctx, ScopeNone, "x"); err == nil {
+	if _, _, err := s.ownerOf(ctx, ScopeNone, "x"); err == nil {
 		t.Error("no scope answered")
 	}
 }
@@ -411,24 +424,24 @@ func (v viewStore) RunView(context.Context, string) (run.View, bool, error) {
 func TestRunOwnerPrefersTheProjection(t *testing.T) {
 	ctx := context.Background()
 	mem := event.NewMemStore()
-	if _, err := mem.Append(ctx, "r1", &event.RunCreated{UserID: "from-log"}); err != nil {
+	if _, err := mem.Append(ctx, "r1", &event.RunCreated{UserID: "from-log", ProjectID: "p-log"}); err != nil {
 		t.Fatal(err)
 	}
-	s := &Server{Store: viewStore{Store: mem, view: run.View{UserID: "from-row"}, found: true}}
-	if owner, err := s.runOwner(ctx, "r1"); err != nil || owner != "from-row" {
+	s := &Server{Store: viewStore{Store: mem, view: run.View{UserID: "from-row", ProjectID: "p-row"}, found: true}}
+	if owner, project, err := s.runOwner(ctx, "r1"); err != nil || owner != "from-row" || project != "p-row" {
 		t.Errorf("row = %q, %v", owner, err)
 	}
 	s.Store = viewStore{Store: mem}
-	if owner, err := s.runOwner(ctx, "r1"); err != nil || owner != "from-log" {
+	if owner, project, err := s.runOwner(ctx, "r1"); err != nil || owner != "from-log" || project != "p-log" {
 		t.Errorf("no row, the log = %q, %v", owner, err)
 	}
 	boom := errors.New("db down")
 	s.Store = viewStore{Store: mem, err: boom}
-	if _, err := s.runOwner(ctx, "r1"); !errors.Is(err, boom) {
+	if _, _, err := s.runOwner(ctx, "r1"); !errors.Is(err, boom) {
 		t.Errorf("outage = %v", err)
 	}
 	s.Store = viewStore{Store: brokenStore{Store: mem, events: boom}}
-	if _, err := s.runOwner(ctx, "r1"); !errors.Is(err, boom) {
+	if _, _, err := s.runOwner(ctx, "r1"); !errors.Is(err, boom) {
 		t.Errorf("log outage = %v", err)
 	}
 }

@@ -31,6 +31,7 @@ describe('to', () => {
 		[to.workshop('p1'), '/w/p1'],
 		[to.workshop('p1', 'overview'), '/w/p1'],
 		[to.workshop('p1', 'flows'), '/w/p1?tab=flows'],
+		[to.workshop('p1', 'members'), '/w/p1?tab=members'],
 		[to.workshopSettings('p1'), '/w/p1?tab=settings'],
 		[to.flow('p1', 'builder'), '/w/p1/flows/builder'],
 		[to.system(), '/system/integrations'],

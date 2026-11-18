@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { Limits } from '$lib/domain';
-import { aPing, aProject, aRun } from '$test/fixtures';
+import { aPing, aProject, aRun, aViewerProject } from '$test/fixtures';
 import { aHold } from '$test/fixtures/run-components';
 import { visibility } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
@@ -362,6 +362,14 @@ describe('fleet views', () => {
 	it('reads a cap it has not loaded as none', () => {
 		expect(fleet.capacity.runs.max).toBe(0);
 		expect(fleet.capacity.envs.max).toBe(0);
+	});
+
+	it('grants what the run’s workshop grants, everything without one, nothing unknown', () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		expect(fleet.can('p1', 'run:read')).toBe(true);
+		expect(fleet.can('p1', 'run:operate')).toBe(false);
+		expect(fleet.can(undefined, 'run:operate')).toBe(true);
+		expect(fleet.can('p2', 'run:read')).toBe(false);
 	});
 
 	it('names a workshop, a short id for an unknown one, nothing for none', () => {

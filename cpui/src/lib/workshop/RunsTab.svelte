@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { t } from '$lib/i18n/index.svelte';
 	// Workshop runs tab: the runs list (DESIGN 7.4), filtered to this workshop.
-	import type { Integration, Project, Run } from '$lib/domain';
+	import { projectCan, type Integration, type Project, type Run } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to } from '$lib/core/urls';
 	import { shortId, stateTab } from '$lib/core/format';
@@ -22,6 +22,9 @@
 		runs,
 		integrations
 	}: { project: Project; runs: Run[]; integrations: Integration[] | null } = $props();
+
+	/** Starting a run here needs run:operate. */
+	const canOperate = $derived(projectCan(project, 'run:operate'));
 
 	let tab = $state<'active' | 'finished'>('active');
 	let filter = $state(ANY_FINISHED);
@@ -48,8 +51,11 @@
 </script>
 
 <HeaderAction>
-	<button class="btn-primary btn-lg" onclick={() => (newRun = true)}
-		>{I.add} {t('page.runs.new')}</button
+	<button
+		class="btn-primary btn-lg"
+		disabled={!canOperate}
+		title={canOperate ? undefined : t('common.needsPermission')}
+		onclick={() => (newRun = true)}>{I.add} {t('page.runs.new')}</button
 	>
 </HeaderAction>
 

@@ -185,7 +185,7 @@ func (a *Apps) authorize(s *Server) http.HandlerFunc {
 			return
 		}
 		ctx := auth.WithPrincipal(r.Context(), p)
-		if owner, err := s.ownerOf(ctx, ScopeRun, run); err != nil || owner != p.User.ID {
+		if !s.mayShell(ctx, p, run) {
 			http.Error(w, "apothecary: not your run", http.StatusNotFound)
 			return
 		}

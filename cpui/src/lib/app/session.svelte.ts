@@ -7,7 +7,7 @@
 import { errorMessage } from '$lib/core/errors';
 import { api } from '$lib/api';
 import { onUnauthorized } from '$lib/api/client';
-import type { Me, User } from '$lib/domain';
+import type { Me, User, UserRole } from '$lib/domain';
 
 class Session {
 	/** The boot check has answered. */
@@ -21,7 +21,13 @@ class Session {
 	error = $state('');
 
 	readonly user = $derived<User | null>(this.me?.user ?? null);
-	readonly admin = $derived(!!this.me?.user.admin);
+	/** The instance role; null while signed out. */
+	readonly role = $derived<UserRole | null>(this.me?.user.role ?? null);
+	/** Administers the instance: accounts, limits, the provisioner. */
+	readonly admin = $derived(this.role === 'admin');
+	/** Creates no workshop of its own (the engine answers 403): works only in
+	 *  the ones shared with it. */
+	readonly guest = $derived(this.role === 'guest');
 
 	constructor() {
 		onUnauthorized(() => this.expire());

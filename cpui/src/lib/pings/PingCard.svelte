@@ -22,6 +22,7 @@
 	import { I } from '$lib/design/icons';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { openRunEditor } from '$lib/app/editor';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { untrack } from 'svelte';
 	import {
 		answerMeta,
@@ -136,11 +137,16 @@
 	const meta = $derived(pingMeta(ping.type));
 	const unwanted = $derived(isAgentPing(ping.type));
 	const stageId = $derived(stage ?? ping.stageId);
-	const off = $derived(busy || uploading);
-	const busyOn = (answer: string) => off && sending === answer;
 	const verdict = $derived(answerMeta(ping));
 	const pingRunId = $derived((ping as { runId?: string }).runId);
 	const theRunId = $derived(runId ?? pingRunId);
+	// What the caller's role in the run's workshop allows: answering is
+	// run:operate, the workspace's editor and door are run:shell.
+	const projectId = $derived(theRunId ? fleet.runById.get(theRunId)?.projectId : undefined);
+	const canAnswer = $derived(fleet.can(projectId, 'run:operate'));
+	const canShell = $derived(fleet.can(projectId, 'run:shell'));
+	const off = $derived(busy || uploading || !canAnswer);
+	const busyOn = (answer: string) => off && sending === answer;
 	const runLink = $derived(runHref ?? (pingRunId ? to.run(pingRunId) : undefined));
 
 	/** The debug leaf carries facts, not prose: the card is the wording. */
@@ -215,7 +221,7 @@
 		}
 	}
 	$effect(() => {
-		if (!manual || !theRunId) return;
+		if (!manual || !theRunId || !canShell) return;
 		let stale = false;
 		api.runs.ssh(theRunId).then(
 			(s) => {
@@ -313,8 +319,12 @@
 			{#if manual}
 				<div class="ws">
 					{#if theRunId}
-						<button class="btn-sel btn-sm" disabled={wsBusy} aria-busy={wsBusy} onclick={openEditor}
-							>{t('ping.openEditor')} {I.external}</button
+						<button
+							class="btn-sel btn-sm"
+							disabled={wsBusy || !canShell}
+							aria-busy={wsBusy}
+							title={canShell ? undefined : t('common.needsPermission')}
+							onclick={openEditor}>{t('ping.openEditor')} {I.external}</button
 						>
 					{/if}
 					{#if vscodeUrl}
@@ -347,6 +357,7 @@
 				</div>
 			{/if}
 
+			{#if !canAnswer}<p class="help">{t('common.needsPermission')}</p>{/if}
 			{#if kind === 'yes_no' && confirmPhase}
 				<div class="acts">
 					<button
@@ -545,7 +556,7 @@
 
 {#snippet attachBtn()}
 	<span class="spacer"></span>
-	<button class="btn-ghost btn-sm" onclick={() => (showAttach = !showAttach)}
+	<button class="btn-ghost btn-sm" disabled={!canAnswer} onclick={() => (showAttach = !showAttach)}
 		>{I.add}
 		{t('ping.attach')}{#if files.length}<span class="mono">&nbsp;{files.length}</span>{/if}</button
 	>

@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"time"
 
-	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/run"
@@ -74,9 +74,14 @@ func (s *Server) getSwarm(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	envStatus := s.EnvState.Badges()
 	crew := s.Runs.Crew()
-	// The caller's runs only (the store's per-user query) — never the
+	// The runs the caller sees (the store's scoped query) — never the
 	// instance's.
-	views, err := (&run.Reader{Store: s.Store}).List(r.Context(), run.ListFilter{UserID: auth.UserID(r.Context())})
+	seen, err := s.runsSeen(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	views, err := (&run.Reader{Store: s.Store}).List(r.Context(), run.ListFilter{Seen: seen})
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -121,6 +126,6 @@ func (s *Server) swarmRoutes() []Route {
 			Summary: "Every sandbox one has in flight, across all one's workshops",
 			Doc: "The war room's live snapshot: the caller's non-terminal runs, plus those that ended in the last five minutes, " +
 				"each with its workspace status, newest resource sample and the agent on station with its subagents in flight.",
-			Handler: s.getSwarm, Returns: Swarm{}},
+			Handler: s.getSwarm, Returns: Swarm{}, Action: authz.RunRead},
 	}
 }

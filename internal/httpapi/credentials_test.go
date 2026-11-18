@@ -53,7 +53,7 @@ func TestCredentialsAPIIsOwnerScopedAndNeverEchoes(t *testing.T) {
 		CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	bob, _, err := x.srv.Auth.NewToken(ctx, "u2", "t", nil)
+	bob, _, err := x.srv.Auth.NewToken(ctx, "u2", "t", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -17,6 +17,7 @@ import {
 	MAIN_PHASE,
 	pick
 } from '$test/fixtures/flow.svelte';
+import { aProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import FlowEditorPage from './FlowEditorPage.svelte';
 
@@ -76,7 +77,7 @@ const blur = () => (document.activeElement as HTMLElement | null)?.blur();
 describe('FlowEditorPage', () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
-		fleet.projects = [];
+		fleet.projects = [aProject({ id: 'p1' })];
 		vi.mocked(api.flows.versions).mockResolvedValue([]);
 		vi.mocked(api.flows.schema).mockResolvedValue({ type: 'object' });
 		vi.mocked(api.system.actions).mockResolvedValue([]);

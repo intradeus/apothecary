@@ -6,6 +6,8 @@ import type { Flow, FlowValidation, FlowVersion } from '$lib/domain';
 import { docToYaml } from '$lib/domain/flowdoc';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { toast } from '$lib/ui/toast.svelte';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aProject, aViewerProject } from '$test/fixtures';
 import { readDoc } from '$test/fixtures/logic';
 import { deferred } from '$test/helpers';
 import { FlowEditor } from './flowEditor.svelte';
@@ -93,12 +95,24 @@ function edit(ed: FlowEditor) {
 }
 
 beforeEach(() => {
+	fleet.projects = [aProject({ id: 'p1' })];
 	flows.versions.mockResolvedValue([]);
 	flows.validate.mockImplementation(async (yaml) => valid(yaml));
 	flows.schema.mockResolvedValue({ type: 'object' });
 	vi.mocked(api.system.actions).mockResolvedValue([]);
 	vi.mocked(api.system.signals).mockResolvedValue([]);
 	vi.mocked(api.system.harnessOptions).mockResolvedValue([]);
+});
+
+describe('without project:write', () => {
+	it('saves nothing, by hand or for the layout', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		const ed = await opened();
+		expect(ed.canWrite).toBe(false);
+		edit(ed);
+		await ed.save();
+		expect(flows.save).not.toHaveBeenCalled();
+	});
 });
 
 describe('opening a flow', () => {
@@ -554,6 +568,15 @@ describe('the layout autosave', () => {
 		ed.onmove('a', 10, 20);
 		await vi.advanceTimersByTimeAsync(800);
 	};
+
+	it('keeps a move to the screen without project:write', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		const ed = await opened();
+		ed.onmove('a', 10, 20);
+		await vi.advanceTimersByTimeAsync(800);
+		expect(ed.layout.a).toEqual({ x: 10, y: 20 });
+		expect(flows.save).not.toHaveBeenCalled();
+	});
 
 	it('saves a move once it settles: same text, new positions', async () => {
 		const ed = await opened();

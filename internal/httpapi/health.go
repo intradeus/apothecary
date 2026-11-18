@@ -5,6 +5,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	"apothecary/internal/account/authz"
 )
 
 // Health is the probes' answer. Liveness says only that the process
@@ -40,7 +42,7 @@ func (s *Server) healthRoutes() []Route {
 		{Method: "GET", Path: "/api/observability", ID: "getObservability", Tag: tagSystem,
 			Summary: "Where the platform dashboards live (admin)",
 			Doc:     "`grafana_url` is APOTHECARY_GRAFANA_URL; empty when not configured.",
-			Handler: s.getObservability, Returns: ObservabilityInfo{}, Auth: AccessAdmin},
+			Handler: s.getObservability, Returns: ObservabilityInfo{}, Action: authz.InstanceAdmin},
 	}
 }
 

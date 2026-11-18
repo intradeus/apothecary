@@ -13,4 +13,11 @@ describe('SecretsSection', () => {
 		expect(await screen.findByText('No secrets yet.')).toBeInTheDocument();
 		expect(api.projects.secrets).toHaveBeenCalledWith('p1');
 	});
+
+	it('without project:write, shows a notice and never lists the secrets', () => {
+		vi.mocked(api.projects.secrets).mockClear();
+		render(SecretsSection, { projectId: 'p1', canEdit: false });
+		expect(screen.getByText('Your role in this workshop does not allow this')).toBeInTheDocument();
+		expect(api.projects.secrets).not.toHaveBeenCalled();
+	});
 });

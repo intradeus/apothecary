@@ -7,13 +7,14 @@ import (
 	"strings"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/analytics"
 )
 
-// Run analytics (TODO 23): queries over the caller's own runs, and the
-// dashboards and scorecards they keep. Every query is the caller's — the
-// service binds their id into the SQL — and the id'd routes are scoped by
-// the guard (ScopeDashboard / ScopeScorecard); a built-in is everyone's.
+// Run analytics (TODO 23): queries over the runs of every workshop the caller
+// may see (authz.KindRun visibility, bound into the SQL by the service), and
+// the dashboards and scorecards they keep. The id'd routes are scoped by the
+// guard (ScopeDashboard / ScopeScorecard); a built-in is everyone's.
 
 // ValuesRequest asks for one dimension's distinct values.
 type ValuesRequest struct {
@@ -70,7 +71,12 @@ func (s *Server) queryAnalytics(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &q) {
 		return
 	}
-	res, err := s.Analytics.Query(r.Context(), auth.UserID(r.Context()), q)
+	v, err := s.visible(r.Context(), authz.KindRun)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	res, err := s.Analytics.Query(r.Context(), auth.UserID(r.Context()), v.ProjectIDs, q)
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -83,7 +89,12 @@ func (s *Server) analyticsValues(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	vals, err := s.Analytics.Values(r.Context(), auth.UserID(r.Context()), body.Grain, body.Field, body.Time)
+	v, err := s.visible(r.Context(), authz.KindRun)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	vals, err := s.Analytics.Values(r.Context(), v.ProjectIDs, body.Grain, body.Field, body.Time)
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -96,7 +107,12 @@ func (s *Server) drillAnalytics(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	runs, err := s.Analytics.Drill(r.Context(), auth.UserID(r.Context()), body.Grain, body.Filters, body.Time)
+	v, err := s.visible(r.Context(), authz.KindRun)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	runs, err := s.Analytics.Drill(r.Context(), v.ProjectIDs, body.Grain, body.Filters, body.Time)
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -212,45 +228,45 @@ func (s *Server) analyticsRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/analytics/catalog", ID: "getAnalyticsCatalog", Tag: tagAnalytics,
 			Summary: "Every grain, dimension and measure a query may name",
-			Handler: s.getAnalyticsCatalog, Returns: analytics.Catalog{}, Enabled: haveAnalytics},
+			Handler: s.getAnalyticsCatalog, Returns: analytics.Catalog{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead},
 		{Method: "POST", Path: "/api/analytics/query", ID: "queryAnalytics", Tag: tagAnalytics,
 			Summary: "Run a query over one's own runs",
 			Doc: "A whitelisted shape — grain, measures, group-by, filters, time range — checked against the catalog. " +
 				"At most 8 measures, 3 group-by dimensions, 10 filters and 500 rows; 422 when it runs longer than 5s.",
-			Handler: s.queryAnalytics, Body: analytics.Query{}, Returns: analytics.Result{}, Enabled: haveAnalytics},
+			Handler: s.queryAnalytics, Body: analytics.Query{}, Returns: analytics.Result{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead},
 		{Method: "POST", Path: "/api/analytics/values", ID: "analyticsValues", Tag: tagAnalytics,
 			Summary: "One dimension's distinct values (at most 200), labelled",
-			Handler: s.analyticsValues, Body: ValuesRequest{}, Returns: []analytics.Value{}, Enabled: haveAnalytics},
+			Handler: s.analyticsValues, Body: ValuesRequest{}, Returns: []analytics.Value{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead},
 		{Method: "POST", Path: "/api/analytics/drill", ID: "drillAnalytics", Tag: tagAnalytics,
 			Summary: "The runs behind a group (at most 200, newest first)",
-			Handler: s.drillAnalytics, Body: DrillRequest{}, Returns: []analytics.DrillRun{}, Enabled: haveAnalytics},
+			Handler: s.drillAnalytics, Body: DrillRequest{}, Returns: []analytics.DrillRun{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead},
 		{Method: "GET", Path: "/api/analytics/dashboards", ID: "listDashboards", Tag: tagAnalytics,
 			Summary: "The built-in dashboards, then one's own",
-			Handler: s.listDashboards, Returns: []analytics.Dashboard{}, Enabled: haveAnalytics},
+			Handler: s.listDashboards, Returns: []analytics.Dashboard{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead},
 		{Method: "POST", Path: "/api/analytics/dashboards", ID: "createDashboard", Tag: tagAnalytics,
 			Summary: "Create a dashboard",
-			Handler: s.createDashboard, Body: analytics.DashboardInput{}, Returns: analytics.Dashboard{}, Status: http.StatusCreated, Enabled: haveAnalytics},
+			Handler: s.createDashboard, Body: analytics.DashboardInput{}, Returns: analytics.Dashboard{}, Status: http.StatusCreated, Enabled: haveAnalytics, Action: authz.AnalyticsWrite},
 		{Method: "GET", Path: "/api/analytics/dashboards/{id}", ID: "getDashboard", Tag: tagAnalytics,
-			Summary: "One dashboard", Handler: s.getDashboard, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard},
+			Summary: "One dashboard", Handler: s.getDashboard, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsRead},
 		{Method: "PUT", Path: "/api/analytics/dashboards/{id}", ID: "updateDashboard", Tag: tagAnalytics,
 			Summary: "Replace a dashboard's name, filters and panels (409 on a built-in)",
-			Handler: s.updateDashboard, Body: analytics.DashboardInput{}, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard},
+			Handler: s.updateDashboard, Body: analytics.DashboardInput{}, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsWrite},
 		{Method: "DELETE", Path: "/api/analytics/dashboards/{id}", ID: "deleteDashboard", Tag: tagAnalytics,
 			Summary: "Delete a dashboard (409 on a built-in)",
-			Handler: s.deleteDashboard, Status: http.StatusNoContent, Enabled: haveAnalytics, Scope: ScopeDashboard},
+			Handler: s.deleteDashboard, Status: http.StatusNoContent, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsWrite},
 		{Method: "GET", Path: "/api/analytics/scorecards", ID: "listScorecards", Tag: tagAnalytics,
 			Summary: "The built-in scorecards, then one's own",
-			Handler: s.listScorecards, Returns: []analytics.Scorecard{}, Enabled: haveAnalytics},
+			Handler: s.listScorecards, Returns: []analytics.Scorecard{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead},
 		{Method: "POST", Path: "/api/analytics/scorecards", ID: "createScorecard", Tag: tagAnalytics,
 			Summary: "Create a scorecard",
-			Handler: s.createScorecard, Body: analytics.ScorecardInput{}, Returns: analytics.Scorecard{}, Status: http.StatusCreated, Enabled: haveAnalytics},
+			Handler: s.createScorecard, Body: analytics.ScorecardInput{}, Returns: analytics.Scorecard{}, Status: http.StatusCreated, Enabled: haveAnalytics, Action: authz.AnalyticsWrite},
 		{Method: "GET", Path: "/api/analytics/scorecards/{id}", ID: "getScorecard", Tag: tagAnalytics,
-			Summary: "One scorecard", Handler: s.getScorecard, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard},
+			Summary: "One scorecard", Handler: s.getScorecard, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsRead},
 		{Method: "PUT", Path: "/api/analytics/scorecards/{id}", ID: "updateScorecard", Tag: tagAnalytics,
 			Summary: "Replace a scorecard's name and terms (409 on a built-in)",
-			Handler: s.updateScorecard, Body: analytics.ScorecardInput{}, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard},
+			Handler: s.updateScorecard, Body: analytics.ScorecardInput{}, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsWrite},
 		{Method: "DELETE", Path: "/api/analytics/scorecards/{id}", ID: "deleteScorecard", Tag: tagAnalytics,
 			Summary: "Delete a scorecard (409 on a built-in)",
-			Handler: s.deleteScorecard, Status: http.StatusNoContent, Enabled: haveAnalytics, Scope: ScopeScorecard},
+			Handler: s.deleteScorecard, Status: http.StatusNoContent, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsWrite},
 	}
 }

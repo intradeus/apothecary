@@ -697,15 +697,15 @@ type SnapshotStore interface {
 // scans (pgstore's SQL view is the real implementation).
 type PingLookup interface {
 	GetPing(ctx context.Context, id string) (run.PingView, error)
-	// ListPings is one user's pings ("" = everyone's: the engine's own passes).
-	ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error)
+	// ListPings is the pings of the runs seen sees (nil = everyone's: the engine's own passes).
+	ListPings(ctx context.Context, seen *run.Seen, status string, limit int) ([]run.PingView, error)
 }
 
 // pingViews lists projected pings of a status, from the index when one is
 // wired and by folding the log when not.
 func (e *Engine) pingViews(ctx context.Context, status string) []run.PingView {
 	if e.pingIndex != nil {
-		vs, err := e.pingIndex.ListPings(ctx, "", status, 500)
+		vs, err := e.pingIndex.ListPings(ctx, nil, status, 500)
 		if err != nil {
 			e.log.Warn("ping projection list failed", "err", err)
 			return nil

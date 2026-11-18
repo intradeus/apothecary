@@ -17,7 +17,7 @@ vi.mock('$lib/api', () => ({
 }));
 
 const me = (over: Partial<Me['user']> = {}) =>
-	({ user: { id: 'u1', handle: 'lu', name: 'Lu', admin: false, ...over } }) as Me;
+	({ user: { id: 'u1', handle: 'lu', name: 'Lu', role: 'member', ...over } }) as Me;
 
 beforeEach(() => {
 	vi.resetAllMocks();
@@ -99,14 +99,32 @@ describe('session.load', () => {
 	});
 });
 
-describe('session.user and admin', () => {
-	it('derives both from me', () => {
+describe('session.user, role and admin', () => {
+	it('derives them from me', () => {
 		expect(session.user).toBeNull();
+		expect(session.role).toBeNull();
 		expect(session.admin).toBe(false);
+		expect(session.guest).toBe(false);
 
-		session.me = me({ admin: true, handle: 'root' });
+		session.me = me({ role: 'admin', handle: 'root' });
 		expect(session.user?.handle).toBe('root');
+		expect(session.role).toBe('admin');
 		expect(session.admin).toBe(true);
+	});
+
+	it.each(['member', 'guest'] as const)('does not make a %s an admin', (role) => {
+		session.me = me({ role });
+		expect(session.role).toBe(role);
+		expect(session.admin).toBe(false);
+	});
+
+	it.each([
+		['admin', false],
+		['member', false],
+		['guest', true]
+	] as const)('reads an account whose role is %s as a guest: %s', (role, guest) => {
+		session.me = me({ role });
+		expect(session.guest).toBe(guest);
 	});
 });
 
@@ -126,7 +144,7 @@ describe('signing in and out', () => {
 
 	it('ends the setup requirement once the first account exists', async () => {
 		session.setupRequired = true;
-		vi.mocked(api.auth.setup).mockResolvedValue(me({ admin: true }));
+		vi.mocked(api.auth.setup).mockResolvedValue(me({ role: 'admin' }));
 		const account = { handle: 'lu', email: 'l@test', name: 'Lu', password: 'hunter22' };
 
 		await session.setup(account);

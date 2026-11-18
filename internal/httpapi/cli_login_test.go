@@ -136,7 +136,8 @@ func TestCLILoginApproved(t *testing.T) {
 			tok = k
 		}
 	}
-	if tok.Name != "apothecary CLI on laptop" || tok.IdleSeconds != 72*3600 || tok.ExpiresAt != nil {
+	// The terminal signs in as the account itself: a full token.
+	if tok.Name != "apothecary CLI on laptop" || tok.IdleSeconds != 72*3600 || tok.ExpiresAt != nil || tok.Scoped() || tok.ProjectIDs != nil {
 		t.Errorf("minted token = %+v", tok)
 	}
 	if res, body := x.do(t, "GET", "/api/me/tokens", nil, nil); !strings.Contains(string(body), `"idle_seconds":259200`) {

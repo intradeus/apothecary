@@ -48,7 +48,7 @@ Rules:
 User ── N Workshops (projects) ── N Tickets ── N Runs
 ```
 
-A user owns their integrations, channels, settings and workshops; a workshop owns flows, commands, automations and egress policy. Nothing is shared between users: each person's lists show their own things and no one else's. The one distinction is the **instance admin**, who manages accounts (Users page) and nothing more. The capacity limits are the deployment's, set in the boot env, the same for everyone.
+A user owns their integrations, channels, settings and workshops; a workshop owns flows, commands, automations and egress policy. Each person's lists show their own things, plus the workshops other accounts shared with them. Every account has an **instance role**: *admin* manages accounts (Users page) and the instance, and sees nothing of anyone else's work; *member* keeps workshops of their own; *guest* creates nothing and works only in workshops shared with it. A workshop's owner shares it with an account as **viewer** (reads the workshop, its runs and tickets), **operator** (+ drives runs, answers pings, writes tickets), or **maintainer** (+ edits the setup, flows and automations, manages viewers and operators, opens terminals and editors); only the owner adds maintainers or deletes the workshop. A control the caller's role does not allow is disabled, saying so, or absent where its component already hides things; the engine refuses it anyway (403). The capacity limits are the deployment's, set in the boot env, the same for everyone.
 
 ---
 
@@ -878,7 +878,7 @@ The same anatomy, scoped to one guild:
 ### 7.7 Workshop overview: `/g/:guild/w/:workshop`
 
 1. Header: vial + name + repo URL (mono) + repository / provisioner / harness chips; "Edit setup" secondary, Delete… (blocked until all runs are archived, with an explanation), then the open tab's main action, if it has one (New run, New ticket, New flow, New automation).
-2. A tab strip: **Overview · Runs · Tickets · Flows · Agents · Health**.
+2. A tab strip: **Overview · Runs · Tickets · Flows · Agents · Health · Members · Settings** (Settings only for a role that may edit the setup). A workshop shared with the caller says so in the workshops list: a "shared by @owner · role" badge.
    - **Overview:** the live runs cards (as 7.2) and a read-only summary (repositories incl. additional repos, commands, default flow, egress mode + lists).
    - **Flows:** a list with "default" and "from template" chips, hash and updated; New flow, Copy, "Use built-in template". Built-in templates in their own group.
    - **Agents:** the agent library (name, harness / model, read_only, allow_bash, inputs / outputs incl. verdict). It is editable here, which fixes the old YAML-only gap.
@@ -886,6 +886,7 @@ The same anatomy, scoped to one guild:
      - Preflight: a step list with ok / bad and errors.
      - Envcheck: a live step timeline (image, firewall, egress, harness, shim, tunnel → ok / bad / skip), Cancel / Restart, "keep workspace" toggle; resumes the latest check on load.
      - Build cache: size + "Clear…" (confirm), and image-cache status.
+   - **Members:** who the workshop is shared with: the owner first, then a row per member with `@handle`, name and role. With the right to manage members: an add form (handle or email + role select), a role select per row and Remove…, both confirmed; only the owner is offered *maintainer*, and only the owner changes or removes one. A member sees the list and **Leave workshop…** (confirm), which takes them back to the workshops list.
 
 ### 7.8 Flow editor: `/g/:guild/w/:workshop/flows/:name`
 
@@ -954,8 +955,8 @@ Layout: row [section nav 220px | content], both full-height windows. The section
   - Forms are generated from descriptors: a "How to set this up" help panel, then fields (text / secret / JSON secret).
   - A skeleton list shows while loading.
 - **Channels** (folded in from the old page): Matrix, Slack and Discord, as one-way mirrors ("Pings are always answered in Apothecary"). Each card has Test, Edit and Remove… (confirm).
-- **Account:** three panes — Profile (handle, name, email; which methods the account signs in with), Password (current, new twice; every other session is signed out), Personal tokens (name + "Mint a token"; the secret shows once in a sky callout with Copy, then a row per token with prefix, created/last used, Revoke).
-- **Users (admins only):** a table of avatar, name + `@handle`, email, role pill (Admin / Member, plus Disabled), last seen, and per-row actions: Make/Remove admin, Disable…/Enable, Reset password… (inline field). "+ Add account" opens an AddCard: handle, name, email, initial password, Admin checkbox. Disabling says exactly what happens (signed out, tokens revoked, runs aborted, automations off; workshops and history stay).
+- **Account:** three panes — Profile (handle, name, email; which methods the account signs in with), Password (current, new twice; every other session is signed out), Personal tokens (name, then **Full access** or **Limited**: limited shows the actions a token may use as checkboxes grouped by kind, each with what it allows — never account management — and an optional workshop multi-select, none chosen meaning every workshop; "Mint a token" stays disabled until a limited token has an action. The secret shows once in a sky callout with Copy, then a row per token with prefix, its scope — "Full access" or "N actions · all workshops / the workshops' names" — created/last used, Revoke).
+- **Users (admins only):** a table of avatar, name + `@handle`, email, role select (Admin / Member / Guest, each with a line on what it means; one's own row shows a plain pill) plus a Disabled pill, last seen, and per-row actions: Disable…/Enable, Reset password… (inline field). "+ Add account" opens an AddCard: handle, name, email, initial password, role select (Member by default). Demoting or disabling the last admin is refused by the engine, and the refusal shows as an error card. Disabling says exactly what happens (signed out, tokens revoked, runs aborted, automations off; workshops and history stay).
 - **Limits:** max concurrent runs and max environments for the whole instance ("no cap" allowed), with the current counts beside them. An admin edits them in place (number + "No cap" toggle, sticky save bar); everyone else sees them read-only.
 - **Reaper:** destroy completed environments after a duration; destroy abandoned environments (`never` only today, shown disabled with a reason).
 - **Storage:** sweep unclaimed uploads after a duration; expire snapshot content after a duration or never.

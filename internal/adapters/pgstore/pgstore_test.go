@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -156,7 +157,7 @@ func TestPingsProjection(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pending, err := s.ListPings(ctx, "", "pending", 0)
+	pending, err := s.ListPings(ctx, nil, "pending", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,12 +170,12 @@ func TestPingsProjection(t *testing.T) {
 		Content: map[string]any{"db": "pg", "n": 2.0}}); err != nil {
 		t.Fatal(err)
 	}
-	pending, _ = s.ListPings(ctx, "", "pending", 0)
+	pending, _ = s.ListPings(ctx, nil, "pending", 0)
 	if len(pending) != 0 {
 		t.Errorf("pending after answer = %+v", pending)
 	}
 	// The pair is durable (PLAN4 M15): answered listing + by-id fetch.
-	answered, _ := s.ListPings(ctx, "", "answered", 0)
+	answered, _ := s.ListPings(ctx, nil, "answered", 0)
 	if len(answered) != 1 || answered[0].Answer != "accept" || answered[0].Feedback != "v16" || answered[0].AnsweredAt == nil ||
 		answered[0].Content["db"] != "pg" || answered[0].Content["n"] != 2.0 {
 		t.Errorf("answered = %+v", answered)
@@ -256,7 +257,7 @@ func TestPingReviewProjection(t *testing.T) {
 		if err != nil || !reflect.DeepEqual(one.Review, review) {
 			t.Errorf("%s: GetPing review = %+v, %v", when, one.Review, err)
 		}
-		list, _ := s.ListPings(ctx, "", "answered", 0)
+		list, _ := s.ListPings(ctx, nil, "answered", 0)
 		if len(list) != 1 || !reflect.DeepEqual(list[0].Review, review) {
 			t.Errorf("%s: ListPings = %+v", when, list)
 		}
@@ -326,7 +327,7 @@ func TestRebuildProjections(t *testing.T) {
 		t.Errorf("rebuilt %d runs, want 3", n)
 	}
 	views, _ := s.RunViews(ctx)
-	pending, _ := s.ListPings(ctx, "", "pending", 0)
+	pending, _ := s.ListPings(ctx, nil, "pending", 0)
 	if len(views) != 3 || len(pending) != 3 {
 		t.Errorf("after rebuild: %d views, %d pings", len(views), len(pending))
 	}
@@ -556,5 +557,57 @@ func TestSSHKeysStore(t *testing.T) {
 	}
 	if keys, _ := s.ListSSHKeys(ctx, "u1"); len(keys) != 0 {
 		t.Errorf("after delete = %+v", keys)
+	}
+}
+
+// The run and ping lists hold exactly the rows their run.Seen sees — the
+// predicate the in-memory lists apply and that httpapi's
+// TestListsEqualTheGuard holds equal to the guard — for an owner alone, an
+// owner with shared workshops, a token limited to workshops, and nothing.
+func TestListsSeeByWorkshop(t *testing.T) {
+	s := open(t)
+	ctx := context.Background()
+	rows := []struct{ id, user, project string }{{"r1", "u1", "p1"}, {"r2", "u2", "p1"}, {"r3", "u1", "p2"}, {"r4", "u3", "p3"}, {"r5", "u2", ""}}
+	for _, r := range rows {
+		if _, err := s.Append(ctx, r.id, &event.RunCreated{UserID: r.user, ProjectID: r.project},
+			&event.PingRaised{PingID: r.id + "-p", Type: event.PingGate, Question: "ok?"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, seen := range []run.Seen{
+		{UserID: "u1"},
+		{UserID: "u2", ProjectIDs: []string{"p2"}},
+		{UserID: "u3", ProjectIDs: []string{"p1", "p2", "nope"}},
+		{ProjectIDs: []string{"p1"}},
+		{ProjectIDs: []string{}},
+		{},
+	} {
+		wantRuns, wantPings := []string{}, []string{}
+		for _, r := range rows {
+			if seen.Sees(r.user, r.project) {
+				wantRuns, wantPings = append(wantRuns, r.id), append(wantPings, r.id+"-p")
+			}
+		}
+		views, err := s.ListRunViews(ctx, run.ListFilter{Seen: seen})
+		if err != nil {
+			t.Fatal(err)
+		}
+		runs := []string{}
+		for _, v := range views {
+			runs = append(runs, v.RunID)
+		}
+		pings, err := s.ListPings(ctx, &seen, "", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pngs := []string{}
+		for _, p := range pings {
+			pngs = append(pngs, p.PingID)
+		}
+		slices.Sort(runs)
+		slices.Sort(pngs)
+		if !slices.Equal(runs, wantRuns) || !slices.Equal(pngs, wantPings) {
+			t.Errorf("%+v: runs %v pings %v, want %v %v", seen, runs, pngs, wantRuns, wantPings)
+		}
 	}
 }

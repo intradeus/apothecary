@@ -17,6 +17,9 @@ import type {
 	AddChannelData,
 	AddChannelErrors,
 	AddChannelResponses,
+	AddMemberData,
+	AddMemberErrors,
+	AddMemberResponses,
 	AddMySshKeyData,
 	AddMySshKeyErrors,
 	AddMySshKeyResponses,
@@ -356,6 +359,9 @@ import type {
 	ImportSkillsData,
 	ImportSkillsErrors,
 	ImportSkillsResponses,
+	LeaveProjectData,
+	LeaveProjectErrors,
+	LeaveProjectResponses,
 	ListActionsData,
 	ListActionsErrors,
 	ListActionsResponses,
@@ -404,6 +410,9 @@ import type {
 	ListKindsData,
 	ListKindsErrors,
 	ListKindsResponses,
+	ListMembersData,
+	ListMembersErrors,
+	ListMembersResponses,
 	ListMySshKeysData,
 	ListMySshKeysErrors,
 	ListMySshKeysResponses,
@@ -413,6 +422,9 @@ import type {
 	ListNoticesData,
 	ListNoticesErrors,
 	ListNoticesResponses,
+	ListPermissionsData,
+	ListPermissionsErrors,
+	ListPermissionsResponses,
 	ListPingsData,
 	ListPingsErrors,
 	ListPingsResponses,
@@ -521,6 +533,9 @@ import type {
 	ReleaseRunData,
 	ReleaseRunErrors,
 	ReleaseRunResponses,
+	RemoveMemberData,
+	RemoveMemberErrors,
+	RemoveMemberResponses,
 	RenameCredentialData,
 	RenameCredentialErrors,
 	RenameCredentialResponses,
@@ -633,6 +648,9 @@ import type {
 	UpdateIntegrationResponses,
 	UpdateMeData,
 	UpdateMeErrors,
+	UpdateMemberData,
+	UpdateMemberErrors,
+	UpdateMemberResponses,
 	UpdateMeResponses,
 	UpdateProjectData,
 	UpdateProjectErrors,
@@ -2458,7 +2476,7 @@ export const listMyTokens = <ThrowOnError extends boolean = false>(
 /**
  * Mint a personal API token
  *
- * The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.
+ * The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token. A token is full_access (the account itself) or limited to actions (GET /api/permissions) and, optionally, to some workshops (project_ids); a limited token never does more than its account may at the time, and cannot hold account:manage.
  */
 export const createMyToken = <ThrowOnError extends boolean = false>(
 	options: Options<CreateMyTokenData, ThrowOnError>
@@ -2606,6 +2624,29 @@ export const getObservability = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The actions a route or a limited token can name, and which a token may hold
+ */
+export const listPermissions = <ThrowOnError extends boolean = false>(
+	options?: Options<ListPermissionsData, ThrowOnError>
+): RequestResult<ListPermissionsResponses, ListPermissionsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListPermissionsResponses, ListPermissionsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/permissions',
+		...options
+	});
+
+/**
  * The inbox: one's questions waiting on a human
  */
 export const listPings = <ThrowOnError extends boolean = false>(
@@ -2727,7 +2768,7 @@ export const getPingFiles = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One's projects
+ * The projects one sees: one's own and those shared with one, each with one's access
  */
 export const listProjects = <ThrowOnError extends boolean = false>(
 	options?: Options<ListProjectsData, ThrowOnError>
@@ -2800,7 +2841,7 @@ export const deleteProject = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One project
+ * One project, with one's access
  */
 export const getProject = <ThrowOnError extends boolean = false>(
 	options: Options<GetProjectData, ThrowOnError>
@@ -3466,6 +3507,135 @@ export const listFlowVersions = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/projects/{id}/flows/{name}/versions',
+		...options
+	});
+
+/**
+ * The accounts a project is shared with, and their roles
+ */
+export const listMembers = <ThrowOnError extends boolean = false>(
+	options: Options<ListMembersData, ThrowOnError>
+): RequestResult<ListMembersResponses, ListMembersErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListMembersResponses, ListMembersErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members',
+		...options
+	});
+
+/**
+ * Share a project with an account, by handle or email
+ *
+ * role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself.
+ */
+export const addMember = <ThrowOnError extends boolean = false>(
+	options: Options<AddMemberData, ThrowOnError>
+): RequestResult<AddMemberResponses, AddMemberErrors, ThrowOnError> =>
+	(options.client ?? client).post<AddMemberResponses, AddMemberErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Stop sharing a project with a member
+ *
+ * Only the owner removes a maintainer.
+ */
+export const removeMember = <ThrowOnError extends boolean = false>(
+	options: Options<RemoveMemberData, ThrowOnError>
+): RequestResult<RemoveMemberResponses, RemoveMemberErrors, ThrowOnError> =>
+	(options.client ?? client).delete<RemoveMemberResponses, RemoveMemberErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members/{uid}',
+		...options
+	});
+
+/**
+ * Change a member's role
+ *
+ * Only the owner makes or unmakes a maintainer.
+ */
+export const updateMember = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateMemberData, ThrowOnError>
+): RequestResult<UpdateMemberResponses, UpdateMemberErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateMemberResponses, UpdateMemberErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members/{uid}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Leave a project shared with one
+ */
+export const leaveProject = <ThrowOnError extends boolean = false>(
+	options: Options<LeaveProjectData, ThrowOnError>
+): RequestResult<LeaveProjectResponses, LeaveProjectErrors, ThrowOnError> =>
+	(options.client ?? client).delete<LeaveProjectResponses, LeaveProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members/me',
 		...options
 	});
 
@@ -6137,7 +6307,7 @@ export const createUser = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Change an account: its profile, whether it is an admin, whether it is disabled
+ * Change an account: its profile, its role (admin, member, guest), whether it is disabled
  *
  * Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.
  */

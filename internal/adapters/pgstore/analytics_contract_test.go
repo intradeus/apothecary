@@ -19,7 +19,7 @@ func TestAnalyticsContract(t *testing.T) {
 }
 
 // Flow versions are named "<flow> v<n>" by their order within the flow and
-// project, and project names come from the caller's own projects only.
+// project, and project names come from the visible projects only.
 func TestAnalyticsLabels(t *testing.T) {
 	s := openConf(t)
 	ctx := context.Background()
@@ -35,7 +35,7 @@ func TestAnalyticsLabels(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	labels, err := s.FlowVersionLabels(ctx, "u1", []string{"h1", "h2", "h3", "h9", "nope"})
+	labels, err := s.FlowVersionLabels(ctx, []string{"p1"}, []string{"h1", "h2", "h3", "h9", "nope"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,9 +48,20 @@ func TestAnalyticsLabels(t *testing.T) {
 			t.Errorf("label %s = %q, want %q", k, labels[k], v)
 		}
 	}
-	names, err := s.ProjectNames(ctx, "u1", []string{"p1", "p2"})
+	names, err := s.ProjectNames(ctx, []string{"p1"}, []string{"p1", "p2"})
 	if err != nil || len(names) != 1 || names["p1"] != "Shop" {
 		t.Errorf("names = %v, %v", names, err)
+	}
+	// A project shared with the caller is named and labelled like their own;
+	// no projects names nothing.
+	if names, err := s.ProjectNames(ctx, []string{"p1", "p2"}, []string{"p2"}); err != nil || names["p2"] != "Theirs" {
+		t.Errorf("shared names = %v, %v", names, err)
+	}
+	if labels, err := s.FlowVersionLabels(ctx, []string{"p2"}, []string{"h1", "h9"}); err != nil || len(labels) != 1 || labels["h9"] != "builder v1" {
+		t.Errorf("shared labels = %v, %v", labels, err)
+	}
+	if names, err := s.ProjectNames(ctx, nil, []string{"p1"}); err != nil || len(names) != 0 {
+		t.Errorf("no projects names = %v, %v", names, err)
 	}
 }
 

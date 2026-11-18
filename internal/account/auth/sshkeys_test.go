@@ -119,7 +119,7 @@ func TestAuthenticateSSHKey(t *testing.T) {
 		t.Errorf("unknown key: %v", err)
 	}
 	// Alice is the only admin: a second one lets her be disabled.
-	if _, err := s.CreateUser(ctx, NewUser{Handle: "root", Email: "root@example.com", Name: "Root", Password: "correct horse battery staple", Admin: true}); err != nil {
+	if _, err := s.CreateUser(ctx, NewUser{Handle: "root", Email: "root@example.com", Name: "Root", Password: "correct horse battery staple", Role: RoleAdmin}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetDisabled(ctx, alice.ID, true); err != nil {

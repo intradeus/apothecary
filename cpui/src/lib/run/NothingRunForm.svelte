@@ -100,10 +100,14 @@
 		const held = typed === shownBranch || branches.some((b) => b.name === typed);
 		return !onBranch && typed && held ? typed : '';
 	});
+	/** Starting a run in the workshop needs run:operate there. */
+	const canOperate = $derived(fleet.can(projectId, 'run:operate'));
 	$effect(() => {
-		blocked = !!taken;
+		blocked = !!taken || !canOperate;
 	});
 </script>
+
+{#if !canOperate}<p class="error">{t('common.needsPermission')}</p>{/if}
 
 <div class="field">
 	<label for="nothing-flow">{t('page.ticket.flow')}</label>

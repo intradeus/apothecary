@@ -7,7 +7,7 @@ import { fleet } from '$lib/app/fleet.svelte';
 import type { TicketDetail } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aRun, aTicketDetail } from '$test/fixtures';
+import { aRun, aTicketDetail, aViewerProject } from '$test/fixtures';
 import { aFlow, aWorkshop, confirmed } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import TicketPage from './TicketPage.svelte';
@@ -204,6 +204,25 @@ describe('TicketPage, what may be done to it', () => {
 		await confirmed(true);
 		expect(await screen.findByText('it has an active run')).toBeInTheDocument();
 		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('without ticket:write or run:operate, edits, deletes, comments and starts nothing', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1', name: 'shop', defaultFlow: 'builder' })];
+		setup(
+			aTicketDetail({
+				internal: true,
+				url: '',
+				labels: ['api'],
+				source: { id: 'o', kind: 'internal', name: 'Apothecary' }
+			})
+		);
+		const edit = await screen.findByRole('button', { name: 'Edit' });
+		expect(edit).toBeDisabled();
+		expect(edit).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+		expect(screen.getByRole('button', { name: /Delete/ })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Remove label api' })).toBeDisabled();
+		expect(screen.queryByRole('button', { name: 'Comment' })).toBeNull();
+		expect(await startBtn()).toBeDisabled();
 	});
 });
 

@@ -32,7 +32,7 @@ func TestUsersRoundtripAndLookups(t *testing.T) {
 		t.Fatalf("empty count = %d, %v", n, err)
 	}
 	a := mkUser("u1", "Alice", "Alice@Example.com")
-	a.Admin = true
+	a.Role = auth.RoleAdmin
 	b := mkUser("u2", "bob", "bob@example.com")
 	b.CreatedAt = testNow.Add(time.Minute)
 	seedUsers(t, s, b, a)
@@ -41,7 +41,7 @@ func TestUsersRoundtripAndLookups(t *testing.T) {
 		t.Errorf("count = %d", n)
 	}
 	got, err := s.GetUser(ctx, "u1")
-	if err != nil || got.Handle != "Alice" || !got.Admin || got.DisabledAt != nil || got.LastSeenAt != nil || !got.CreatedAt.Equal(testNow) {
+	if err != nil || got.Handle != "Alice" || got.Role != auth.RoleAdmin || got.DisabledAt != nil || got.LastSeenAt != nil || !got.CreatedAt.Equal(testNow) {
 		t.Fatalf("GetUser = %+v, %v", got, err)
 	}
 	if _, err := s.GetUser(ctx, "nope"); !errors.Is(err, auth.ErrNotFound) {
@@ -99,12 +99,12 @@ func TestUpdateUserAndTouch(t *testing.T) {
 	seedUsers(t, s, u)
 
 	disabled := testNow.Add(time.Hour)
-	u.Handle, u.Email, u.Name, u.Admin, u.DisabledAt, u.UpdatedAt = "al", "al@x", "Al", true, &disabled, testNow.Add(2*time.Hour)
+	u.Handle, u.Email, u.Name, u.Role, u.DisabledAt, u.UpdatedAt = "al", "al@x", "Al", auth.RoleAdmin, &disabled, testNow.Add(2*time.Hour)
 	if err := s.UpdateUser(ctx, u); err != nil {
 		t.Fatal(err)
 	}
 	got, err := s.GetUser(ctx, "u1")
-	if err != nil || got.Handle != "al" || got.Email != "al@x" || got.Name != "Al" || !got.Admin ||
+	if err != nil || got.Handle != "al" || got.Email != "al@x" || got.Name != "Al" || got.Role != auth.RoleAdmin ||
 		got.DisabledAt == nil || !got.DisabledAt.Equal(disabled) || !got.UpdatedAt.Equal(testNow.Add(2*time.Hour)) {
 		t.Fatalf("after update = %+v, %v", got, err)
 	}

@@ -3,12 +3,14 @@ package httpapi
 // Who a request is, and what it may touch (TODO 25).
 //
 // Every route in the table says how it is reached: as a signed-in user (the
-// default), as the instance admin, with a run's own token (the in-workspace
-// shim), or by anyone (sign-in itself). A user route also says which
-// resource its path names — a run, a project, a ticket — and the guard
-// refuses, as a 404, anything that resource's owner is not. Handlers never
-// check ownership themselves: it is one rule, in one place, and a test
-// asserts every route declares its access.
+// default), with a run's own token (the in-workspace shim), or by anyone
+// (sign-in itself). A user route also says what it does — an action of
+// authz's vocabulary — and which resource its path names: a run, a
+// project, a ticket. The guard asks the authorizer (internal/account/authz)
+// and refuses, as a 404, a resource the caller may not even read, and as a
+// 403 an action it may not take. Handlers never decide access themselves:
+// it is one policy set, in one place, and a test asserts every route
+// declares its access.
 //
 // A browser proves itself with a session cookie (EventSource and WebSocket
 // cannot carry a header), a script with a personal bearer token. Cookie
@@ -21,6 +23,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -29,6 +32,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/project/confstore"
@@ -43,8 +47,6 @@ const (
 	// AccessUser needs a signed-in user: a session cookie or a personal
 	// token. The zero value, so an undeclared route is a protected one.
 	AccessUser Access = iota
-	// AccessAdmin needs an instance admin.
-	AccessAdmin
 	// AccessRunToken is the in-workspace shim's: the run's own bearer
 	// token, scoped to that run.
 	AccessRunToken
@@ -55,7 +57,7 @@ const (
 	AccessBrokerToken
 )
 
-// Scope is which resource a route's path names, and so whose it must be.
+// Scope is which resource a route's path names: what the authorizer decides on.
 type Scope int
 
 const (
@@ -81,8 +83,9 @@ const (
 const sessionCookie = "apothecary_session"
 
 // guard wraps a route's handler with its declared access: the principal
-// (or 401), the admin check (or 403), the same-origin check on cookie
-// writes (or 403), and the ownership check on the path's resource (or 404).
+// (or 401), the same-origin check on cookie writes (or 403), and the
+// route's action on the path's resource — 404 for a resource the principal
+// may not read, 403 for an action it may not take.
 func (s *Server) guard(rt Route) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if refuseBadText(w, r) {
@@ -112,8 +115,8 @@ func (s *Server) guard(rt Route) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		if rt.Auth == AccessAdmin && !p.User.Admin {
-			writeErr(w, http.StatusForbidden, "this needs an instance admin")
+		if s.Authz == nil {
+			writeErr(w, http.StatusServiceUnavailable, "authorization is not wired on this server")
 			return
 		}
 		if p.ViaCookie() && !s.sameOrigin(w, r) {
@@ -122,21 +125,85 @@ func (s *Server) guard(rt Route) http.HandlerFunc {
 		ctx := auth.WithPrincipal(r.Context(), p)
 		trace.SpanFromContext(ctx).SetAttributes(attribute.String("apothecary.user_id", p.User.ID))
 		ctx = logs.With(ctx, logs.UserID, p.User.ID)
+		var res *authz.Resource
+		id := ""
 		if rt.Scope != ScopeNone {
-			id := r.PathValue("id")
+			id = r.PathValue("id")
 			if rt.Scope == ScopePing {
 				id = r.PathValue("pid")
 			}
-			owner, err := s.ownerOf(ctx, rt.Scope, id)
-			if err != nil || owner != p.User.ID {
-				// Not theirs reads exactly like not there: the id itself is
-				// not something to confirm.
+			var err error
+			if res, err = s.resourceOf(ctx, rt.Scope, id); err != nil {
 				writeErr(w, http.StatusNotFound, scopeName(rt.Scope)+" "+id+" not found")
 				return
 			}
 		}
+		d, err := s.Authz.Decide(ctx, p, rt.Action, res)
+		switch {
+		case err != nil:
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		case d.Outcome == authz.Hide:
+			// Not theirs to see reads exactly like not there: the id itself
+			// is not something to confirm.
+			writeErr(w, http.StatusNotFound, scopeName(rt.Scope)+" "+id+" not found")
+			return
+		case d.Outcome == authz.Refuse:
+			writeErr(w, http.StatusForbidden, refusal(d.Action))
+			return
+		}
 		rt.Handler(w, r.WithContext(ctx))
 	}
+}
+
+// refusal is a 403's message: the action that was missing.
+func refusal(a authz.Action) string {
+	if a == authz.InstanceAdmin {
+		return "this needs an instance admin (" + string(a) + ")"
+	}
+	return "this needs " + string(a)
+}
+
+// allowed is the in-handler check for a resource a request names in its
+// BODY or that a handler acts on beyond its path (a flow copy's target, a
+// member's role): the guard covers paths only. It answers like the guard
+// — 404 for what the caller may not see, 403 for what it may not do — and
+// reports whether to go on.
+func (s *Server) allowed(w http.ResponseWriter, r *http.Request, act authz.Action, res *authz.Resource, what string) bool {
+	p, _ := auth.PrincipalFrom(r.Context())
+	d, err := s.Authz.Decide(r.Context(), p, act, res)
+	switch {
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	case d.Outcome == authz.Hide:
+		writeErr(w, http.StatusNotFound, what+" not found")
+		return false
+	case d.Outcome == authz.Refuse:
+		writeErr(w, http.StatusForbidden, refusal(d.Action))
+		return false
+	}
+	return true
+}
+
+// mayShell reports whether p holds run:shell on a run: the app hand-off,
+// which answers with its own page rather than the guard's errors.
+func (s *Server) mayShell(ctx context.Context, p auth.Principal, runID string) bool {
+	if s.Authz == nil {
+		return false
+	}
+	res, err := s.resourceOf(ctx, ScopeRun, runID)
+	if err != nil {
+		return false
+	}
+	d, err := s.Authz.Decide(ctx, p, authz.RunShell, res)
+	return err == nil && d.Allowed()
+}
+
+// visible is what the caller's lists of a kind may hold (authz.Visibility).
+func (s *Server) visible(ctx context.Context, kind authz.Kind) (authz.Visibility, error) {
+	p, _ := auth.PrincipalFrom(ctx)
+	return s.Authz.Visibility(ctx, p, kind)
 }
 
 func scopeName(sc Scope) string {
@@ -244,109 +311,143 @@ func (s *Server) sameOriginUpgrade(w http.ResponseWriter, r *http.Request) bool 
 	return true
 }
 
-// ownerOf resolves the owner of the resource a path names. Everything
-// hangs off a run, a project or a row with its own owner column.
-func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (string, error) {
+// scopeKind is the kind of resource a scope names.
+func scopeKind(sc Scope) authz.Kind {
+	switch sc {
+	case ScopeRun, ScopePing, ScopeAttachment, ScopeSnapshot:
+		return authz.KindRun
+	case ScopeProject, ScopeEnvCheck:
+		return authz.KindProject
+	case ScopeTicket:
+		return authz.KindTicket
+	case ScopeIntegration:
+		return authz.KindIntegration
+	case ScopeCredential:
+		return authz.KindCredential
+	case ScopeChannel:
+		return authz.KindChannel
+	case ScopeSkill, ScopeSkillset:
+		return authz.KindSkill
+	case ScopeDashboard, ScopeScorecard:
+		return authz.KindAnalytics
+	case ScopeNotice:
+		return authz.KindNotice
+	}
+	return ""
+}
+
+// resourceOf resolves the resource a path names: whose it is and the
+// workshop it lives in. Everything hangs off a run, a project or a row with
+// its own owner column. Anything it cannot resolve is an error, which the
+// guard answers as not found: a missing kind fails closed.
+func (s *Server) resourceOf(ctx context.Context, sc Scope, id string) (*authz.Resource, error) {
+	owner, project, err := s.ownerOf(ctx, sc, id)
+	if err != nil {
+		return nil, err
+	}
+	return &authz.Resource{Kind: scopeKind(sc), ID: id, Owner: owner, ProjectID: project}, nil
+}
+
+// ownerOf is a resource's owner and its workshop ("" for personal rows).
+func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (owner, project string, err error) {
 	switch sc {
 	case ScopeRun:
 		return s.runOwner(ctx, id)
 	case ScopeProject:
-		return s.projectOwner(ctx, id)
+		owner, err := s.projectOwner(ctx, id)
+		return owner, id, err
 	case ScopeTicket:
 		if s.Conf == nil {
-			return "", errors.New("no config plane")
+			return "", "", errors.New("no config plane")
 		}
 		t, err := s.Conf.GetTicket(ctx, id)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return t.UserID, nil
+		project, err := s.ticketWorkshop(ctx, t)
+		return t.UserID, project, err
 	case ScopeIntegration:
 		if s.Conf == nil {
-			return "", errors.New("no config plane")
+			return "", "", errors.New("no config plane")
 		}
 		in, err := s.Conf.GetIntegration(ctx, id)
-		if err != nil {
-			return "", err
-		}
-		return in.UserID, nil
+		return in.UserID, "", err
 	case ScopeCredential:
 		if s.Conf == nil {
-			return "", errors.New("no config plane")
+			return "", "", errors.New("no config plane")
 		}
 		pc, err := s.Conf.GetCredential(ctx, id)
-		if err != nil {
-			return "", err
-		}
-		return pc.UserID, nil
+		return pc.UserID, "", err
 	case ScopePing:
 		if s.Pings != nil {
-			v, err := s.Pings.GetPing(ctx, id)
-			if err == nil {
-				return v.UserID, nil
+			if v, err := s.Pings.GetPing(ctx, id); err == nil {
+				return s.runOwner(ctx, v.RunID)
 			}
 		}
 		if p := s.Runs.GetPing(id); p != nil {
 			return s.runOwner(ctx, p.RunID)
 		}
-		return "", errors.New("ping not found")
+		return "", "", errors.New("ping not found")
 	case ScopeChannel:
 		if e, ok := s.Registry.Get(id); ok {
-			return e.UserID, nil
+			return e.UserID, "", nil
 		}
-		return "", errors.New("channel not found")
+		return "", "", errors.New("channel not found")
 	case ScopeAttachment:
 		if s.Attachments == nil {
-			return "", errors.New("no file store")
+			return "", "", errors.New("no file store")
 		}
 		a, err := s.Attachments.Get(ctx, id)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
-		return a.UserID, nil
+		// An upload claimed by a run lives in the run's workshop; one that
+		// is not (yet) is its uploader's alone.
+		if a.RunID != "" {
+			if _, project, err := s.runOwner(ctx, a.RunID); err == nil {
+				return a.UserID, project, nil
+			}
+		}
+		return a.UserID, "", nil
 	case ScopeSnapshot:
 		if s.Snapshots == nil {
-			return "", errors.New("no file store")
+			return "", "", errors.New("no file store")
 		}
 		sn, err := s.Snapshots.Get(ctx, id)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		return s.runOwner(ctx, sn.RunID)
 	case ScopeEnvCheck:
 		cr, ok := s.EnvCheck.Get(id)
 		if !ok {
-			return "", errors.New("envcheck not found")
+			return "", "", errors.New("envcheck not found")
 		}
-		return s.projectOwner(ctx, cr.ProjectID)
+		owner, err := s.projectOwner(ctx, cr.ProjectID)
+		return owner, cr.ProjectID, err
 	case ScopeSkill:
 		if s.Skills == nil {
-			return "", errors.New("no skill library")
+			return "", "", errors.New("no skill library")
 		}
 		sk, err := s.Skills.GetSkill(ctx, id)
-		if err != nil {
-			return "", err
-		}
-		return sk.UserID, nil
+		return sk.UserID, "", err
 	case ScopeSkillset:
 		if s.Skills == nil {
-			return "", errors.New("no skill library")
+			return "", "", errors.New("no skill library")
 		}
 		set, err := s.Skills.GetSkillset(ctx, id)
-		if err != nil {
-			return "", err
-		}
-		return set.UserID, nil
+		return set.UserID, "", err
 	case ScopeDashboard, ScopeScorecard:
-		return s.analyticsOwner(ctx, sc, id)
+		owner, err := s.analyticsOwner(ctx, sc, id)
+		return owner, "", err
 	case ScopeNotice:
 		if s.Notices == nil {
-			return "", errors.New("no notices")
+			return "", "", errors.New("no notices")
 		}
 		n, err := s.Notices.Get(ctx, id)
-		return n.UserID, err
+		return n.UserID, "", err
 	}
-	return "", fmt.Errorf("unknown scope %d", sc)
+	return "", "", fmt.Errorf("unknown scope %d", sc)
 }
 
 func (s *Server) projectOwner(ctx context.Context, id string) (string, error) {
@@ -360,42 +461,71 @@ func (s *Server) projectOwner(ctx context.Context, id string) (string, error) {
 	return p.UserID, nil
 }
 
-// runOwner is a run's owner from the store's row when it keeps one, else
-// from its reduced log.
-func (s *Server) runOwner(ctx context.Context, id string) (string, error) {
+// ticketWorkshop is the workshop a ticket is reached through: the first of
+// its owner's workshops on its source that the caller reaches — its owner
+// through any (within a limited token's workshops), anyone else as a
+// member. "" when none: the ticket is then its owner's alone (and, a
+// workshop's kind in no workshop, no limited token's).
+func (s *Server) ticketWorkshop(ctx context.Context, t confstore.Ticket) (string, error) {
+	p, _ := auth.PrincipalFrom(ctx)
+	projects, err := s.Conf.ListProjects(ctx, t.UserID)
+	if err != nil {
+		return "", err
+	}
+	for _, pr := range projects {
+		if pr.TicketSourceID != t.SourceID {
+			continue
+		}
+		if t.UserID == p.User.ID {
+			if p.Token == nil || p.Token.ProjectIDs == nil || slices.Contains(p.Token.ProjectIDs, pr.ID) {
+				return pr.ID, nil
+			}
+			continue
+		}
+		if _, role, err := s.Conf.ProjectAccess(ctx, pr.ID, p.User.ID); err == nil && role != "" {
+			return pr.ID, nil
+		}
+	}
+	return "", nil
+}
+
+// runOwner is a run's owner and workshop from the store's row when it keeps
+// one, else from its reduced log.
+func (s *Server) runOwner(ctx context.Context, id string) (string, string, error) {
 	if vl, ok := s.Store.(run.ViewLookup); ok {
 		v, found, err := vl.RunView(ctx, id)
 		if err != nil {
-			return "", err
+			return "", "", err
 		}
 		if found {
-			return v.UserID, nil
+			return v.UserID, v.ProjectID, nil
 		}
 	}
 	evs, err := s.Store.Events(ctx, id, 0)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	if len(evs) == 0 {
-		return "", errors.New("run not found")
+		return "", "", errors.New("run not found")
 	}
-	return run.Reduce(evs).UserID, nil
+	v := run.Reduce(evs)
+	return v.UserID, v.ProjectID, nil
 }
 
-// ownsProject is the in-handler check for a project named in a request
-// BODY (a flow copy's target): the guard covers paths
-// only. Answers like the guard: not theirs is not found.
-func (s *Server) ownsProject(w http.ResponseWriter, r *http.Request, projectID string) bool {
+// projectIn is the in-handler check for a project named in a request
+// BODY (a flow copy's target): act on that workshop, answered like the
+// guard.
+func (s *Server) projectIn(w http.ResponseWriter, r *http.Request, act authz.Action, projectID string) bool {
 	if projectID == "" {
 		writeErr(w, http.StatusBadRequest, "project_id is required")
 		return false
 	}
 	owner, err := s.projectOwner(r.Context(), projectID)
-	if err != nil || owner != auth.UserID(r.Context()) {
+	if err != nil {
 		writeErr(w, http.StatusNotFound, "project "+projectID+" not found")
 		return false
 	}
-	return true
+	return s.allowed(w, r, act, &authz.Resource{Kind: authz.KindProject, ID: projectID, Owner: owner, ProjectID: projectID}, "project "+projectID)
 }
 
 // --- cookies --------------------------------------------------------------------
@@ -676,12 +806,34 @@ func (s *Server) createMyToken(w http.ResponseWriter, r *http.Request) {
 		t := body.ExpiresAt.UTC()
 		expires = &t
 	}
-	secret, tok, err := s.Auth.NewToken(r.Context(), auth.UserID(r.Context()), body.Name, expires)
+	if body.FullAccess == (len(body.Actions) > 0) {
+		writeErr(w, http.StatusBadRequest, "a token is either full_access or limited to a non-empty list of actions")
+		return
+	}
+	var g auth.Grant
+	if !body.FullAccess {
+		g = auth.Grant{Actions: body.Actions, ProjectIDs: body.ProjectIDs}
+	} else if len(body.ProjectIDs) > 0 {
+		writeErr(w, http.StatusBadRequest, "only a limited token can be limited to workshops")
+		return
+	}
+	secret, tok, err := s.Auth.NewToken(r.Context(), auth.UserID(r.Context()), body.Name, expires, g)
 	if err != nil {
 		authErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, TokenCreated{Token: tok, Secret: secret})
+}
+
+// listPermissions is the action vocabulary: what a limited token may be
+// given, so the UI does not hard-code it.
+func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request) {
+	all := authz.Actions()
+	out := make([]Permission, 0, len(all))
+	for _, a := range all {
+		out = append(out, Permission{Action: string(a.Action), Kind: string(a.Kind), Doc: a.Doc, Grantable: a.Grantable})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) deleteMyToken(w http.ResponseWriter, r *http.Request) {
@@ -745,7 +897,7 @@ func (s *Server) createUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u, err := s.Auth.CreateUser(r.Context(), auth.NewUser{
-		Handle: body.Handle, Email: body.Email, Name: body.Name, Password: body.Password, Admin: body.Admin,
+		Handle: body.Handle, Email: body.Email, Name: body.Name, Password: body.Password, Role: auth.Role(body.Role),
 	})
 	if err != nil {
 		authErr(w, err)
@@ -772,8 +924,8 @@ func (s *Server) updateUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if body.Admin != nil && *body.Admin != u.Admin {
-		if u, err = s.Auth.SetAdmin(ctx, id, *body.Admin); err != nil {
+	if body.Role != "" && auth.Role(body.Role) != u.Role {
+		if u, err = s.Auth.SetRole(ctx, id, auth.Role(body.Role)); err != nil {
 			authErr(w, err)
 			return
 		}
@@ -910,43 +1062,46 @@ func (s *Server) authRoutes() []Route {
 			Handler: s.postLogin, Body: LoginRequest{}, Returns: Me{}, Auth: AccessPublic},
 		{Method: "POST", Path: "/api/auth/logout", ID: "logout", Tag: tagAuth,
 			Summary: "End the browser session",
-			Handler: s.postLogout, Status: http.StatusNoContent},
+			Handler: s.postLogout, Status: http.StatusNoContent, Action: authz.AccountRead},
 		{Method: "GET", Path: "/api/me", ID: "getMe", Tag: tagAuth,
 			Summary: "The signed-in user",
-			Handler: s.getMe, Returns: Me{}},
+			Handler: s.getMe, Returns: Me{}, Action: authz.AccountRead},
 		{Method: "PUT", Path: "/api/me", ID: "updateMe", Tag: tagAuth,
 			Summary: "Change one's own handle, email or name",
-			Handler: s.putMe, Body: ProfileRequest{}, Returns: Me{}},
+			Handler: s.putMe, Body: ProfileRequest{}, Returns: Me{}, Action: authz.AccountManage},
 		{Method: "PUT", Path: "/api/me/password", ID: "changeMyPassword", Tag: tagAuth,
 			Summary: "Change one's own password",
 			Doc:     "Every other session is signed out; this one continues.",
-			Handler: s.putMyPassword, Body: PasswordChangeRequest{}, Status: http.StatusNoContent},
+			Handler: s.putMyPassword, Body: PasswordChangeRequest{}, Status: http.StatusNoContent, Action: authz.AccountManage},
 		{Method: "GET", Path: "/api/me/tokens", ID: "listMyTokens", Tag: tagAuth,
 			Summary: "One's personal API tokens (never their secrets)",
-			Handler: s.listMyTokens, Returns: []auth.Token{}},
+			Handler: s.listMyTokens, Returns: []auth.Token{}, Action: authz.AccountRead},
 		{Method: "POST", Path: "/api/me/tokens", ID: "createMyToken", Tag: tagAuth,
 			Summary: "Mint a personal API token",
-			Doc:     "The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.",
-			Handler: s.createMyToken, Body: TokenRequest{}, Returns: TokenCreated{}, Status: http.StatusCreated},
+			Doc:     "The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token. A token is full_access (the account itself) or limited to actions (GET /api/permissions) and, optionally, to some workshops (project_ids); a limited token never does more than its account may at the time, and cannot hold account:manage.",
+			Handler: s.createMyToken, Body: TokenRequest{}, Returns: TokenCreated{}, Status: http.StatusCreated, Action: authz.AccountManage},
+		{Method: "GET", Path: "/api/permissions", ID: "listPermissions", Tag: tagAuth,
+			Summary: "The actions a route or a limited token can name, and which a token may hold",
+			Handler: s.listPermissions, Returns: []Permission{}, Action: authz.AccountRead},
 		{Method: "DELETE", Path: "/api/me/tokens/{id}", ID: "deleteMyToken", Tag: tagAuth,
 			Summary: "Revoke a personal API token",
-			Handler: s.deleteMyToken, Status: http.StatusNoContent},
+			Handler: s.deleteMyToken, Status: http.StatusNoContent, Action: authz.AccountManage},
 		{Method: "GET", Path: "/api/me/ssh-keys", ID: "listMySshKeys", Tag: tagAuth,
 			Summary: "One's SSH public keys: what the SSH door lets into one's workspaces",
-			Handler: s.listMySSHKeys, Returns: []auth.SSHKey{}},
+			Handler: s.listMySSHKeys, Returns: []auth.SSHKey{}, Action: authz.AccountRead},
 		{Method: "POST", Path: "/api/me/ssh-keys", ID: "addMySshKey", Tag: tagAuth,
 			Summary: "Register an SSH public key",
 			Doc:     "The contents of a .pub file. A key registered on one account cannot be registered on another. Disabling the account keeps its keys and ends their sessions; re-enabling it restores access.",
-			Handler: s.addMySSHKey, Body: SSHKeyRequest{}, Returns: auth.SSHKey{}, Status: http.StatusCreated},
+			Handler: s.addMySSHKey, Body: SSHKeyRequest{}, Returns: auth.SSHKey{}, Status: http.StatusCreated, Action: authz.AccountManage},
 		{Method: "DELETE", Path: "/api/me/ssh-keys/{id}", ID: "deleteMySshKey", Tag: tagAuth,
 			Summary: "Remove an SSH public key",
-			Handler: s.deleteMySSHKey, Status: http.StatusNoContent},
+			Handler: s.deleteMySSHKey, Status: http.StatusNoContent, Action: authz.AccountManage},
 		{Method: "GET", Path: "/api/limits", ID: "getLimits", Tag: tagSystem,
 			Summary: "The instance's capacity caps (-1: no cap)",
-			Handler: s.getLimits, Returns: LimitsInfo{}},
+			Handler: s.getLimits, Returns: LimitsInfo{}, Action: authz.AccountRead},
 		{Method: "PUT", Path: "/api/limits", ID: "setLimits", Tag: tagSystem,
 			Summary: "Set the instance's capacity caps (admin; -1: no cap)",
-			Handler: s.setLimits, Body: LimitsInfo{}, Returns: LimitsInfo{}, Auth: AccessAdmin},
+			Handler: s.setLimits, Body: LimitsInfo{}, Returns: LimitsInfo{}, Action: authz.InstanceAdmin},
 	}
 }
 
@@ -955,17 +1110,17 @@ func (s *Server) userRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/users", ID: "listUsers", Tag: tagUsers,
 			Summary: "Every account",
-			Handler: s.listUsers, Returns: []auth.User{}, Auth: AccessAdmin},
+			Handler: s.listUsers, Returns: []auth.User{}, Action: authz.InstanceAdmin},
 		{Method: "POST", Path: "/api/users", ID: "createUser", Tag: tagUsers,
 			Summary: "Create an account with a password",
-			Handler: s.createUser, Body: UserCreateRequest{}, Returns: auth.User{}, Status: http.StatusCreated, Auth: AccessAdmin},
+			Handler: s.createUser, Body: UserCreateRequest{}, Returns: auth.User{}, Status: http.StatusCreated, Action: authz.InstanceAdmin},
 		{Method: "PUT", Path: "/api/users/{id}", ID: "updateUser", Tag: tagUsers,
-			Summary: "Change an account: its profile, whether it is an admin, whether it is disabled",
+			Summary: "Change an account: its profile, its role (admin, member, guest), whether it is disabled",
 			Doc:     "Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.",
-			Handler: s.updateUser, Body: UserUpdateRequest{}, Returns: auth.User{}, Auth: AccessAdmin},
+			Handler: s.updateUser, Body: UserUpdateRequest{}, Returns: auth.User{}, Action: authz.InstanceAdmin},
 		{Method: "POST", Path: "/api/users/{id}/password", ID: "resetUserPassword", Tag: tagUsers,
 			Summary: "Set an account's password",
 			Doc:     "Signs the account out everywhere.",
-			Handler: s.resetUserPassword, Body: PasswordResetRequest{}, Status: http.StatusNoContent, Auth: AccessAdmin},
+			Handler: s.resetUserPassword, Body: PasswordResetRequest{}, Status: http.StatusNoContent, Action: authz.InstanceAdmin},
 	}
 }

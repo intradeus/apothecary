@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { Integration } from '$lib/domain';
 import { fleet } from '$lib/app/fleet.svelte';
-import { aTicketRow } from '$test/fixtures';
+import { aTicketRow, aViewerProject } from '$test/fixtures';
 import { anIntegration, aWorkshop } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import TicketsTab from './TicketsTab.svelte';
@@ -40,6 +40,17 @@ describe('TicketsTab', () => {
 			'/w/p1/tickets/P-1'
 		);
 		expect(api.projects.tickets).toHaveBeenCalledWith('p1', expect.anything());
+	});
+
+	it('offers no New ticket to a role without ticket:write', async () => {
+		render(WithHeader, {
+			props: {
+				page: TicketsTab,
+				props: { project: aViewerProject({ id: 'p1', ticketSourceId: 'src' }), integrations: [own] }
+			}
+		});
+		await screen.findByText('No open tickets');
+		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
 	});
 
 	it('offers New ticket on the internal tracker, in the header and the empty list', async () => {

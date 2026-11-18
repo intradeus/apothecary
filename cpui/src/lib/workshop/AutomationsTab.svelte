@@ -15,6 +15,7 @@
 		TicketRecord,
 		TicketRow
 	} from '$lib/domain';
+	import { projectCan } from '$lib/domain';
 	import { ago, fmtAbs } from '$lib/core/format';
 	import FlowSelect from '$lib/flow/FlowSelect.svelte';
 	import StartRunOptions from '$lib/run/StartRunOptions.svelte';
@@ -33,6 +34,10 @@
 
 	let { project, integrations }: { project: Project; integrations: Integration[] | null } =
 		$props();
+
+	/** Creating, editing (enabling too) and deleting need project:write. */
+	const canWrite = $derived(projectCan(project, 'project:write'));
+	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
 	let rows = $state<Automation[] | null>(null);
 	let error = $state('');
@@ -243,7 +248,7 @@
 </script>
 
 <HeaderAction>
-	<button class="btn-primary btn-lg" onclick={startNew}
+	<button class="btn-primary btn-lg" disabled={!canWrite} title={deny} onclick={startNew}
 		>{I.add} {t('workshop.automations.new')}</button
 	>
 </HeaderAction>
@@ -260,7 +265,9 @@
 		title={t('workshop.automations.emptyTitle')}
 		text={t('workshop.automations.emptyText')}
 	>
-		<button class="btn-primary" onclick={startNew}>{I.add} {t('workshop.automations.new')}</button>
+		<button class="btn-primary" disabled={!canWrite} title={deny} onclick={startNew}
+			>{I.add} {t('workshop.automations.new')}</button
+		>
 	</EmptyState>
 {:else}
 	<section class="pane">
@@ -277,9 +284,11 @@
 					<span class="nm">
 						<Toggle
 							checked={a.enabled}
-							title={a.enabled
-								? t('workshop.automations.enabled')
-								: t('workshop.automations.disabled')}
+							disabled={!canWrite}
+							title={deny ??
+								(a.enabled
+									? t('workshop.automations.enabled')
+									: t('workshop.automations.disabled'))}
 							onchange={(v) => toggle(a, v)}
 						/>
 						<span class="name">{a.name}</span>
@@ -319,10 +328,10 @@
 							>{/if}
 					</span>
 					<span class="acts">
-						<button class="btn-sm" onclick={() => startEdit(a)}
+						<button class="btn-sm" disabled={!canWrite} title={deny} onclick={() => startEdit(a)}
 							>{t('workshop.automations.edit')}</button
 						>
-						<button class="btn-sm" onclick={() => remove(a)}
+						<button class="btn-sm" disabled={!canWrite} title={deny} onclick={() => remove(a)}
 							>{t('workshop.automations.delete')}</button
 						>
 					</span>

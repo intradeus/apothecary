@@ -1,0 +1,85 @@
+// The entities policies.cedar reasons over. The authorizer builds them per
+// request from what the stores say (authz.go); TestVocabularyIsClosed
+// validates the policies, and every entity and request the tests build,
+// against this file.
+
+// An instance role: admin is in member, so every member rule covers it.
+entity Role in [Role];
+
+// One role group of one workshop ("<project>/viewer" and so on): maintainer
+// is in operator is in viewer, so a role covers the ones below it.
+entity Group in [Group];
+
+// An account: in its instance role, and in the group of its role on the
+// one workshop a request is about.
+entity User in [Role, Group];
+
+// A workshop: its owner, and its three role groups.
+entity Project {
+  owner: User,
+  viewers: Group,
+  operators: Group,
+  maintainers: Group,
+};
+
+// What a route without a resource in its path acts on: a list, a create,
+// one's own account, the instance's settings.
+entity Instance;
+
+// A resource a path names: whose it is, and the workshop it lives in when
+// it lives in one. workshopKind: a kind that lives in workshops (a
+// workshop, a run, a ticket), even when this one names none (a run from
+// before workshops, an upload not claimed yet); personal configuration is
+// not.
+entity Resource {
+  owner: User,
+  project?: Project,
+  workshopKind: Bool,
+};
+
+// The request's token: scoped when it carries an action list (else it is
+// the account itself), limited when it also names workshops.
+type Token = {
+  scoped: Bool,
+  actions: Set<Action>,
+  limited: Bool,
+  projects: Set<Project>,
+};
+
+type Context = { token: Token };
+
+// The action groups the policies grant. An action's membership is in
+// actions.go; this file declares the same and the test holds them equal.
+action admin, browse, personal, owned, viewer, operator, maintainer, manageself;
+
+action "instance:admin" in [admin] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "account:read" in [browse] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "account:manage" in [browse, manageself] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+
+action "project:create" in [personal] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "project:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "project:write" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "project:members" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "project:delete" in [owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+
+action "run:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "run:operate" in [browse, owned, operator] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "run:shell" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+
+action "ticket:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "ticket:write" in [browse, owned, operator] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+
+action "integration:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "integration:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "credential:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "credential:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "channel:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "channel:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "skill:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "skill:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "analytics:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "analytics:write" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "notice:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "notice:write" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "settings:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "settings:write" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };

@@ -38,7 +38,7 @@ func readPtr(at *time.Time) *time.Time {
 func ptr(at time.Time) *time.Time { return &at }
 
 func user(id, handle, email string) auth.User {
-	return auth.User{ID: id, Handle: handle, Email: email, Name: "N " + id, CreatedAt: t0, UpdatedAt: t0}
+	return auth.User{ID: id, Handle: handle, Email: email, Name: "N " + id, Role: auth.RoleMember, CreatedAt: t0, UpdatedAt: t0}
 }
 
 func session(id, owner string) auth.Session {
@@ -122,7 +122,7 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		}
 		plain := user("u1", "alice", "a@x")
 		full := user("u2", "Bob", "Bob@X")
-		full.Admin = true
+		full.Role = auth.RoleAdmin
 		full.DisabledAt, full.LastSeenAt = ptr(t0.Add(time.Hour)), ptr(t0.Add(2*time.Hour))
 		full.UpdatedAt = t0.Add(3 * time.Hour)
 		for _, u := range []auth.User{plain, full} {
@@ -369,13 +369,13 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		// A row read before the touch and written after must not lose it, nor
 		// can an update move created_at.
 		stale := u
-		stale.Handle, stale.Email, stale.Name, stale.Admin = "al", "al@x", "Al", true
+		stale.Handle, stale.Email, stale.Name, stale.Role = "al", "al@x", "Al", auth.RoleGuest
 		stale.DisabledAt, stale.UpdatedAt = ptr(t0.Add(time.Hour)), t0.Add(2*time.Hour)
 		stale.CreatedAt, stale.LastSeenAt = t0.Add(99*time.Hour), ptr(t0.Add(99*time.Hour))
 		if err := db.UpdateUser(ctx, stale); err != nil {
 			t.Fatal(err)
 		}
-		want := auth.User{ID: "u1", Handle: "al", Email: "al@x", Name: "Al", Admin: true,
+		want := auth.User{ID: "u1", Handle: "al", Email: "al@x", Name: "Al", Role: auth.RoleGuest,
 			DisabledAt: readPtr(ptr(t0.Add(time.Hour))), LastSeenAt: readPtr(ptr(t0.Add(time.Minute))),
 			CreatedAt: asRead(t0), UpdatedAt: asRead(t0.Add(2 * time.Hour))}
 		if got, err := db.GetUser(ctx, "u1"); err != nil || !reflect.DeepEqual(got, want) {
@@ -793,6 +793,78 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		list, err := db.ListTokens(ctx, "u1")
 		if err != nil || len(list) != 2 || list[0].IdleSeconds+list[1].IdleSeconds != 7*24*3600 {
 			t.Errorf("list = %+v, %v", list, err)
+		}
+	})
+
+	// The role is one of three: no role is a member (the column's default),
+	// anything else is refused on insert and on update alike.
+	t.Run("a role is one of three", func(t *testing.T) {
+		db := open(t)
+		none := user("u1", "alice", "a@x")
+		none.Role = ""
+		if err := db.CreateUser(ctx, none); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := db.GetUser(ctx, "u1"); err != nil || got.Role != auth.RoleMember {
+			t.Errorf("no role reads back as %q, %v", got.Role, err)
+		}
+		bad := user("u2", "bob", "b@x")
+		bad.Role = "root"
+		if err := db.CreateUser(ctx, bad); err == nil {
+			t.Error("a user with role root was stored")
+		}
+		if n, _ := db.CountUsers(ctx); n != 1 {
+			t.Errorf("count after a refused insert = %d", n)
+		}
+		up := user("u1", "alice", "a@x")
+		up.Role = "owner"
+		if err := db.UpdateUser(ctx, up); err == nil {
+			t.Error("an update to role owner was stored")
+		}
+		for _, r := range auth.Roles {
+			up.Role = r
+			if err := db.UpdateUser(ctx, up); err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := db.GetUser(ctx, "u1"); got.Role != r {
+				t.Errorf("role %s reads back as %q", r, got.Role)
+			}
+		}
+	})
+
+	// A token's grant: no action list is a full token, an empty one is kept
+	// apart from it (the service never writes one, the column can hold
+	// one), and what was stored is not the caller's slice.
+	t.Run("a token's grant round-trips, nil apart from empty", func(t *testing.T) {
+		db := open(t)
+		seedUsers(t, db)
+		full := token("t1", "u1", "h1")
+		empty := token("t2", "u1", "h2")
+		empty.Actions, empty.ProjectIDs = []string{}, []string{}
+		scoped := token("t3", "u1", "h3")
+		scoped.Actions, scoped.ProjectIDs = []string{"run:read", "ticket:read"}, []string{"p1", "p2"}
+		for _, k := range []auth.Token{full, empty, scoped} {
+			if err := db.CreateToken(ctx, k); err != nil {
+				t.Fatal(err)
+			}
+		}
+		scoped.Actions[0], scoped.ProjectIDs[0] = "instance:admin", "p9"
+		got, err := db.GetTokenByHash(ctx, "h1")
+		if err != nil || got.Actions != nil || got.ProjectIDs != nil {
+			t.Errorf("full token = %#v %#v, %v", got.Actions, got.ProjectIDs, err)
+		}
+		got, err = db.GetTokenByHash(ctx, "h2")
+		if err != nil || got.Actions == nil || len(got.Actions) != 0 || got.ProjectIDs == nil || len(got.ProjectIDs) != 0 {
+			t.Errorf("empty grant = %#v %#v, %v", got.Actions, got.ProjectIDs, err)
+		}
+		got, err = db.GetTokenByHash(ctx, "h3")
+		if err != nil || !reflect.DeepEqual(got.Actions, []string{"run:read", "ticket:read"}) || !reflect.DeepEqual(got.ProjectIDs, []string{"p1", "p2"}) {
+			t.Errorf("scoped grant = %#v %#v, %v", got.Actions, got.ProjectIDs, err)
+		}
+		got.Actions[0] = "changed"
+		list, err := db.ListTokens(ctx, "u1")
+		if err != nil || len(list) != 3 || list[2].Actions[0] != "run:read" || list[2].ProjectIDs[0] != "p1" {
+			t.Errorf("list after mutating reads = %+v, %v", list, err)
 		}
 	})
 

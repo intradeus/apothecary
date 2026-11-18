@@ -58,6 +58,9 @@ var rules = []rule{
 	{pkg: "internal/engine", importedOnlyBy: []string{"cmd/", "internal/httpapi"}},
 	{pkg: "internal/project/integrations", importedOnlyBy: []string{"cmd/"}},
 	{pkg: "internal/run/runinput", mayImport: []string{"internal/skills"}},
+	// The authorizer is policies over facts: it knows the accounts it
+	// decides for and nothing of the stores, which feed it through Facts.
+	{pkg: "internal/account/authz", mayImport: []string{"internal/account/auth"}},
 	{pkg: "internal/run/event", denyImport: outerLayers},
 	// The naming standard stands alone: anything may read a reference.
 	{pkg: "internal/run/ref", mayImport: []string{}},

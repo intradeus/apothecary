@@ -17,6 +17,7 @@
 		projectId,
 		ticket,
 		branchFormat = '',
+		readonly = false,
 		onchange
 	}: {
 		/** The workshop the ticket is read through. */
@@ -24,9 +25,13 @@
 		ticket: TicketDetail;
 		/** The workshop's branch format: what an empty base branch becomes. */
 		branchFormat?: string;
+		/** The caller's role may not write the ticket (ticket:write): status,
+		 *  labels and base branch are shown, not changed. */
+		readonly?: boolean;
 		onchange: (tk: TicketDetail) => void;
 	} = $props();
 
+	const deny = $derived(readonly ? t('common.needsPermission') : undefined);
 	let statuses = $state<TrackerStatus[]>([]);
 	let error = $state('');
 	let busy = $state<'' | 'status' | 'labels' | 'branch' | 'refresh'>('');
@@ -122,7 +127,8 @@
 						value={ticket.status}
 						placeholder={t('tickets.setStatus')}
 						label={t('tickets.setStatus')}
-						disabled={busy !== ''}
+						disabled={readonly || busy !== ''}
+						title={deny}
 						onchange={setStatus}
 					/>
 				</span>
@@ -152,7 +158,8 @@
 					<button
 						class="btn-icon bare"
 						aria-label={t('tickets.removeLabel', { label: l })}
-						disabled={busy !== ''}
+						disabled={readonly || busy !== ''}
+						title={deny}
 						onclick={() => setLabels(ticket.labels.filter((x) => x !== l))}>{I.close}</button
 					>
 				</span>
@@ -165,7 +172,8 @@
 					bind:value={newLabel}
 					placeholder={t('tickets.addLabel')}
 					aria-label={t('tickets.addLabel')}
-					disabled={busy !== ''}
+					disabled={readonly || busy !== ''}
+					title={deny}
 				/>
 			</form>
 		</div>
@@ -182,7 +190,8 @@
 					ticket.internal ? '' : ticket.key,
 					ticket.title
 				)}
-				disabled={busy !== ''}
+				disabled={readonly || busy !== ''}
+				title={deny}
 			/>
 			{#if branch.trim() !== ticket.baseBranch}
 				<button class="btn-sm" type="submit" aria-busy={busy === 'branch'} disabled={busy !== ''}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/account/logins"
 	"apothecary/internal/account/providers"
 	"apothecary/internal/engine/authsink"
@@ -323,38 +324,38 @@ func (s *Server) credentialRoutes() []Route {
 			Summary: "The model providers apothecary manages credentials for",
 			Doc:     "The closed set: what each takes (an API key, a login) and which harnesses use it. harness narrows it to one harness kind.",
 			Query:   []Param{{Name: "harness", Doc: "only the providers this harness kind uses"}},
-			Handler: s.listProviders, Returns: []ProviderInfo{}, Enabled: haveConf},
+			Handler: s.listProviders, Returns: []ProviderInfo{}, Enabled: haveConf, Action: authz.CredentialRead},
 		{Method: "GET", Path: "/api/credentials", ID: "listCredentials", Tag: tagIntegrations,
 			Summary: "One's model provider credentials (metadata only, never a key or a token)",
-			Handler: s.listCredentials, Returns: []confstore.ProviderCredential{}, Enabled: haveConf},
+			Handler: s.listCredentials, Returns: []confstore.ProviderCredential{}, Enabled: haveConf, Action: authz.CredentialRead},
 		{Method: "POST", Path: "/api/credentials", ID: "createCredential", Tag: tagIntegrations,
 			Summary: "Add an API key for a provider",
 			Handler: s.createCredential, Body: CredentialRequest{}, Returns: confstore.ProviderCredential{},
-			Status: http.StatusCreated, Enabled: haveConf},
+			Status: http.StatusCreated, Enabled: haveConf, Action: authz.CredentialWrite},
 		{Method: "POST", Path: "/api/credentials/import", ID: "importCredentials", Tag: tagIntegrations,
 			Summary: "Import a credential file a harness CLI wrote",
 			Doc:     "codex's or opencode's auth.json, CLIProxyAPI login JSON, or KEY=VALUE lines. Every entry that is not a provider apothecary manages is refused and listed.",
 			Handler: s.importCredentials, Body: CredentialImportRequest{}, Returns: CredentialImportResult{},
-			Status: http.StatusCreated, Enabled: haveConf},
+			Status: http.StatusCreated, Enabled: haveConf, Action: authz.CredentialWrite},
 		{Method: "POST", Path: "/api/credentials/signin", ID: "startSignIn", Tag: tagIntegrations,
 			Summary: "Start signing in to a provider from apothecary",
 			Doc:     "Returns the provider page to open and, for a device sign-in, the code to type there. The tokens come back to the engine, never to a laptop CLI.",
-			Handler: s.startSignIn, Body: SignInRequest{}, Returns: logins.Pending{}, Enabled: haveConf},
+			Handler: s.startSignIn, Body: SignInRequest{}, Returns: logins.Pending{}, Enabled: haveConf, Action: authz.CredentialWrite},
 		{Method: "POST", Path: "/api/credentials/signin/{sid}/complete", ID: "completeSignIn", Tag: tagIntegrations,
 			Summary: "Finish a sign-in",
 			Doc:     "A device sign-in answers 202 {pending: true} until the person approves; a paste sign-in exchanges what was pasted. 201 with the new credential when done.",
-			Handler: s.completeSignIn, Body: SignInComplete{}, Returns: SignInResult{}, Status: http.StatusCreated, Enabled: haveConf},
+			Handler: s.completeSignIn, Body: SignInComplete{}, Returns: SignInResult{}, Status: http.StatusCreated, Enabled: haveConf, Action: authz.CredentialWrite},
 		{Method: "GET", Path: "/api/credentials/{id}", ID: "getCredential", Tag: tagIntegrations,
 			Summary: "One credential (metadata only)",
-			Handler: s.getCredential, Returns: confstore.ProviderCredential{}, Enabled: haveConf, Scope: ScopeCredential},
+			Handler: s.getCredential, Returns: confstore.ProviderCredential{}, Enabled: haveConf, Scope: ScopeCredential, Action: authz.CredentialRead},
 		{Method: "PUT", Path: "/api/credentials/{id}", ID: "renameCredential", Tag: tagIntegrations,
 			Summary: "Rename a credential",
-			Handler: s.renameCredential, Body: CredentialRename{}, Returns: confstore.ProviderCredential{}, Enabled: haveConf, Scope: ScopeCredential},
+			Handler: s.renameCredential, Body: CredentialRename{}, Returns: confstore.ProviderCredential{}, Enabled: haveConf, Scope: ScopeCredential, Action: authz.CredentialWrite},
 		{Method: "DELETE", Path: "/api/credentials/{id}", ID: "deleteCredential", Tag: tagIntegrations,
 			Summary: "Delete a credential no harness integration uses",
-			Handler: s.deleteCredential, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeCredential},
+			Handler: s.deleteCredential, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeCredential, Action: authz.CredentialWrite},
 		{Method: "POST", Path: "/api/credentials/{id}/test", ID: "testCredential", Tag: tagIntegrations,
 			Summary: "Check a credential against its provider, without spending tokens",
-			Handler: s.testCredential, Returns: TestResult{}, Enabled: haveConf, Scope: ScopeCredential},
+			Handler: s.testCredential, Returns: TestResult{}, Enabled: haveConf, Scope: ScopeCredential, Action: authz.CredentialWrite},
 	}
 }

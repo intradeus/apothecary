@@ -2,15 +2,16 @@ package analytics
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"strings"
 	"testing"
 	"time"
 )
 
-// Every grain binds the caller as $1 in its source: the tenancy rule lives
-// in the compiler, so it is checked on every grain and every shape.
-func TestEveryGrainIsScopedToTheUser(t *testing.T) {
+// Every grain binds the visible projects as $1 in its source: the tenancy
+// rule lives in the compiler, so it is checked on every grain and every shape.
+func TestEveryGrainIsScopedToTheProjects(t *testing.T) {
 	from := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	for _, g := range grains {
 		q := Query{Grain: g.id, GroupBy: []string{g.dims[0].ID},
@@ -24,49 +25,55 @@ func TestEveryGrainIsScopedToTheUser(t *testing.T) {
 			q.Measures = append(q.Measures, MeasureRef{Field: d.ID})
 			break
 		}
-		c, err := Compile(q, "u1")
+		c, err := Compile(q, []string{"p1", "p2"})
 		if err != nil {
 			t.Fatalf("%s: %v", g.id, err)
 		}
-		if !strings.Contains(c.SQL, "user_id = $1") {
+		if !strings.Contains(c.SQL, "project_id = ANY($1)") {
 			t.Errorf("%s: SQL not scoped: %s", g.id, c.SQL)
 		}
-		if c.Args[0] != "u1" {
+		if bound(c) != "[p1 p2]" {
 			t.Errorf("%s: $1 = %v", g.id, c.Args[0])
 		}
 		if c.Dims != 2 || c.Measures != len(q.Measures) || len(c.Fields) != c.Dims+c.Measures {
 			t.Errorf("%s: shape %d/%d/%d", g.id, c.Dims, c.Measures, len(c.Fields))
 		}
-		v, err := compileValues(g.id, g.dims[0].ID, TimeRange{From: &from}, "u1")
-		if err != nil || !strings.Contains(v.SQL, "user_id = $1") || v.Args[0] != "u1" {
+		v, err := compileValues(g.id, g.dims[0].ID, TimeRange{From: &from}, []string{"p1", "p2"})
+		if err != nil || !strings.Contains(v.SQL, "project_id = ANY($1)") || bound(v) != "[p1 p2]" {
 			t.Errorf("%s values: %v %s", g.id, err, v.SQL)
 		}
 		if g.runID == "" {
 			continue
 		}
-		d, err := compileDrill(g.id, q.Filters, TimeRange{}, "u1")
-		if err != nil || !strings.Contains(d.SQL, "f.user_id = $1") || !strings.Contains(d.SQL, g.where) {
+		d, err := compileDrill(g.id, q.Filters, TimeRange{}, []string{"p1"})
+		if err != nil || !strings.Contains(d.SQL, "f.project_id = ANY($1)") || !strings.Contains(d.SQL, g.where) {
 			t.Errorf("%s drill: %v %s", g.id, err, d.SQL)
 		}
 	}
-	if _, err := compileDrill(GrainTickets, nil, TimeRange{}, "u1"); !errors.Is(err, ErrInvalid) {
+	if _, err := compileDrill(GrainTickets, nil, TimeRange{}, []string{"p1"}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("tickets drill = %v", err)
 	}
+	// No projects binds an empty array, never NULL: it matches nothing.
+	if c, err := Compile(Query{Grain: GrainRuns}, nil); err != nil || c.Args[0] == nil || bound(c) != "[]" {
+		t.Errorf("nil projects bound %#v, %v", c.Args, err)
+	}
 }
+
+func bound(c Compiled) string { return fmt.Sprint(c.Args[0]) }
 
 // A ticket belongs to its source, not to a workshop: the tickets grain is
 // one row per ticket and workshop that ran it, so a workshop filter keeps
 // each workshop's runs of a shared ticket, and shipping is per workshop.
 func TestTicketsGrainIsPerWorkshop(t *testing.T) {
 	c, err := Compile(Query{Grain: GrainTickets, Measures: []MeasureRef{{Field: "runs", Agg: AggSum}},
-		Filters: []Filter{{Field: "project_id", Op: OpEq, Values: []string{"p1"}}}}, "u1")
+		Filters: []Filter{{Field: "project_id", Op: OpEq, Values: []string{"p1"}}}}, []string{"p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"SELECT user_id, ticket_id, project_id,",
+		"SELECT ticket_id, project_id,",
 		"PARTITION BY ticket_id, project_id ORDER BY created_at",
-		"GROUP BY user_id, ticket_id, project_id) t",
+		"GROUP BY ticket_id, project_id) t",
 		"(t.project_id)::text = $2",
 	} {
 		if !strings.Contains(c.SQL, want) {
@@ -114,21 +121,21 @@ func TestCompileRefusesWhatTheCatalogDoesNot(t *testing.T) {
 		{"limit", "-1", Query{Grain: GrainRuns, Limit: -1}},
 	}
 	for _, c := range cases {
-		_, err := Compile(c.q, "u1")
+		_, err := Compile(c.q, []string{"p1"})
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), c.token) {
 			t.Errorf("%s: %v, want ErrInvalid naming %q", c.name, err, c.token)
 		}
 	}
-	if _, err := compileValues("nope", "state", TimeRange{}, "u"); !errors.Is(err, ErrInvalid) {
+	if _, err := compileValues("nope", "state", TimeRange{}, nil); !errors.Is(err, ErrInvalid) {
 		t.Errorf("values grain = %v", err)
 	}
-	if _, err := compileValues(GrainRuns, "nope", TimeRange{}, "u"); !errors.Is(err, ErrInvalid) {
+	if _, err := compileValues(GrainRuns, "nope", TimeRange{}, nil); !errors.Is(err, ErrInvalid) {
 		t.Errorf("values field = %v", err)
 	}
-	if _, err := compileDrill("nope", nil, TimeRange{}, "u"); !errors.Is(err, ErrInvalid) {
+	if _, err := compileDrill("nope", nil, TimeRange{}, nil); !errors.Is(err, ErrInvalid) {
 		t.Errorf("drill grain = %v", err)
 	}
-	if _, err := compileDrill(GrainRuns, filters, TimeRange{}, "u"); !errors.Is(err, ErrInvalid) {
+	if _, err := compileDrill(GrainRuns, filters, TimeRange{}, nil); !errors.Is(err, ErrInvalid) {
 		t.Errorf("drill filters = %v", err)
 	}
 }
@@ -148,14 +155,14 @@ func TestCompileSQLShape(t *testing.T) {
 		},
 		Time:  TimeRange{From: &from, To: &to, Bucket: BucketMonth},
 		Limit: 10,
-	}, "u1")
+	}, []string{"p1"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{
 		"SELECT date_trunc('month', f.created_at)::text, (f.flow_name)::text, " +
 			"(percentile_cont(0.9) WITHIN GROUP (ORDER BY f.cost_usd))::float8, (avg(f.wall_ms))::float8, (avg(f.success::int))::float8, count(*) FROM ",
-		"WHERE f.user_id = $1 AND (f.state)::text = $2 AND (f.project_id)::text <> $3 AND (f.flow_hash)::text = ANY($4::text[]) AND (f.end_reason)::text <> ALL($5::text[]) AND f.created_at >= $6 AND f.created_at < $7",
+		"WHERE f.project_id = ANY($1) AND (f.state)::text = $2 AND (f.project_id)::text <> $3 AND (f.flow_hash)::text = ANY($4::text[]) AND (f.end_reason)::text <> ALL($5::text[]) AND f.created_at >= $6 AND f.created_at < $7",
 		" GROUP BY 1, 2 ORDER BY 1 LIMIT 11",
 	} {
 		if !strings.Contains(c.SQL, want) {
@@ -168,7 +175,7 @@ func TestCompileSQLShape(t *testing.T) {
 
 	order := func(q Query) string {
 		t.Helper()
-		c, err := Compile(q, "u")
+		c, err := Compile(q, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -196,7 +203,7 @@ func TestCompileSQLShape(t *testing.T) {
 			t.Errorf("%+v: order %q, want %q", c.q, got, c.want)
 		}
 	}
-	if c, _ := Compile(Query{Grain: GrainRuns, Limit: 9999}, "u"); !strings.HasSuffix(c.SQL, "LIMIT 501") || c.Limit != 500 {
+	if c, _ := Compile(Query{Grain: GrainRuns, Limit: 9999}, nil); !strings.HasSuffix(c.SQL, "LIMIT 501") || c.Limit != 500 {
 		t.Errorf("limit cap: %s", c.SQL)
 	}
 }
@@ -224,7 +231,7 @@ func TestBuiltinsCompile(t *testing.T) {
 				}
 				q, _ = withTerms(q, sc)
 			}
-			if _, err := Compile(q, "u"); err != nil {
+			if _, err := Compile(q, nil); err != nil {
 				t.Errorf("%s/%s: %v", d.ID, p.ID, err)
 			}
 		}
@@ -235,7 +242,7 @@ func TestBuiltinsCompile(t *testing.T) {
 			t.Errorf("%s: %v", sc.ID, err)
 		}
 		q, _ := withTerms(Query{Grain: GrainRuns}, sc)
-		if _, err := Compile(q, "u"); err != nil {
+		if _, err := Compile(q, nil); err != nil {
 			t.Errorf("%s on runs: %v", sc.ID, err)
 		}
 	}

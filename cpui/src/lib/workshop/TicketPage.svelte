@@ -68,6 +68,9 @@
 	let busyRun = $state('');
 
 	const project = $derived(fleet.projectById.get(projectId));
+	/** Editing, deleting, moving and commenting on a ticket need ticket:write. */
+	const canWrite = $derived(fleet.can(projectId, 'ticket:write'));
+	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
 	// The ticket's runs, newest first, from the shared fleet poll (4s); none
 	// before it has a record.
@@ -205,11 +208,15 @@
 		{#snippet actions()}
 			{#if ticket!.internal}
 				<div class="row nowrap">
-					<button onclick={() => (editing = !editing)}
+					<button disabled={!canWrite} title={deny} onclick={() => (editing = !editing)}
 						>{editing ? t('page.ticket.cancelEdit') : t('page.ticket.edit')}</button
 					>
-					<button class="btn-danger" aria-busy={deleting} onclick={del}
-						>{t('page.ticket.delete')}</button
+					<button
+						class="btn-danger"
+						aria-busy={deleting}
+						disabled={!canWrite}
+						title={deny}
+						onclick={del}>{t('page.ticket.delete')}</button
 					>
 				</div>
 			{/if}
@@ -255,6 +262,7 @@
 						{projectId}
 						{ticket}
 						branchFormat={project?.repo.branchFormat ?? ''}
+						readonly={!canWrite}
 						onchange={changed}
 					/>
 					<section class="glass pane">
@@ -295,7 +303,7 @@
 							</div>
 						{/if}
 					</section>
-					<TicketComments {projectId} ticketKey={key} {refreshed} />
+					<TicketComments {projectId} ticketKey={key} {refreshed} readonly={!canWrite} />
 					{@render runList()}
 				</div>
 

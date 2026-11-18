@@ -4,9 +4,11 @@
 // API tokens.
 //
 // A user owns everything they configure — integrations, projects, tickets,
-// runs, channels, settings — and sees nothing of anyone else's. There is no
-// organisation level and no role matrix: the one distinction is the
-// instance admin, who manages accounts and nothing more.
+// runs, channels, settings. What else they may see and do — a workshop
+// someone shared with them, the instance's administration, what a scoped
+// token leaves of their reach — is package authz's to decide: the instance
+// role and a token's grant live here, the policies there. There is no
+// organisation level.
 package auth
 
 import (
@@ -30,16 +32,35 @@ var (
 	ErrSetupDone = errors.New("setup already done")
 )
 
-// User is an account: the profile, and whether it administers the instance.
+// Role is an account's instance role.
+type Role string
+
+const (
+	// RoleAdmin is a member who also administers the instance: accounts,
+	// limits, the provisioner. It grants no view into other users' work.
+	RoleAdmin Role = "admin"
+	// RoleMember keeps workshops and configuration of its own.
+	RoleMember Role = "member"
+	// RoleGuest has only what is shared with it: it creates no workshop,
+	// integration, credential, skill or channel.
+	RoleGuest Role = "guest"
+)
+
+// Roles are the instance roles, highest first.
+var Roles = []Role{RoleAdmin, RoleMember, RoleGuest}
+
+// Valid reports one of the three roles.
+func (r Role) Valid() bool { return r == RoleAdmin || r == RoleMember || r == RoleGuest }
+
+// User is an account: the profile, and its instance role.
 type User struct {
 	ID string `json:"id"`
 	// Handle is the short unique name (lowercase slug): what URLs and
 	// mentions use, and what a person can sign in with beside their email.
-	Handle string `json:"handle"`
-	Email  string `json:"email"`
-	Name   string `json:"name"`
-	// Admin manages accounts. It grants no view into other users' work.
-	Admin      bool       `json:"admin"`
+	Handle     string     `json:"handle"`
+	Email      string     `json:"email"`
+	Name       string     `json:"name"`
+	Role       Role       `json:"role"`
 	DisabledAt *time.Time `json:"disabled_at,omitempty"`
 	LastSeenAt *time.Time `json:"last_seen_at,omitempty"`
 	CreatedAt  time.Time  `json:"created_at"`
@@ -104,7 +125,17 @@ type Token struct {
 	// and every use slides it — what the CLI's browser-approved sign-in
 	// mints. Zero: no window, only ExpiresAt.
 	IdleSeconds int `json:"idle_seconds,omitempty"`
+	// Actions, when set, scope the token: it may do only these (authz's
+	// vocabulary), and never more than its account may at the time. Nil is
+	// a full token: the account itself.
+	Actions []string `json:"actions,omitempty"`
+	// ProjectIDs, when set, limit a scoped token to these workshops. Nil:
+	// every workshop the account reaches.
+	ProjectIDs []string `json:"project_ids,omitempty"`
 }
+
+// Scoped reports a token limited to some actions.
+func (t Token) Scoped() bool { return t.Actions != nil }
 
 // SSHKey is a public key a person registered to reach their runs'
 // workspaces through the SSH door. PublicKey is the normalised

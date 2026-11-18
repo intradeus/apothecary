@@ -257,7 +257,11 @@ Everything is configured in the UI and stored encrypted in the database.
 
 Instance-wide settings live under **System**: limits, reaper, storage,
 notification channels (Matrix, Slack, Discord), users (admins only). Each
-account sees only its own integrations, workshops, tickets and runs.
+account sees its own integrations, workshops, tickets and runs, and the
+workshops shared with it, as viewer, operator or maintainer (Workshop →
+Members). An account is an admin, a member or a guest (who only has what
+is shared with it); a personal token is the account itself or limited to
+some actions and workshops.
 
 ## Development
 

@@ -54,12 +54,29 @@ func (r *Reader) All(ctx context.Context) ([]View, error) {
 	return out, nil
 }
 
-// ListFilter scopes a run list: always to one owner, optionally to a
-// project and a ticket.
-type ListFilter struct{ UserID, ProjectID, TicketID string }
+// Seen is what a list may hold: the runs UserID owns and the runs in the
+// workshops ProjectIDs names (authz.Visibility, as the HTTP layer computes
+// it). The zero value sees nothing.
+type Seen struct {
+	UserID     string
+	ProjectIDs []string
+}
 
-// ViewLister is an OPTIONAL event.Store capability: one user's runs, scoped
-// in the query, newest first — so a run list never scans everyone's runs.
+// Sees reports a run (or a row of one) the list may hold.
+func (s Seen) Sees(userID, projectID string) bool {
+	return (s.UserID != "" && userID == s.UserID) || (projectID != "" && slices.Contains(s.ProjectIDs, projectID))
+}
+
+// ListFilter scopes a run list: always to what its reader sees, optionally
+// to a project and a ticket.
+type ListFilter struct {
+	Seen
+	ProjectID, TicketID string
+}
+
+// ViewLister is an OPTIONAL event.Store capability: the runs a reader sees,
+// scoped in the query, newest first — so a run list never scans everyone's
+// runs.
 type ViewLister interface {
 	ListRunViews(ctx context.Context, f ListFilter) ([]View, error)
 }
@@ -76,7 +93,7 @@ func (r *Reader) List(ctx context.Context, f ListFilter) ([]View, error) {
 	}
 	out := make([]View, 0, len(all))
 	for _, v := range all {
-		if v.UserID != f.UserID || (f.ProjectID != "" && v.ProjectID != f.ProjectID) || (f.TicketID != "" && v.TicketID != f.TicketID) {
+		if !f.Sees(v.UserID, v.ProjectID) || (f.ProjectID != "" && v.ProjectID != f.ProjectID) || (f.TicketID != "" && v.TicketID != f.TicketID) {
 			continue
 		}
 		out = append(out, v)

@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/account/logins"
 	"apothecary/internal/adapters/browser"
 	discordadapter "apothecary/internal/adapters/discord"
@@ -172,7 +173,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 			users, err := store.ListUsers(ctx)
 			var ids []string
 			for _, u := range users {
-				if u.Admin && !u.Disabled() {
+				if u.Role == auth.RoleAdmin && !u.Disabled() {
 					ids = append(ids, u.ID)
 				}
 			}
@@ -364,11 +365,19 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		return nil, nil, fmt.Errorf("crash recovery: %w", err)
 	}
 
-	// Accounts (TODO 25): sessions, tokens, the setup of a fresh instance.
+	// Accounts (TODO 25): sessions, tokens, the setup of a fresh instance;
+	// and what each may do (the authorizer, over the workshops' owners and
+	// members).
 	authsvc := auth.New(store)
+	authsvc.CheckGrant = authz.ValidateGrant
+	az, err := authz.New(conf)
+	if err != nil {
+		return nil, nil, err
+	}
 
 	api := httpapi.New(e, store, chreg, boot.RunsDir)
 	api.Auth = authsvc
+	api.Authz = az
 	api.MRs = mrSvc
 	api.Resources = sampler
 	api.EnvState = envSt
@@ -408,7 +417,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	if err != nil {
 		return nil, nil, err
 	}
-	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Advertise: advertise, Log: log})
+	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Authorizer: doorAuthz{az}, Advertise: advertise, Log: log})
 	if err != nil {
 		return nil, nil, err
 	}

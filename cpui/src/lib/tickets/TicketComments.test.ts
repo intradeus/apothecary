@@ -29,6 +29,14 @@ afterEach(() => {
 });
 
 describe('TicketComments', () => {
+	it('offers no reply box to a role without ticket:write', async () => {
+		vi.mocked(api.tickets.comments).mockResolvedValue([]);
+		render(TicketComments, { projectId: 'p1', ticketKey: 'P-1', readonly: true });
+		expect(await screen.findByText('No comments yet.')).toBeInTheDocument();
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Comment' })).not.toBeInTheDocument();
+	});
+
 	it('says it is loading, then that there are none', async () => {
 		const d = deferred<TicketComment[]>();
 		vi.mocked(api.tickets.comments).mockReturnValue(d.promise);

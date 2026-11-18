@@ -14,7 +14,15 @@ const q = (params: Record<string, string | undefined>) => {
 };
 
 export type WorkshopTab =
-	'overview' | 'runs' | 'tickets' | 'mrs' | 'flows' | 'automations' | 'health' | 'settings';
+	| 'overview'
+	| 'runs'
+	| 'tickets'
+	| 'mrs'
+	| 'flows'
+	| 'automations'
+	| 'health'
+	| 'members'
+	| 'settings';
 /** The kinds of integration System lists, each on its own page, in nav order. */
 export const INTEGRATION_PORTS = ['repository', 'ticketsource', 'harness'] as const;
 export type IntegrationPort = (typeof INTEGRATION_PORTS)[number];

@@ -20,8 +20,57 @@ export interface Project {
 	 *  remote tracker or the owner's internal one. Several workshops may
 	 *  share one. '' on a draft = the owner's internal tracker. */
 	ticketSourceId: string;
+	/** The account that owns the workshop. */
+	ownerId: string;
+	/** The owner's handle, set only when the caller is not the owner: the
+	 *  workshop is shared with them. */
+	ownerHandle?: string;
+	/** What the caller may do here: their role and the actions it holds. */
+	access: ProjectAccess;
 	createdAt: string;
 	updatedAt: string;
+}
+
+/** A caller's standing in a workshop: viewer < operator < maintainer, and
+ *  the owner above them all. */
+export type ProjectRole = 'owner' | 'maintainer' | 'operator' | 'viewer';
+
+/** The role a workshop is shared with: everything but owner. */
+export type MemberRole = Exclude<ProjectRole, 'owner'>;
+
+export const MEMBER_ROLES: readonly MemberRole[] = ['viewer', 'operator', 'maintainer'];
+
+/** The actions a workshop role can hold. */
+export type ProjectAction =
+	| 'project:read'
+	| 'project:write'
+	| 'project:members'
+	| 'project:delete'
+	| 'run:read'
+	| 'run:operate'
+	| 'run:shell'
+	| 'ticket:read'
+	| 'ticket:write';
+
+export interface ProjectAccess {
+	role: ProjectRole;
+	/** Which of the ProjectActions the caller holds here. */
+	actions: string[];
+}
+
+/** Whether the caller may do `action` in this workshop. An unknown
+ *  workshop (not loaded, or not readable) grants nothing. */
+export function projectCan(p: Pick<Project, 'access'> | undefined, action: ProjectAction): boolean {
+	return !!p?.access.actions.includes(action);
+}
+
+/** An account a workshop is shared with. */
+export interface Member {
+	userId: string;
+	handle: string;
+	name: string;
+	role: MemberRole;
+	createdAt: string;
 }
 
 export interface ProjectRepo {
@@ -89,7 +138,10 @@ export interface EditorPrefs {
 
 /** What creating or replacing a project needs: everything but the identity
  *  and timestamps the engine owns. */
-export type ProjectDraft = Omit<Project, 'id' | 'createdAt' | 'updatedAt'>;
+export type ProjectDraft = Omit<
+	Project,
+	'id' | 'createdAt' | 'updatedAt' | 'ownerId' | 'ownerHandle' | 'access'
+>;
 
 /** One branch a run can fork off from; isDefault marks the repo's default so
  *  the picker can pre-select it. */

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -35,8 +36,8 @@ func (s *Server) authPing(w http.ResponseWriter, r *http.Request, runID string) 
 // M15): pgstore in production, EventPingStore over any event.Store in
 // tests/tools.
 type PingStore interface {
-	// ListPings is one user's pings ("" = everyone's).
-	ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error)
+	// ListPings is the pings of the runs seen sees (nil: everyone's).
+	ListPings(ctx context.Context, seen *run.Seen, status string, limit int) ([]run.PingView, error)
 	GetPing(ctx context.Context, id string) (run.PingView, error)
 }
 
@@ -44,7 +45,7 @@ type PingStore interface {
 // pgstore's SQL view via the shared run.ReducePings reducer.
 type EventPingStore struct{ Store event.Store }
 
-func (e EventPingStore) ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error) {
+func (e EventPingStore) ListPings(ctx context.Context, seen *run.Seen, status string, limit int) ([]run.PingView, error) {
 	ids, err := e.Store.RunIDs(ctx)
 	if err != nil {
 		return nil, err
@@ -55,10 +56,12 @@ func (e EventPingStore) ListPings(ctx context.Context, userID, status string, li
 		if err != nil {
 			return nil, err
 		}
-		for _, v := range run.ReducePings(evs) {
-			if userID != "" && v.UserID != userID {
+		if seen != nil {
+			if rv := run.Reduce(evs); !seen.Sees(rv.UserID, rv.ProjectID) {
 				continue
 			}
+		}
+		for _, v := range run.ReducePings(evs) {
 			if status == "" || status == "all" || v.Status == status {
 				out = append(out, v)
 			}
@@ -75,7 +78,7 @@ func (e EventPingStore) ListPings(ctx context.Context, userID, status string, li
 }
 
 func (e EventPingStore) GetPing(ctx context.Context, id string) (run.PingView, error) {
-	all, err := e.ListPings(ctx, "", "all", 500)
+	all, err := e.ListPings(ctx, nil, "all", 500)
 	if err != nil {
 		return run.PingView{}, err
 	}
@@ -266,13 +269,18 @@ func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "status must be pending|answered|all")
 		return
 	}
-	me := auth.UserID(r.Context())
+	v, err := s.visible(r.Context(), authz.KindRun)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	seen := run.Seen{UserID: v.UserID, ProjectIDs: v.ProjectIDs}
 	if s.Pings == nil {
 		// Bare test servers: pending only, from the live registry.
 		pings := s.Runs.PendingPings()
 		out := make([]pingJSON, 0, len(pings))
 		for _, p := range pings {
-			if owner, err := s.runOwner(r.Context(), p.RunID); err != nil || owner != me {
+			if owner, project, err := s.runOwner(r.Context(), p.RunID); err != nil || !seen.Sees(owner, project) {
 				continue
 			}
 			out = append(out, toPingJSON(p))
@@ -285,7 +293,7 @@ func (s *Server) listPings(w http.ResponseWriter, r *http.Request) {
 		status = "pending" // inbox default; history is opt-in
 	}
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
-	rows, err := s.Pings.ListPings(r.Context(), me, status, limit)
+	rows, err := s.Pings.ListPings(r.Context(), &seen, status, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
@@ -337,19 +345,19 @@ func (s *Server) pingRoutes() []Route {
 				{Name: "status", Doc: "pending|answered|all (default pending)", Enum: []string{"pending", "answered", "all"}},
 				{Name: "limit", Doc: "max rows", Type: "integer"},
 			},
-			Handler: s.listPings, Returns: []run.PingView{}},
+			Handler: s.listPings, Returns: []run.PingView{}, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/pings/{pid}", ID: "getPing", Tag: tagPings,
 			Summary: "One question with its answer, if it has one",
-			Handler: s.getStoredPing, Returns: run.PingView{}, Scope: ScopePing},
+			Handler: s.getStoredPing, Returns: run.PingView{}, Scope: ScopePing, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/pings/{pid}/files", ID: "getPingFiles", Tag: tagPings,
 			Summary: "The files a question attached, as captured when it was raised",
-			Handler: s.getPingFiles, Returns: PingFiles{}, Scope: ScopePing},
+			Handler: s.getPingFiles, Returns: PingFiles{}, Scope: ScopePing, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/pings/{pid}/curation", ID: "getPingCuration", Tag: tagPings,
 			Summary: "A question's review documents, decoded as the gate showed them",
 			Doc:     "Each shown file of a review type (review_threads, review_replies, mr_threads) from its raise-time snapshot: what the curation page lists item by item. A file not captured lists with the reason and can only be approved as written.",
-			Handler: s.getPingCuration, Returns: CurationView{}, Scope: ScopePing},
+			Handler: s.getPingCuration, Returns: CurationView{}, Scope: ScopePing, Action: authz.RunRead},
 		{Method: "POST", Path: "/api/pings/{pid}/answer", ID: "answerPing", Tag: tagPings,
 			Summary: "Answer a question",
-			Handler: s.answerPing, Body: AnswerPingRequest{}, Returns: AnswerAccepted{}, Scope: ScopePing},
+			Handler: s.answerPing, Body: AnswerPingRequest{}, Returns: AnswerAccepted{}, Scope: ScopePing, Action: authz.RunOperate},
 	}
 }

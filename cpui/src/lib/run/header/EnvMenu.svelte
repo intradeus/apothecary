@@ -36,7 +36,8 @@
 	let sshState = $state<'idle' | 'loading' | 'ready' | 'failed'>('idle');
 	let sshFor = '';
 	$effect(() => {
-		if (!open) return;
+		// The door is a shell: a role without run:shell is not shown it.
+		if (!open || !rs.canShell) return;
 		const id = run.id;
 		if (sshFor !== id) {
 			sshFor = id;
@@ -88,11 +89,17 @@
 	placement="below-end"
 	width={300}
 	title={t('run.env.title')}
-	legend={rs.links.length ? t('run.env.legend', { count: rs.links.length }) : undefined}
+	legend={rs.canShell && rs.links.length
+		? t('run.env.legend', { count: rs.links.length })
+		: undefined}
 >
 	<!-- Into the workspace from a desktop (TODO 46): the VS Code link, the
 	     ssh command, the door's host key — or what stands in the way. -->
-	{#if ssh === null}
+	{#if !rs.canShell}
+		<div class="menu-item still">
+			<span class="sub">{t('common.needsPermission')}</span>
+		</div>
+	{:else if ssh === null}
 		<div class="menu-item still" aria-busy={sshState === 'loading'}>
 			<span class="sub"
 				>{sshState === 'failed' ? t('run.env.sshFailed') : t('run.env.sshLoading')}</span
@@ -200,7 +207,7 @@
 		{/if}
 	{/if}
 	<!-- What the workspace serves: its app ports and service previews. -->
-	{#if rs.links.length}
+	{#if rs.canShell && rs.links.length}
 		<div class="menu-div"></div>
 		{#each rs.links as l (l.kind + l.url)}
 			<a class="menu-item" href={l.url} target="_blank" rel="noreferrer" title={l.url}>

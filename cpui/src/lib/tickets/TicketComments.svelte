@@ -13,7 +13,8 @@
 	let {
 		projectId,
 		ticketKey,
-		refreshed = 0
+		refreshed = 0,
+		readonly = false
 	}: {
 		/** The workshop the ticket is read through, and its key there. */
 		projectId: string;
@@ -21,6 +22,8 @@
 		/** Bumped when the page refreshes the ticket: the thread is read from
 		 *  the tracker again too. */
 		refreshed?: number;
+		/** The caller's role may not comment (ticket:write): read only. */
+		readonly?: boolean;
 	} = $props();
 
 	let comments = $state<TicketComment[] | null>(null);
@@ -91,21 +94,26 @@
 				<Markdown src={c.bodyMd} />
 			</article>
 		{/each}
-		<form class="add" onsubmit={post}>
-			<textarea
-				rows="3"
-				bind:value={body}
-				aria-label={t('tickets.comments.add')}
-				placeholder={t('tickets.comments.placeholder')}
-				disabled={posting}></textarea>
-			<div class="acts">
-				{#if error}<span class="error">{error}</span>{/if}
-				<span class="spacer"></span>
-				<button class="btn-sm" type="submit" disabled={!body.trim() || posting} aria-busy={posting}
-					>{t('tickets.comments.post')}</button
-				>
-			</div>
-		</form>
+		{#if !readonly}
+			<form class="add" onsubmit={post}>
+				<textarea
+					rows="3"
+					bind:value={body}
+					aria-label={t('tickets.comments.add')}
+					placeholder={t('tickets.comments.placeholder')}
+					disabled={posting}></textarea>
+				<div class="acts">
+					{#if error}<span class="error">{error}</span>{/if}
+					<span class="spacer"></span>
+					<button
+						class="btn-sm"
+						type="submit"
+						disabled={!body.trim() || posting}
+						aria-busy={posting}>{t('tickets.comments.post')}</button
+					>
+				</div>
+			</form>
+		{/if}
 	</div>
 </section>
 

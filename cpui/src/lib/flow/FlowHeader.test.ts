@@ -24,6 +24,7 @@ const setup = (over: Record<string, unknown> = {}) => {
 		cloning: false,
 		dirty: false,
 		busy: false,
+		canWrite: true,
 		tab: 'graph',
 		switchTab: vi.fn(),
 		validate: vi.fn(),
@@ -92,6 +93,22 @@ describe('FlowHeader', () => {
 			fleet.projects = [aProject({ id: 'p1', defaultFlow: 'builder' })];
 			setup();
 			expect(screen.getByText('default')).toBeInTheDocument();
+		});
+	});
+
+	describe('without project:write', () => {
+		it('holds clone, delete and save, and says why', () => {
+			setup({ canWrite: false, dirty: true });
+			const save = button('Save');
+			expect(save).toBeDisabled();
+			expect(save).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+			expect(button('Clone')).toBeDisabled();
+			expect(button('Delete…')).toBeDisabled();
+		});
+
+		it('holds a template copy’s reset too', () => {
+			setup({ canWrite: false, flow: aFlow({ shadowsBuiltin: true }) });
+			expect(button(/Reset/)).toBeDisabled();
 		});
 	});
 

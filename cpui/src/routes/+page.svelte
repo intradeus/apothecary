@@ -12,6 +12,7 @@
 	import type { Integration, Run } from '$lib/domain';
 	import { isInternal, sourceOf } from '$lib/tickets/tracker';
 	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
+	import NewWorkshopLink from '$lib/workshop/NewWorkshopLink.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -188,9 +189,7 @@
 
 					{#if fleet.projects.length === 0}
 						<EmptyState title={t('page.desk.noWorkshops')} text={t('page.desk.noWorkshopsText')}>
-							<a class="btn btn-primary" href={to.newWorkshop()}
-								>{I.add} {t('page.desk.newWorkshop')}</a
-							>
+							<NewWorkshopLink label={`${I.add} ${t('page.desk.newWorkshop')}`} />
 						</EmptyState>
 					{:else}
 						<div class="card-grid" style:--min="330px">

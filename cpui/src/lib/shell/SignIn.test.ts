@@ -9,7 +9,7 @@ import SignIn from './SignIn.svelte';
 
 vi.mock('$lib/api', () => ({ api: { auth: { login: vi.fn() } } }));
 
-const me = { user: { id: 'u', handle: 'lu', name: 'Lu', admin: false } } as Me;
+const me = { user: { id: 'u', handle: 'lu', name: 'Lu', role: 'member' } } as Me;
 const action = () => screen.getByRole('button', { name: 'Sign in' });
 
 async function fill(login: string, password: string) {
