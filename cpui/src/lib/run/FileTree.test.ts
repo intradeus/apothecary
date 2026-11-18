@@ -286,5 +286,22 @@ describe('FileTree', () => {
 				screen.queryByRole('button', { name: 'Back to the checkout' })
 			).not.toBeInTheDocument();
 		});
+
+		it('goes back to the checkout from a root it could not list', async () => {
+			pathTree.mockRejectedValue(new Error('permission denied'));
+			tree.mockResolvedValue([readme]);
+			const files = new OpenFiles('r1');
+			files.setRoot({ repo: 'api' });
+			files.setRoot({ abs: '/root' });
+			show(files);
+			expect(await screen.findByRole('alert')).toHaveTextContent('Files are unavailable.');
+			expect(screen.getByTitle('/root')).toHaveTextContent('/root');
+
+			await userEvent.click(screen.getByRole('button', { name: 'Back to the checkout' }));
+
+			expect(files.root).toEqual({ repo: 'api' });
+			expect(await screen.findByTitle('README.md')).toBeInTheDocument();
+			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+		});
 	});
 });

@@ -44,6 +44,9 @@
 	let busy = $state(false);
 	/** The latest listing asked for: an older answer is dropped. */
 	let asked = 0;
+	/** Bumped on every opening and closing: what an earlier one started
+	 *  (a slow read, a listing) lands nowhere. */
+	let shown = 0;
 
 	const valid = $derived(value.startsWith('/') || value.startsWith('~'));
 	const cut = $derived(value.lastIndexOf('/') + 1);
@@ -61,10 +64,14 @@
 	const explain = (e: unknown) =>
 		e instanceof ApiError && e.status === 501 ? t('run.files.goto.predates') : errorMessage(e);
 
-	// Each opening starts afresh, at home.
+	// Each opening starts afresh, at home; closing drops what is under way.
 	$effect(() => {
-		if (!open) return;
+		const now = open;
 		untrack(() => {
+			shown++;
+			asked++;
+			busy = false;
+			if (!now) return;
 			value = '~/';
 			hi = -1;
 			error = '';
@@ -99,13 +106,16 @@
 	 *  a file (400) that lists is a folder after all. */
 	async function go(entry = hi >= 0 ? matches[hi] : here?.entries.find((e) => e.name === rest)) {
 		if (busy || !valid) return;
+		const mine = shown;
 		const path = entry ? dir + entry.name : value;
 		let folder = entry ? entry.dir : value === '~' || value.endsWith('/');
 		if (!folder) {
 			busy = true;
 			error = '';
 			try {
-				onfile((await api.workspace.pathFile(runId, path)).path);
+				const read = await api.workspace.pathFile(runId, path);
+				if (mine !== shown) return;
+				onfile(read.path);
 			} catch (e) {
 				folder =
 					!entry &&
@@ -115,12 +125,13 @@
 						() => true,
 						() => false
 					));
+				if (mine !== shown) return;
 				if (!folder) {
 					error = explain(e);
 					return;
 				}
 			} finally {
-				busy = false;
+				if (mine === shown) busy = false;
 			}
 		}
 		if (folder) ondir(bare(path));

@@ -406,6 +406,42 @@ describe('GoToPath', () => {
 			expect(onfile).not.toHaveBeenCalled();
 			expect(ondir).not.toHaveBeenCalled();
 		});
+
+		it('opens nothing when a slow read lands after the modal closed', async () => {
+			const held = deferred<WorkspaceFile>();
+			pathFile.mockReturnValue(held.promise);
+			const view = mount();
+			await type('/mnt/slow/big.log');
+			await key('Enter');
+			await view.rerender({ open: false });
+			held.resolve(aWorkspaceFile({ path: '/mnt/slow/big.log' }));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(view.onfile).not.toHaveBeenCalled();
+			expect(view.ondir).not.toHaveBeenCalled();
+			expect(view.onclose).not.toHaveBeenCalled();
+		});
+
+		it('keeps a reopened modal free of a read started before it', async () => {
+			const held = deferred<WorkspaceFile>();
+			pathFile.mockReturnValueOnce(held.promise);
+			const view = mount();
+			await type('/mnt/slow/big.log');
+			await key('Enter');
+			await view.rerender({ open: false });
+			await view.rerender({ open: true });
+			await type('/etc/hosts');
+			expect(screen.getByRole('button', { name: 'Open' })).not.toBeDisabled();
+
+			held.reject(new ApiError('permission denied', 403, {}));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(screen.queryByText('permission denied')).not.toBeInTheDocument();
+			expect(screen.getByRole('button', { name: 'Open' })).not.toBeDisabled();
+
+			await key('Enter');
+			await vi.waitFor(() => expect(view.onfile).toHaveBeenCalledWith('/etc/hosts'));
+			expect(view.onfile).toHaveBeenCalledOnce();
+			expect(view.onclose).toHaveBeenCalledOnce();
+		});
 	});
 
 	it('starts afresh at home on each opening', async () => {

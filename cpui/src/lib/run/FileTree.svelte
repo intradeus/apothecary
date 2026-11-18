@@ -50,24 +50,22 @@
 	}
 </script>
 
-{#if error && !listed && error.path === files.rootPath}
-	<div class="tree">
+<div class="tree">
+	{#if isAbs}
+		<div class="root">
+			<span class="mono truncate" title={files.rootPath}>{files.rootPath}</span>
+			<button class="btn btn-ghost btn-sm" onclick={() => files.toCheckout()}
+				>{t('run.files.backToCheckout')}</button
+			>
+		</div>
+	{/if}
+	{#if error && !listed && error.path === files.rootPath}
 		<ErrorCard
 			cause={t('run.files.unavailable')}
 			detail={error.message}
 			onretry={() => files.retryFolder()}
 		/>
-	</div>
-{:else}
-	<div class="tree">
-		{#if isAbs}
-			<div class="root">
-				<span class="mono truncate" title={files.rootPath}>{files.rootPath}</span>
-				<button class="btn btn-ghost btn-sm" onclick={() => files.toCheckout()}
-					>{t('run.files.backToCheckout')}</button
-				>
-			</div>
-		{/if}
+	{:else}
 		<div class="nodes">
 			{#if !listed}<Loading />{/if}
 			{#each rows as r (r.entry.path)}
@@ -106,8 +104,8 @@
 				onclick={() => files.refresh()}>{I.retry}</button
 			>
 		</div>
-	</div>
-{/if}
+	{/if}
+</div>
 
 <style>
 	.tree {
