@@ -1085,12 +1085,12 @@ export default {
 	'flow.insp.nothingSelected': 'nothing selected',
 	'flow.insp.params': 'Parameters',
 	'flow.insp.paramsHelp':
-		"The flow's one settings block. Each entry is declared here with its default — a model or a harness may have none, and waits for the workshop; a workshop binds its own values without touching the document, and a run may override them.",
+		"The flow's one settings block. Each entry is declared here with its default — a model, a harness or a ticket status may have none, and waits for the workshop; a workshop binds its own values without touching the document, and a run may override them.",
 	'flow.insp.knownParams': 'What the engine reads',
 	'flow.insp.engineDefault': 'engine default · {value}',
 	'flow.insp.leftToWorkshop': 'no default · the workshop binds it, or a run sets it',
 	'flow.insp.paramUnboundHelp':
-		'No default: read as a model or a harness, it waits for the workshop’s binding or the run.',
+		'No default: read as a model, a harness or a ticket status, it waits for the workshop’s binding or the run.',
 	'flow.insp.customParams': "This flow's own",
 	'flow.insp.paramName': 'Name',
 	'flow.insp.paramDefault': 'Default',

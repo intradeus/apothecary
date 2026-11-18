@@ -392,15 +392,16 @@ tasks:
   # .github/workflows/ci.yml's jobs are <side>-<check>; each runs the task
   # <side>:<check>, so `task go:test` is exactly what the go-test job runs.
   # The side is when CI runs it: go (anything but cpui/, docs/, Markdown),
-  # ui (cpui/), repo (always), sandbox (the images and what drives them),
-  # engine (the engine image's build inputs).
+  # ui (cpui/), flows (go or ui: the check crosses both), repo (always),
+  # sandbox (the images and what drives them), engine (the engine image's
+  # build inputs).
   #
   # The umbrellas run several at once, each into its own log under
   # build/checks/, and print one line per check, then the tail of any failure:
   #   task lint     go:lint ui:lint repo:lint
-  #   task test     go:test ui:test sandbox:test
-  #   task check    lint, go:test, ui:test: the pre-push gate (docker for
-  #                 Postgres; no images, no cluster)
+  #   task test     go:test ui:test flows:check sandbox:test
+  #   task check    lint, go:test, ui:test, flows:check: the pre-push gate
+  #                 (docker for Postgres; no images, no cluster)
   #   task ci       everything CI runs (but the macOS and Windows builds),
   #                 locally: test, lint and the engine image (docker, k3d,
   #                 ~25 GB of disk); unlike CI, it never skips a side
@@ -414,22 +415,22 @@ tasks:
         vars: {CHECKS: 'go:lint ui:lint repo:lint'}
 
   test:
-    desc: 'Every test suite, in parallel: go:test, ui:test, sandbox:test (needs docker, k3d; logs in build/checks/)'
+    desc: 'Every test suite, in parallel: go:test, ui:test, flows:check, sandbox:test (needs docker, k3d; logs in build/checks/)'
     cmds:
       - task: checks
-        vars: {CHECKS: 'go:test ui:test sandbox'}
+        vars: {CHECKS: 'go:test ui:test flows:check sandbox'}
 
   check:
-    desc: 'The pre-push gate, in parallel: every lint, go:test, ui:test (needs docker for Postgres; logs in build/checks/)'
+    desc: 'The pre-push gate, in parallel: every lint, go:test, ui:test, flows:check (needs docker for Postgres; logs in build/checks/)'
     cmds:
       - task: checks
-        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint'}
+        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint flows:check'}
 
   ci:
     desc: 'Everything CI runs, locally and in parallel: check, the sandbox images and suites, the engine image; never skips a side as CI does (needs docker, k3d, ~15 GB of disk; logs in build/checks/)'
     cmds:
       - task: checks
-        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint sandbox engine:image'}
+        vars: {CHECKS: 'go:lint repo:lint go:test ui:test,ui:lint flows:check sandbox engine:image'}
 
   # CHECKS: space-separated, each run in parallel with the others; a,b runs
   # a then b (ui:test and ui:lint both write cpui/.svelte-kit, so they never
@@ -635,6 +636,26 @@ tasks:
       - npm run check
       - npm run lint
       - task: build:ui
+
+  # --- flows ------------------------------------------------------------------
+  # The flows the binary ships (internal/flow/builtin/flows) and the ones kept
+  # as references (examples/flows, internal/flow/testdata), through the flow
+  # editor and back. The editor reads the engine's document of a flow and
+  # writes YAML of its own from it, which the engine must parse as the same
+  # flow: Go at both ends, the CPUI in the middle, so the tests of neither
+  # side see the whole trip (cmd/flowcheck says what is compared). What each
+  # step wrote stays in build/flows/, to read after a failure.
+  flows:check:
+    deps: [pin:task, pin:node]
+    desc: 'Every built-in flow and reference flow parses, binds with no warning, and comes back from the flow editor the same flow (Go and Node; files in build/flows/) — CI: flows-check'
+    preconditions:
+      - sh: test -d cpui/node_modules/yaml
+        msg: "the CPUI's packages are not installed: cd cpui && npm ci"
+    cmds:
+      - rm -rf build/flows
+      - go run ./cmd/flowcheck docs build/flows examples/flows/*.yaml internal/flow/testdata/*.yaml
+      - node cpui/scripts/flows-through-editor.mjs build/flows
+      - go run ./cmd/flowcheck verify build/flows
 
   # --- repo -------------------------------------------------------------------
   # Models are bound per project (Workshop → Flows → Configure), never named

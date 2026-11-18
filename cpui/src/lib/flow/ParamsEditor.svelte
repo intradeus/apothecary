@@ -10,7 +10,7 @@
 	import Select from '$lib/ui/Select.svelte';
 	import {
 		KNOWN_PARAMS,
-		readAsModelOrHarness,
+		readWhereItMayWait,
 		type DocParam,
 		type FlowDoc
 	} from '$lib/domain/flowdoc';
@@ -227,7 +227,7 @@
 				/>
 			{/if}
 			{#if p.list}<div class="help">{t('flow.insp.paramListHelp')}</div>{/if}
-			{#if type === 'string' && !p.list && defaultText(p) === '' && readAsModelOrHarness(doc, name)}
+			{#if type === 'string' && !p.list && defaultText(p) === '' && readWhereItMayWait(doc, name)}
 				<div class="help">{t('flow.insp.paramUnboundHelp')}</div>
 			{/if}
 		</div>

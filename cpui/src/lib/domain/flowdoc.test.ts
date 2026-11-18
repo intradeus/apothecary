@@ -64,7 +64,7 @@ import {
 	portValue,
 	pruneCrossPhase,
 	pruneEdgeTarget,
-	readAsModelOrHarness,
+	readWhereItMayWait,
 	removeMCPServer,
 	removePhase,
 	removeSchema,
@@ -956,11 +956,16 @@ describe('questions about the document', () => {
 			{ stages: [], sequences: [{ id: 'q', stages: [aStage({ id: 'a', model: '$p' })] }] },
 			true
 		],
+		[
+			'an action’s setting',
+			{ stages: [aStage({ id: 'a', type: 'action', with: { to: '$p' } })] },
+			true
+		],
 		['a timeout', { stages: [aStage({ id: 'a', timeout: '$p' })] }, false],
 		['another parameter', { stages: [aStage({ id: 'a', model: '$px' })] }, false]
-	])('knows %s reads a parameter as a model or a harness', (_, over, reads) => {
+	])('knows whether %s reads a parameter where it may wait', (_, over, reads) => {
 		const doc: FlowDoc = { name: 'f', parameters: {}, stages: [], ...over };
-		expect(readAsModelOrHarness(doc, 'p')).toBe(reads);
+		expect(readWhereItMayWait(doc, 'p')).toBe(reads);
 	});
 
 	it('finds an agent by name', () => {
@@ -1207,6 +1212,21 @@ describe('docToYaml', () => {
 				aStage({ id: 'a', model: '$m' })
 			]);
 			expect(out.m).toEqual({ type: 'string' });
+		});
+
+		// The server's document says `default: ""` for a parameter with none:
+		// written back as an empty default, the engine refuses the flow it
+		// served (`with "to": a value is required`).
+		it('writes a blank default on a ticket status parameter as none: the workshop binds it', () => {
+			const out = params({ done_status: { type: 'string', default: '', description: 'd' } }, [
+				aStage({
+					id: 'a',
+					type: 'action',
+					action: 'ticket_transition',
+					with: { to: '$done_status' }
+				})
+			]);
+			expect(out.done_status).toEqual({ type: 'string', description: 'd' });
 		});
 
 		it('keeps a default that reads another parameter', () => {

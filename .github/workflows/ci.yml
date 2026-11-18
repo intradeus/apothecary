@@ -14,6 +14,9 @@
 #                     the API contract
 #   ui-test           the CPUI's tests, under vite.config.ts's floors
 #   ui-lint           svelte-check, the CPUI linters, the production build
+#   flows-check       the built-in flows through the flow editor and back:
+#                     the engine's document, the CPUI's writing of it, the
+#                     engine's parse of that
 #   repo-lint         model ids anywhere, the workflows (actionlint), the
 #                     chart and its README
 #   sandbox-images    the four images the sandbox suites run, built once into
@@ -22,13 +25,13 @@
 #   engine-image      the engine's image
 #
 # A job runs only when a change touches its side: go (everything but cpui/,
-# docs/ and Markdown), ui (cpui/), sandbox (the images and what drives them),
-# engine (the engine image's build inputs); repo always. A pull request is compared
-# with its base. A push to main is compared with the last main commit this
-# workflow passed, so a commit that is released has had everything changed
-# since a green commit tested; with no such commit, and in a run by hand,
-# everything runs. A skipped job counts as passed. This workflow and the
-# Taskfile are on every side.
+# docs/ and Markdown), ui (cpui/), flows (go or ui), sandbox (the images and
+# what drives them), engine (the engine image's build inputs); repo always. A
+# pull request is compared with its base. A push to main is compared with the
+# last main commit this workflow passed, so a commit that is released has had
+# everything changed since a green commit tested; with no such commit, and in
+# a run by hand, everything runs. A skipped job counts as passed. This
+# workflow and the Taskfile are on every side.
 #
 # A merged pull request is not tested again. Its green run tested the pull
 # request merged into its base; the `passed` job records that tree (git's
@@ -384,6 +387,51 @@ jobs:
           key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
       - run: task ui:lint
 
+  # The flows the binary ships, through the flow editor and back
+  # (cmd/flowcheck): the engine writes its document of each, the CPUI writes
+  # that out as the editor does, the engine parses it as the same flow. Go at
+  # both ends and Node in the middle, so a change on either side runs it.
+  flows-check:
+    needs: changes
+    if: needs.changes.outputs.go == 'true' || needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc # the one Node, everywhere
+          package-manager-cache: false # node_modules is cached below
+      - uses: arduino/setup-task@c0bc642852239c2689f73f4ea6459c29405f3c52 # v3.0.0
+        with:
+          version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+      # node_modules itself, keyed on the lockfile: npm ci only when it changed.
+      - id: modules
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cpui/node_modules
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
+      - if: steps.modules.outputs.cache-hit != 'true'
+        run: npm ci
+        working-directory: cpui
+      - if: steps.modules.outputs.cache-hit != 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: cpui/node_modules
+          key: cpui-node-modules-${{ runner.os }}-node${{ hashFiles('.nvmrc') }}-${{ hashFiles('cpui/package-lock.json') }}
+      - run: task flows:check
+      # What the editor wrote, to read when the check fails.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: flows-check
+          path: build/flows/
+          retention-days: 14
+
   # The four images the harness and k8s suites run (the engine's own is the
   # engine-image job's), built once: sandbox-test waits for this job and
   # loads them from the cache it fills, instead of each suite building them.
@@ -514,7 +562,7 @@ jobs:
   # request merged into its base), for main to find once it is merged as is
   # (header).
   passed:
-    needs: [changes, go-test, ui-test, go-lint, repo-lint, ui-lint, sandbox-images, sandbox-test, engine-image]
+    needs: [changes, go-test, ui-test, go-lint, repo-lint, ui-lint, flows-check, sandbox-images, sandbox-test, engine-image]
     if: github.event_name == 'pull_request' && !cancelled()
     runs-on: ubuntu-26.04
     timeout-minutes: 5

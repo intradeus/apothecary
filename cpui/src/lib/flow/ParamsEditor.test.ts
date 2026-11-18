@@ -254,7 +254,17 @@ describe('ParamsEditor', () => {
 				parameters: { fast: { type: 'string', default: '' } },
 				stages: [aStage('a', 'agent', { model: '$fast' })]
 			});
-			expect(screen.getByText(/^No default: read as a model or a harness/)).toBeInTheDocument();
+			expect(screen.getByText(/^No default: read as a model, a harness/)).toBeInTheDocument();
+		});
+
+		it('explains an empty one an action reads as its ticket status', () => {
+			setup({
+				parameters: { done_status: { type: 'string', default: '' } },
+				stages: [
+					aStage('a', 'action', { action: 'ticket_transition', with: { to: '$done_status' } })
+				]
+			});
+			expect(screen.getByText(/or a ticket status, it waits for the workshop/)).toBeInTheDocument();
 		});
 	});
 

@@ -41,13 +41,14 @@ devcontainer).
 
 | When | Command |
 |---|---|
-| before pushing, always | `task fmt`, then `task check`: every lint, the Go tests (Postgres included) and the CPUI tests, in parallel, under their coverage floors; logs in `build/checks/` |
-| one check | the task named after its CI job: `task go:test`, `go:lint`, `ui:test`, `ui:lint`, `repo:lint` (go-test is `task go:test`, and so on) |
+| before pushing, always | `task fmt`, then `task check`: every lint, the Go tests (Postgres included) and the CPUI tests, under their coverage floors, and the flows check, in parallel; logs in `build/checks/` |
+| one check | the task named after its CI job: `task go:test`, `go:lint`, `ui:test`, `ui:lint`, `flows:check`, `repo:lint` (go-test is `task go:test`, and so on) |
 | one package | `task go:test:run -- ./internal/x -run TestY -v` (nothing running; Postgres-backed tests skip) |
 | Postgres-backed tests | `task go:test:pg` (throwaway `postgres:16` containers on the run's docker daemon — the project's *Docker in workspaces* setting) |
 | one CPUI test | `task ui:test:run -- src/lib/x` |
 | coverage | `task go:test` holds the 95% floor (`cmd/coverreport`), `task ui:test` the floors in `cpui/vite.config.ts` (lines 99%); they only ever rise |
 | you changed `internal/httpapi/routes.go` | `task api` (regenerates `api/openapi.yaml` + `cpui/src/lib/api/generated`; a stale spec fails a unit test) |
+| you changed a built-in flow, the flow grammar, or how the editor reads or writes a flow (`cpui/src/lib/domain/flowdoc.ts`) | `task flows:check`: every built-in and reference flow parses, binds with no warning, and comes back from the flow editor the same flow (Go and Node; what the editor wrote is in `build/flows/`) |
 | bring the app up | `task dev:up` (below) |
 
 ## The heavy suites

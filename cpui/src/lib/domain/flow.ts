@@ -81,7 +81,7 @@ export interface ParamDecl {
 	/** One of the six the engine reads itself. */
 	known: boolean;
 	/** No default: unbound until the workshop binds it or a run sets it
-	 *  (only a model or a harness may wait). */
+	 *  (only a model, a harness or a ticket status may wait). */
 	required?: boolean;
 	/** The parameter this one's default reads (`default: $model`). */
 	defaultRef?: string;

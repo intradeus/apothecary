@@ -342,8 +342,8 @@ export interface DocParam {
 	type?: 'bool' | 'int' | 'float' | 'string' | 'duration';
 	list?: boolean;
 	/** Absent: no default — the parameter waits for the workshop's binding
-	 *  or the run (only one read as a model or a harness may). A string
-	 *  `$name` reads another parameter's value. */
+	 *  or the run (only one read as a model, a harness or a ticket status
+	 *  may). A string `$name` reads another parameter's value. */
 	default?: boolean | number | string | (boolean | number | string)[];
 	description?: string;
 	enum?: string[];
@@ -693,12 +693,15 @@ export function paramDefault(doc: FlowDoc, name: string): string | undefined {
 	return Array.isArray(p.default) ? p.default.join(', ') : String(p.default);
 }
 
-/** Whether the document reads the parameter as a model or a harness — at an
- *  agent stage (its model, its harness, or one of its harness_options), or
- *  the Ask pane: the sites that may wait for a value. A harness option reading
- *  a parameter is a model option, or an enum one whose parameter cannot
- *  hold an empty default anyway. */
-export function readAsModelOrHarness(doc: FlowDoc, name: string): boolean {
+/** Whether the document reads the parameter where it may wait for a value:
+ *  as a model or a harness — at an agent stage (its model, its harness, or
+ *  one of its harness_options) or the Ask pane — or as an action's setting
+ *  (ticket_transition's `to`, a tracker status the workshop names). A harness
+ *  option reading a parameter is a model option, or an enum one whose
+ *  parameter cannot hold an empty default anyway; an action's setting is one
+ *  that may wait, or one (an enum, a text that must say something) the engine
+ *  refuses an empty default at. So an empty default read here means none. */
+export function readWhereItMayWait(doc: FlowDoc, name: string): boolean {
 	const ref = '$' + name;
 	if (doc.ask?.harness === ref) return true;
 	const stages = [...doc.stages, ...(doc.sequences ?? []).flatMap((q) => q.stages)];
@@ -706,7 +709,8 @@ export function readAsModelOrHarness(doc: FlowDoc, name: string): boolean {
 		(s) =>
 			s.model === ref ||
 			s.harness === ref ||
-			Object.values(s.harness_options ?? {}).some((block) => Object.values(block).includes(ref))
+			Object.values(s.harness_options ?? {}).some((block) => Object.values(block).includes(ref)) ||
+			Object.values(s.with ?? {}).includes(ref)
 	);
 }
 
@@ -843,10 +847,12 @@ export function docToYaml(doc: FlowDoc): string {
 	for (const name of [...known, ...own]) {
 		const p = doc.parameters[name];
 		const isKnown = (KNOWN_PARAMS as readonly string[]).includes(name);
-		// No default — none given, or an empty one on a parameter read as a
-		// model or a harness: the workshop binds it. Written without one.
-		const unbound =
-			p.default === undefined || (p.default === '' && readAsModelOrHarness(doc, name));
+		// No default — none given, or an empty one on a parameter read where
+		// it may wait (a model, a harness, a ticket status): the workshop binds
+		// it. Written without one. The server's document says `default: ""`
+		// for a parameter that has none, so this is also what keeps a flow it
+		// served as it was.
+		const unbound = p.default === undefined || (p.default === '' && readWhereItMayWait(doc, name));
 		// The engine's own take a bare default; the flow's declare what they hold.
 		if (isKnown && !p.description && !p.enum?.length) {
 			if (!unbound) params[name] = p.default;
