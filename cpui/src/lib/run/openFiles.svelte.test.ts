@@ -727,6 +727,33 @@ describe('live refresh', () => {
 		expect(f.active?.stale).toBe(false);
 	});
 
+	it('keeps one read of the active tab in flight however long it takes, then still sees a later change', async () => {
+		const f = await watching();
+		const changed = (mtime: string) =>
+			statsAre((loc) => aStat({ mtime: locKey(loc) === ':b.go' ? mtime : '1', dir: false }));
+		changed('2');
+		const slow = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(slow.promise);
+
+		await tickNow();
+		for (let i = 0; i < 4; i++) await tickNow();
+		expect(stat.mock.calls.length).toBeGreaterThanOrEqual(5);
+		expect(file).toHaveBeenCalledOnce();
+
+		slow.resolve(aFile({ content: 'edited', mtime: '2' }));
+		await settled();
+		expect(f.active?.file?.content).toBe('edited');
+		await tickNow();
+		expect(file).toHaveBeenCalledOnce();
+
+		changed('3');
+		file.mockResolvedValueOnce(aFile({ content: 'again', mtime: '3' }));
+		await tickNow();
+		await settled();
+		expect(file).toHaveBeenCalledTimes(2);
+		expect(f.active?.file?.content).toBe('again');
+	});
+
 	it('marks a changed hidden tab stale without reading it, and reads it when shown', async () => {
 		const f = await watching();
 		statsAre((loc) => aStat({ size: locKey(loc) === ':a.go' ? 9 : 2048 }));

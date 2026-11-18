@@ -469,6 +469,8 @@ export class OpenFiles {
 			tab.deleted = true;
 			return;
 		}
+		// A read still out: its answer carries its own baseline, and the next stat compares against that.
+		if (tab.loading) return;
 		const back = tab.deleted;
 		tab.deleted = false;
 		// Never read: it is read when activated.
