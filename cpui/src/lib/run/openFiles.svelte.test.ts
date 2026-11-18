@@ -193,6 +193,34 @@ describe('tabs', () => {
 		expect(f.active?.line).toEqual({ from: 9, to: 9 });
 	});
 
+	it('keeps a linked line pending through a failed read of a tab already marked deleted', async () => {
+		const f = new OpenFiles(RUN);
+		f.open(at('a.go'));
+		await settled();
+		file.mockRejectedValueOnce(refused(404));
+		f.reload(':a.go');
+		await settled();
+		expect(f.active?.deleted).toBe(true);
+
+		const failed = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(failed.promise);
+		f.open(at('a.go'), { from: 9, to: 9 });
+		failed.reject(refused(500));
+		await settled();
+		expect(f.active?.error).not.toBe('');
+		expect(f.active?.line).toBeNull();
+
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+		f.reload(':a.go');
+		expect(f.active?.line).toBeNull();
+		fresh.resolve(aFile({ path: 'a.go', content: 'new\n'.repeat(9), mtime: '2' }));
+		await settled();
+		expect(f.active).toMatchObject({ deleted: false, error: '' });
+		expect(f.active?.file?.mtime).toBe('2');
+		expect(f.active?.line).toEqual({ from: 9, to: 9 });
+	});
+
 	it('keeps the line until it was revealed', async () => {
 		const f = new OpenFiles(RUN);
 		f.open(at('a.go'), { from: 7, to: 7 });

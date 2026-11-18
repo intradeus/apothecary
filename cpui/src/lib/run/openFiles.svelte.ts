@@ -302,13 +302,15 @@ export class OpenFiles {
 			const t = current();
 			if (!t) return;
 			t.loading = t.stale = false;
-			if (e instanceof ApiError && e.status === 404) {
-				if (t.file) t.deleted = true;
-				else t.gone = true;
-			} else t.error = errorMessage(e);
 			// A deleted file shows the lines on its last content; any other failure
-			// keeps them pending until a read succeeds, never on the content retained.
-			if (t.deleted) this.#land(t);
+			// keeps them pending until a read succeeds, never on the content retained
+			// (a tab already marked deleted included).
+			if (e instanceof ApiError && e.status === 404) {
+				if (t.file) {
+					t.deleted = true;
+					this.#land(t);
+				} else t.gone = true;
+			} else t.error = errorMessage(e);
 		}
 	}
 
