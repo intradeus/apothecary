@@ -2,6 +2,14 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v4.0.1 (2026-11-18)
+
+### Fixes
+
+- **builtin-flow**: update built-in reviewer to be less picky
+- **builtin-flow**: update built-in reviewer to be less picky
+- **flow**: update flow validation and add flow checks in CI
+
 ## v4.0.0 (2026-11-17)
 
 ### BREAKING CHANGE
