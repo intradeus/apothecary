@@ -265,6 +265,31 @@ describe('Files', () => {
 		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
 	});
 
+	it('reveals a linked line in the file as edited since its tab was read, while the pane is hidden', async () => {
+		const { rs } = show(aStore(), { visible: false });
+		await screen.findByTitle('README.md');
+		await openReadme();
+		await userEvent.click(entry('main.go'));
+		await screen.findByRole('textbox', { name: 'Contents of main.go' });
+		// The agent adds two lines on top of README.md; no poll runs while hidden.
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+
+		rs.files.open({ repo: '', path: 'README.md' }, { from: 4, to: 4 });
+		await tick();
+
+		// The copy on show is not the one the line is of: nothing is picked in it.
+		const before = editor('README.md');
+		expect(before.state.doc.toString()).toBe(TEXT);
+		expect(before.state.selection.main.empty).toBe(true);
+		fresh.resolve(aWorkspaceFile({ path: 'README.md', content: `new\nnewer\n${TEXT}` }));
+
+		await waitFor(() => expect(rs.files.active?.line).toBeNull());
+		const v = editor('README.md');
+		const sel = v.state.selection.main;
+		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
+	});
+
 	it('names an absolute file by its path', async () => {
 		pathFile.mockResolvedValue(aWorkspaceFile({ path: '/etc/hosts', content: '127.0.0.1' }));
 		const { rs } = await mount();

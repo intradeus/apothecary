@@ -47,7 +47,9 @@ What now:
   directory, by default), then the run's other checkouts, then an absolute
   (or `~`) path; an absolute path inside a checkout's real directory maps
   back to that checkout. Links are checked on click, so a false match in
-  prose costs a toast, not a dead link.
+  prose costs a toast, not a dead link. A linked line is of the file as it
+  is now, so a link to an open tab reads it again (polls stop while the
+  pane is hidden) and the line is revealed only in that read's content.
 
 Tests that hold it: `workspace/shim/workspace_test.go` and `sidecar_test.go`
 (FIFO and `/dev/null` refused without blocking, mode-000 refused, `~`
@@ -55,4 +57,5 @@ expansion, the stat batch, the resolve order),
 `internal/workspace/sidecar/client_test.go` (`NoRoute`),
 `internal/httpapi/workspace_views_test.go` (relays, the stat cap, 501),
 `cpui/src/lib/ui/codeLanguages.test.ts`, `cpui/src/lib/run/openFiles.svelte.test.ts`
-(the poller) and `cpui/src/lib/core/paths.test.ts`.
+(the poller, the linked line), `cpui/src/lib/run/Files.test.ts` (a linked
+line in a tab edited while hidden) and `cpui/src/lib/core/paths.test.ts`.

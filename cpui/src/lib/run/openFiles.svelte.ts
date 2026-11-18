@@ -34,7 +34,8 @@ interface Baseline {
 export interface FileTab {
 	key: string;
 	loc: FileLoc;
-	/** Lines to reveal and select once the content is in; cleared once shown. */
+	/** Lines to reveal and select in `file`; cleared once shown. A line-targeted
+	 *  open sets it only with the content read after it. */
 	line: LineRange | null;
 	/** The last content read; kept while a newer read is on its way. */
 	file: WorkspaceFile | null;
@@ -161,6 +162,9 @@ export class OpenFiles {
 	#lastRepo = '';
 	/** Reads per tab in the order they were asked: only the latest lands. */
 	#reads = new Map<string, number>();
+	/** Lines a line-targeted open asked for, by tab: they become the tab's
+	 *  `line` with the content of the read that open issued (or a later one). */
+	#wanted = new Map<string, LineRange>();
 	/** Folder listings on their way, by root key and path. */
 	#listing = new Set<string>();
 	/** Folder baselines by the folder's loc key. */
@@ -193,13 +197,18 @@ export class OpenFiles {
 
 	// --- tabs ---------------------------------------------------------------------
 
-	/** Focus the tab of `loc` (opening it at the end when there is none), with
-	 *  `line` revealed once its content is in. */
+	/** Focus the tab of `loc` (opening it at the end when there is none). With
+	 *  `line`, the file is read afresh and the lines revealed in that content:
+	 *  the copy on show may predate an edit that moved them. */
 	open(loc: FileLoc, line?: LineRange) {
 		const key = locKey(loc);
 		if (!this.#tab(key)) this.tabs.push(newTab(loc));
-		if (line) this.#tab(key)!.line = { from: line.from, to: line.to };
-		this.activate(key);
+		if (!line) return this.activate(key);
+		this.#tab(key)!.line = null;
+		this.#wanted.set(key, { from: line.from, to: line.to });
+		this.activeKey = key;
+		this.#save();
+		void this.#read(key);
 	}
 
 	/** Show a tab, reading it when it has nothing yet or changed while hidden. */
@@ -217,6 +226,7 @@ export class OpenFiles {
 		if (i < 0) return;
 		this.tabs.splice(i, 1);
 		this.#reads.delete(key);
+		this.#wanted.delete(key);
 		if (this.activeKey === key) {
 			this.activeKey = null;
 			const next = this.tabs[i] ?? this.tabs[i - 1];
@@ -285,6 +295,7 @@ export class OpenFiles {
 			t.file = file;
 			t.stat = { size: file.size, mtime: file.mtime };
 			t.loading = t.stale = t.deleted = false;
+			this.#land(t);
 		} catch (e) {
 			const t = current();
 			if (!t) return;
@@ -293,7 +304,17 @@ export class OpenFiles {
 				if (t.file) t.deleted = true;
 				else t.gone = true;
 			} else t.error = errorMessage(e);
+			// Shown on the last content when the file was deleted; else once a retry reads it.
+			this.#land(t);
 		}
+	}
+
+	/** The lines a line-targeted open asked for, with the content just read. */
+	#land(tab: FileTab) {
+		const want = this.#wanted.get(tab.key);
+		if (!want) return;
+		this.#wanted.delete(tab.key);
+		tab.line = want;
 	}
 
 	// --- the tree -----------------------------------------------------------------

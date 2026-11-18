@@ -107,15 +107,76 @@ describe('tabs', () => {
 
 		expect(keys(f)).toEqual([':a.go', ':b.go']);
 		expect(f.activeKey).toBe(':a.go');
-		expect(f.active?.line).toEqual({ from: 3, to: 5 });
 		await settled();
-		expect(file).toHaveBeenCalledTimes(2);
+		expect(f.active?.line).toEqual({ from: 3, to: 5 });
+		expect(file).toHaveBeenCalledTimes(3);
 	});
 
-	it('keeps the line until it was revealed', () => {
+	it('reveals a linked line only in the content read after the link, not the copy on show', async () => {
+		const f = new OpenFiles(RUN);
+		f.open(at('a.go'));
+		f.open(at('b.go'));
+		await settled();
+		// a.go, hidden and not stale (no poll saw it), gains lines before the target.
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+
+		f.open(at('a.go'), { from: 9, to: 9 });
+
+		expect(f.active?.loading).toBe(true);
+		expect(f.active?.line).toBeNull();
+		fresh.resolve(aFile({ path: 'a.go', content: 'new\n'.repeat(9), mtime: '2' }));
+		await settled();
+		expect(f.active?.file?.mtime).toBe('2');
+		expect(f.active?.line).toEqual({ from: 9, to: 9 });
+	});
+
+	it('keeps a linked line through a newer read, and drops it with its tab', async () => {
+		const f = new OpenFiles(RUN);
+		const first = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(first.promise);
+		f.open(at('a.go'), { from: 2, to: 2 });
+
+		await f.refresh();
+		first.resolve(aFile({ path: 'a.go' }));
+		await settled();
+		expect(f.active?.line).toEqual({ from: 2, to: 2 });
+
+		const out = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(out.promise);
+		f.open(at('a.go'), { from: 4, to: 4 });
+		f.close(':a.go');
+		f.open(at('a.go'));
+		out.resolve(aFile({ path: 'a.go' }));
+		await settled();
+		expect(f.active?.line).toBeNull();
+	});
+
+	it('reveals a linked line on a deleted file’s last content, and on a failed one once read', async () => {
+		const f = new OpenFiles(RUN);
+		f.open(at('a.go'));
+		await settled();
+		file.mockRejectedValueOnce(refused(404));
+		f.open(at('a.go'), { from: 2, to: 2 });
+		await settled();
+		expect(f.active?.deleted).toBe(true);
+		expect(f.active?.line).toEqual({ from: 2, to: 2 });
+
+		file.mockRejectedValueOnce(refused(500));
+		f.open(at('b.go'), { from: 3, to: 3 });
+		await settled();
+		expect(f.active?.error).not.toBe('');
+		f.reload(':b.go');
+		await settled();
+		expect(f.active?.file?.path).toBe('b.go');
+		expect(f.active?.line).toEqual({ from: 3, to: 3 });
+	});
+
+	it('keeps the line until it was revealed', async () => {
 		const f = new OpenFiles(RUN);
 		f.open(at('a.go'), { from: 7, to: 7 });
 		f.open(at('a.go'));
+		await settled();
 		expect(f.active?.line).toEqual({ from: 7, to: 7 });
 
 		f.revealed(':a.go');
