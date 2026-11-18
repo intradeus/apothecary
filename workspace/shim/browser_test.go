@@ -225,13 +225,14 @@ func TestDialBrowserRetriesARotatedToken(t *testing.T) {
 	seen := make(chan *http.Request, 2)
 	url := browserEngine(t,
 		func(r *http.Request, c net.Conn) {
+			// Recorded before the reply: the reply is what makes the retry.
+			seen <- r
 			writeTestEnv(t, "http://"+r.Host, "fresh")
 			_, _ = io.WriteString(c, "HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\n\r\n")
-			seen <- r
 		},
 		func(r *http.Request, c net.Conn) {
-			_, _ = io.WriteString(c, browserUpgraded+"{\"early\":true}\n")
 			seen <- r
+			_, _ = io.WriteString(c, browserUpgraded+"{\"early\":true}\n")
 		})
 	writeTestEnv(t, url, "stale")
 	conn, br, err := dialBrowser()

@@ -94,7 +94,3 @@ export function lineCounts(lines: CodeLine[]): { add: number; del: number } {
 	}
 	return { add, del };
 }
-
-/** A plain file → numbered lines. */
-export const fileLines = (content: string): CodeLine[] =>
-	content.split('\n').map((text, i) => ({ n: i + 1, text }));

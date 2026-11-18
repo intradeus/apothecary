@@ -10,19 +10,30 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 )
 
 const maxFileBytes = 1 << 20
 
-var errOutsideRepo = errors.New("path is outside the repository")
+var (
+	errOutsideRepo = errors.New("path is outside the repository")
+	// errNotRegular: a FIFO, device or socket. Opening one can block, and
+	// reading one is never what a viewer wants.
+	errNotRegular = errors.New("not a regular file")
+	errIsDir      = errors.New("is a directory")
+	// errUnreadable: the file opened but its read failed (some /proc files).
+	errUnreadable = errors.New("the file cannot be read")
+	errRelative   = errors.New("path must be absolute or start with ~")
+)
 
 // repoPath resolves a repo-relative path to an absolute one inside root,
 // following symlinks: a checkout is repo-controlled content, and a link to
@@ -53,13 +64,18 @@ func repoPath(root, rel string) (string, error) {
 
 type treeEntry struct {
 	Name string `json:"name"`
-	Path string `json:"path"` // repo-relative, slash-separated
+	Path string `json:"path"` // repo-relative, slash-separated; absolute in an absolute listing
 	Dir  bool   `json:"dir"`
 	Size int64  `json:"size,omitempty"`
 	// Ignored: matched by .gitignore (shown dimmed — node_modules is real,
 	// but rarely what a reviewer is after).
 	Ignored bool `json:"ignored,omitempty"`
+	// Mtime: nanoseconds since the epoch, as a decimal string (it exceeds
+	// JavaScript's safe integers); "" when unknown.
+	Mtime string `json:"mtime,omitempty"`
 }
+
+func mtimeOf(st os.FileInfo) string { return strconv.FormatInt(st.ModTime().UnixNano(), 10) }
 
 // listDir lists one directory level. .git is hidden; everything else shows,
 // ignored entries flagged rather than dropped.
@@ -85,11 +101,13 @@ func listDir(root, rel string) ([]treeEntry, error) {
 		}
 		te := treeEntry{Name: e.Name(), Path: p, Dir: e.IsDir()}
 		if info, err := e.Info(); err == nil {
+			te.Mtime = mtimeOf(info)
 			if info.Mode()&os.ModeSymlink != 0 {
 				// Show where a link leads only if it stays in the repo.
 				if target, err := repoPath(root, p); err == nil {
 					if st, err := os.Stat(target); err == nil {
 						te.Dir = st.IsDir()
+						te.Mtime = mtimeOf(st)
 					}
 				}
 			} else if !e.IsDir() {
@@ -103,12 +121,69 @@ func listDir(root, rel string) ([]treeEntry, error) {
 	for i := range out {
 		out[i].Ignored = ignored[out[i].Path]
 	}
+	sortEntries(out)
+	return out, nil
+}
+
+// sortEntries puts directories first, then names case-insensitively.
+func sortEntries(out []treeEntry) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Dir != out[j].Dir {
 			return out[i].Dir
 		}
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
 	})
+}
+
+// absPath resolves what a person typed for an absolute read: ~ and ~/…
+// expand to the sidecar's $HOME (the remote user's); anything else must be
+// absolute. No containment: the remote user owns everything it can read
+// (the terminal reaches the same), so nothing is hidden here.
+func absPath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
+		}
+		p = home + p[1:]
+	}
+	if !filepath.IsAbs(p) {
+		return "", errRelative
+	}
+	return filepath.Clean(p), nil
+}
+
+// listAbsDir lists one directory level by absolute path: entries carry
+// absolute paths, and nothing is hidden or checked against .gitignore.
+func listAbsDir(p string) ([]treeEntry, error) {
+	dir, err := absPath(p)
+	if err != nil {
+		return nil, err
+	}
+	ents, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]treeEntry, 0, len(ents))
+	for _, e := range ents {
+		full := filepath.Join(dir, e.Name())
+		te := treeEntry{Name: e.Name(), Path: full, Dir: e.IsDir()}
+		if info, err := e.Info(); err == nil {
+			if info.Mode()&os.ModeSymlink != 0 {
+				if st, err := os.Stat(full); err == nil {
+					info = st
+				}
+			}
+			te.Dir = info.IsDir()
+			te.Mtime = mtimeOf(info)
+			if info.Mode().IsRegular() {
+				te.Size = info.Size()
+			}
+		}
+		out = append(out, te)
+	}
+	sortEntries(out)
 	return out, nil
 }
 
@@ -132,6 +207,7 @@ type fileResp struct {
 	Binary    bool   `json:"binary"`
 	Truncated bool   `json:"truncated"`
 	Content   string `json:"content"`
+	Mtime     string `json:"mtime"`
 }
 
 func readRepoFile(root, rel string) (fileResp, error) {
@@ -139,22 +215,48 @@ func readRepoFile(root, rel string) (fileResp, error) {
 	if err != nil {
 		return fileResp{}, err
 	}
+	return readFile(full, rel)
+}
+
+// readAbsFile reads by absolute (or ~) path; the answer names the expanded,
+// cleaned path.
+func readAbsFile(p string) (fileResp, error) {
+	full, err := absPath(p)
+	if err != nil {
+		return fileResp{}, err
+	}
+	return readFile(full, full)
+}
+
+// readFile reads the file at full, answering as name. The stat comes first,
+// so the mtime is never newer than the content. Anything but a regular file
+// is refused before it is opened (a FIFO's open blocks). The read is capped
+// rather than trusting the size: /proc files report 0.
+func readFile(full, name string) (fileResp, error) {
 	st, err := os.Stat(full)
 	if err != nil {
 		return fileResp{}, err
 	}
 	if st.IsDir() {
-		return fileResp{}, fmt.Errorf("%s is a directory", rel)
+		return fileResp{}, fmt.Errorf("%s %w", name, errIsDir)
+	}
+	if !st.Mode().IsRegular() {
+		return fileResp{}, fmt.Errorf("%s: %w", name, errNotRegular)
 	}
 	f, err := os.Open(full)
 	if err != nil {
 		return fileResp{}, err
 	}
 	defer f.Close()
-	buf := make([]byte, min(st.Size(), maxFileBytes))
-	n, _ := f.Read(buf)
-	buf = buf[:n]
-	r := fileResp{Path: rel, Size: st.Size(), Truncated: st.Size() > maxFileBytes}
+	buf, err := io.ReadAll(io.LimitReader(f, maxFileBytes+1))
+	if err != nil {
+		return fileResp{}, fmt.Errorf("%w: %s: %v", errUnreadable, name, err)
+	}
+	r := fileResp{Path: name, Size: max(st.Size(), int64(len(buf))), Mtime: mtimeOf(st)}
+	if len(buf) > maxFileBytes {
+		buf = buf[:maxFileBytes]
+	}
+	r.Truncated = r.Size > maxFileBytes
 	if bytes.IndexByte(buf, 0) >= 0 || !utf8.Valid(trimPartialRune(buf)) {
 		r.Binary = true
 		return r, nil
@@ -173,6 +275,122 @@ func trimPartialRune(b []byte) []byte {
 		b = b[:len(b)-1]
 	}
 	return b
+}
+
+// --- stat and resolve ------------------------------------------------------------
+
+// checkout is one of the workspace's repositories: the primary (name "") or
+// an additional one under ~/repos.
+type checkout struct{ name, dir string }
+
+// maxStatItems caps one stat batch (the engine caps it too).
+const maxStatItems = 256
+
+// statItem names a path in a checkout (Repo, Path) or an absolute one (Abs).
+type statItem struct {
+	Repo string `json:"repo,omitempty"`
+	Path string `json:"path,omitempty"`
+	Abs  string `json:"abs,omitempty"`
+}
+
+type statResult struct {
+	Exists bool   `json:"exists"`
+	Dir    bool   `json:"dir"`
+	Size   int64  `json:"size"`
+	Mtime  string `json:"mtime"`
+	Error  string `json:"error,omitempty"`
+}
+
+// statPath stats a resolved path (err: why it did not resolve). Gone is an
+// answer, not an error; anything else (unreadable, outside the checkout) is
+// reported for this item alone.
+func statPath(full string, err error) statResult {
+	if err == nil {
+		var st os.FileInfo
+		if st, err = os.Stat(full); err == nil {
+			r := statResult{Exists: true, Dir: st.IsDir(), Mtime: mtimeOf(st)}
+			if st.Mode().IsRegular() {
+				r.Size = st.Size()
+			}
+			return r
+		}
+	}
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+		return statResult{}
+	}
+	return statResult{Error: err.Error()}
+}
+
+// resolved is where a path someone mentioned lives: a checkout's file (Repo,
+// Path; the primary is repo "") or an absolute one (Abs).
+type resolved struct {
+	Repo string `json:"repo,omitempty"`
+	Path string `json:"path,omitempty"`
+	Abs  string `json:"abs,omitempty"`
+	Dir  bool   `json:"dir"`
+}
+
+// resolvePath finds p. A relative path is tried in the checkout named repo
+// first ("" or "repo": the primary, the agent's working directory), then in
+// the others in order. An absolute (or ~) path that exists is mapped back to
+// (checkout, relative path) when its real location is inside a checkout's
+// real directory. Nothing found is os.ErrNotExist.
+func resolvePath(cos []checkout, repo, p string) (resolved, error) {
+	if repo == "repo" {
+		repo = ""
+	}
+	order := make([]checkout, 0, len(cos))
+	for _, c := range cos {
+		if c.name == repo {
+			order = append(order, c)
+		}
+	}
+	for _, c := range cos {
+		if c.name != repo {
+			order = append(order, c)
+		}
+	}
+	p = strings.TrimSpace(p)
+	if p == "~" || strings.HasPrefix(p, "~/") || filepath.IsAbs(p) {
+		full, err := absPath(p)
+		if err != nil {
+			return resolved{}, err
+		}
+		real, err := filepath.EvalSymlinks(full)
+		if err != nil {
+			return resolved{}, err
+		}
+		st, err := os.Stat(real)
+		if err != nil {
+			return resolved{}, err
+		}
+		for _, c := range order {
+			root, err := filepath.EvalSymlinks(c.dir)
+			if err != nil {
+				continue
+			}
+			if real == root || strings.HasPrefix(real, root+string(filepath.Separator)) {
+				rel := strings.TrimPrefix(strings.TrimPrefix(real, root), string(filepath.Separator))
+				return resolved{Repo: c.name, Path: filepath.ToSlash(rel), Dir: st.IsDir()}, nil
+			}
+		}
+		return resolved{Abs: full, Dir: st.IsDir()}, nil
+	}
+	// repoPath refuses a path climbing out of the checkout (../x).
+	rel := filepath.ToSlash(filepath.Clean(filepath.FromSlash(p)))
+	if rel == "." {
+		rel = ""
+	}
+	for _, c := range order {
+		full, err := repoPath(c.dir, p)
+		if err != nil {
+			continue
+		}
+		if st, err := os.Stat(full); err == nil {
+			return resolved{Repo: c.name, Path: rel, Dir: st.IsDir()}, nil
+		}
+	}
+	return resolved{}, fmt.Errorf("%s: %w", p, os.ErrNotExist)
 }
 
 // --- git ------------------------------------------------------------------------

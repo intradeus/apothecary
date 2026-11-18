@@ -97,7 +97,7 @@ export const aFileDiff = (over: Partial<FileDiff> = {}): FileDiff => ({
 
 export const anEntry = (over: Partial<WorkspaceEntry> = {}): WorkspaceEntry => {
 	const path = over.path ?? 'README.md';
-	return { name: path.split('/').pop()!, path, dir: false, ignored: false, ...over };
+	return { name: path.split('/').pop()!, path, dir: false, ignored: false, mtime: '', ...over };
 };
 
 export const aWorkspaceFile = (over: Partial<WorkspaceFile> = {}): WorkspaceFile => ({
@@ -106,6 +106,7 @@ export const aWorkspaceFile = (over: Partial<WorkspaceFile> = {}): WorkspaceFile
 	binary: false,
 	truncated: false,
 	content: 'first line\nsecond line',
+	mtime: '',
 	...over
 });
 

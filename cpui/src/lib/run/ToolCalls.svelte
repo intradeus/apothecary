@@ -1,16 +1,28 @@
 <script lang="ts">
 	// A run of consecutive tool calls (DESIGN 4.10 "Tool group"). Up to three
 	// list every call; longer ones fold behind a summary with kind chips. A
-	// live group (the agent is working through it now) never folds.
+	// live group (the agent is working through it now) never folds. With
+	// onpath, where a call acted and the paths in its input and output open
+	// the file.
 	import type { AgentToolCall } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import { editLines, lineCounts } from '$lib/run/diff';
+	import { parseRef, pathParts, type PathRef } from '$lib/core/paths';
 	import { TOOL_HUE, hueOf } from '$lib/design/hues';
 	import { I } from '$lib/design/icons';
 	import CodeView from '$lib/ui/CodeView.svelte';
 	import StatusMark, { type MarkTone } from '$lib/ui/StatusMark.svelte';
 
-	let { calls, live = false }: { calls: AgentToolCall[]; live?: boolean } = $props();
+	let {
+		calls,
+		live = false,
+		onpath
+	}: {
+		calls: AgentToolCall[];
+		live?: boolean;
+		/** Open a file a call names. */
+		onpath?: (ref: PathRef) => void;
+	} = $props();
 
 	let open = $state(false);
 	let expanded = $state<Record<string, boolean>>({});
@@ -85,7 +97,32 @@
 		}
 		return { add, del };
 	}
+	const toggle = (id: string) => (expanded = { ...expanded, [id]: !expanded[id] });
 </script>
+
+{#snippet mark(c: AgentToolCall)}
+	<StatusMark tone={tone(c.status)} size="sm" title={statusWord(c.status)} />
+	<span class="k hue-{hueOf(TOOL_HUE, c.kind)}">{word(c.kind)}</span>
+{/snippet}
+
+{#snippet tail(c: AgentToolCall, n: { add: number; del: number } | null)}
+	{#if n}<span class="mono nums"
+			><span class="hue-success">+{n.add}</span>
+			<span class="hue-danger">−{n.del}</span></span
+		>{/if}
+	{#if c.status === 'in_progress'}<span class="ip hue-running"
+			>{t('run.tool.status.inProgress')}</span
+		>{/if}
+{/snippet}
+
+<!-- Tool text, its paths buttons when they can open (no whitespace may
+     creep into the pre). -->
+{#snippet log(text: string)}
+	<pre class="log">{#if onpath}{#each pathParts(text) as { text: part, ref }, i (i)}{#if ref}<button
+						class="linklike path-link"
+						onclick={() => onpath?.(ref)}>{part}</button
+					>{:else}{part}{/if}{/each}{:else}{text}{/if}</pre>
+{/snippet}
 
 {#if folded}
 	<div class="card-in">
@@ -108,29 +145,40 @@
 		{/if}
 		{#each calls as c (c.toolCallId)}
 			{@const n = c.diffs.length ? counts(c) : null}
+			{@const loc = onpath && c.locations[0]}
 			<div class="call">
-				<button
-					class="rowbtn head"
-					aria-expanded={!!expanded[c.toolCallId]}
-					onclick={() => (expanded = { ...expanded, [c.toolCallId]: !expanded[c.toolCallId] })}
-				>
-					<StatusMark tone={tone(c.status)} size="sm" title={statusWord(c.status)} />
-					<span class="k hue-{hueOf(TOOL_HUE, c.kind)}">{word(c.kind)}</span>
-					<span class="path mono truncate" title={c.title}>{title(c)}</span>
-					{#if n}<span class="mono nums"
-							><span class="hue-success">+{n.add}</span>
-							<span class="hue-danger">−{n.del}</span></span
-						>{/if}
-					{#if c.status === 'in_progress'}<span class="ip hue-running"
-							>{t('run.tool.status.inProgress')}</span
-						>{/if}
-				</button>
+				{#if loc}
+					<!-- The location opens the file; the rest of the row toggles. -->
+					<div class="head linked">
+						<button
+							class="toggle stretch"
+							aria-expanded={!!expanded[c.toolCallId]}
+							onclick={() => toggle(c.toolCallId)}>{@render mark(c)}</button
+						>
+						<button
+							class="linklike over-stretch path mono truncate"
+							title={c.title}
+							onclick={() => onpath?.(parseRef(loc))}>{loc}</button
+						>
+						{@render tail(c, n)}
+					</div>
+				{:else}
+					<button
+						class="rowbtn head"
+						aria-expanded={!!expanded[c.toolCallId]}
+						onclick={() => toggle(c.toolCallId)}
+					>
+						{@render mark(c)}
+						<span class="path mono truncate" title={c.title}>{title(c)}</span>
+						{@render tail(c, n)}
+					</button>
+				{/if}
 				{#if expanded[c.toolCallId]}
 					<div class="detail">
 						{#if c.title && c.title !== title(c)}<div class="caption">{c.title}</div>{/if}
 						{#if c.input}
 							<div class="caption">{t('run.tool.input')}</div>
-							<pre class="log">{c.input}</pre>
+							{@render log(c.input)}
 						{/if}
 						{#each c.diffs as d, i (i)}
 							{@const dl = editLines(d)}
@@ -145,7 +193,7 @@
 						{/each}
 						{#if c.output}
 							<div class="caption">{t('run.tool.output')}</div>
-							<pre class="log">{c.output}</pre>
+							{@render log(c.output)}
 						{/if}
 						{#if !c.input && !c.output && !c.diffs.length}
 							<div class="caption">{t('run.tool.noDetails')}</div>
@@ -194,6 +242,34 @@
 	.head.muted {
 		color: var(--text-muted);
 	}
+	/* The toggle's hit area stretches over the row; the location sits above it. */
+	.linked {
+		position: relative;
+		display: flex;
+		align-items: center;
+	}
+	.linked:hover {
+		background: var(--fill-1);
+	}
+	.toggle {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		flex: none;
+		padding: 0;
+		border: 0;
+		background: none;
+		box-shadow: none;
+		font-weight: inherit;
+		font-size: inherit;
+	}
+	.linked .path {
+		display: block;
+		min-width: 0;
+		text-align: left;
+		font-weight: inherit;
+		font-size: inherit;
+	}
 	.k {
 		font-weight: 600;
 		flex: none;
@@ -221,5 +297,11 @@
 	pre.log {
 		max-height: 260px;
 		font-size: var(--fs-meta);
+	}
+	.path-link {
+		display: inline;
+		font: inherit;
+		white-space: inherit;
+		text-align: inherit;
 	}
 </style>

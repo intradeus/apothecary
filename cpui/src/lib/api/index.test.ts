@@ -102,6 +102,7 @@ describe('a list the engine answers null', () => {
 		['merge request status', () => runs.mrStatus('r'), 'getRunMrStatus'],
 		['repos', () => workspace.repos('r'), 'getWorkspaceRepos'],
 		['tree', () => workspace.tree('r'), 'getWorkspaceTree'],
+		['path tree', () => workspace.pathTree('r', '/'), 'getWorkspacePathTree'],
 		['denials', () => egress.denials('r'), 'listEgressDenials'],
 		['run audit', () => egress.runAudit('r'), 'getRunEgressAudit'],
 		['project audit', () => egress.projectAudit('p'), 'getProjectEgressAudit'],
@@ -1313,6 +1314,66 @@ describe('what each call sends', () => {
 			expect(repos.map((c) => c.primary)).toEqual([true, false]);
 		});
 
+		it('lists a directory by absolute path, entries absolute', async () => {
+			const fn = reply(
+				'getWorkspacePathTree',
+				answer([{ name: 'hosts', path: '/etc/hosts', dir: false, mtime: '7' }])
+			);
+			await expect(workspace.pathTree('r', '~/x')).resolves.toEqual([
+				{
+					name: 'hosts',
+					path: '/etc/hosts',
+					dir: false,
+					size: undefined,
+					ignored: false,
+					mtime: '7'
+				}
+			]);
+			expect(fn).toHaveBeenLastCalledWith({ path: { id: 'r' }, query: { path: '~/x' } });
+		});
+
+		it('stats checkout and absolute locations in one batch, in order', async () => {
+			const fn = reply(
+				'statWorkspacePaths',
+				answer({
+					items: [
+						{ exists: true, dir: false, size: 3, mtime: '9' },
+						{ exists: false, dir: false, size: 0, mtime: '', error: 'permission denied' }
+					]
+				})
+			);
+			await expect(
+				workspace.stat('r', [{ repo: '', path: 'a.go' }, { abs: '/root/x' }])
+			).resolves.toEqual([
+				{ exists: true, dir: false, size: 3, mtime: '9' },
+				{ exists: false, dir: false, size: 0, mtime: '', error: 'permission denied' }
+			]);
+			expect(fn).toHaveBeenLastCalledWith({
+				path: { id: 'r' },
+				body: { items: [{ repo: '', path: 'a.go' }, { abs: '/root/x' }] }
+			});
+			reply('statWorkspacePaths', answer({ items: null }));
+			await expect(workspace.stat('r', [])).resolves.toEqual([]);
+		});
+
+		it('resolves a mentioned path to a checkout or an absolute location', async () => {
+			reply('resolveWorkspacePath', answer({ path: 'a.go', dir: false }));
+			await expect(workspace.resolve('r', './a.go')).resolves.toEqual({
+				loc: { repo: '', path: 'a.go' },
+				dir: false
+			});
+			reply('resolveWorkspacePath', answer({ abs: '/etc/hosts', dir: false }));
+			await expect(workspace.resolve('r', '/etc/hosts')).resolves.toEqual({
+				loc: { abs: '/etc/hosts' },
+				dir: false
+			});
+		});
+
+		it('says when the workspace predates the path routes', async () => {
+			reply('resolveWorkspacePath', refused({ error: 'restart or rebuild the workspace' }, 501));
+			await expect(workspace.resolve('r', 'a.go')).rejects.toMatchObject({ status: 501 });
+		});
+
 		it('builds the terminal’s socket from the page’s origin', () => {
 			expect(workspace.terminalUrl('r', 80, 24)).toBe(
 				'ws://localhost:3000/api/runs/r/terminal?cols=80&rows=24&repo='
@@ -1900,6 +1961,27 @@ describe('the rest of the surface', () => {
 			'getWorkspaceDiff',
 			answer({}),
 			{ path: { id: 'r' }, query: { path: 'a.ts', repo: '' } }
+		],
+		[
+			'workspace.pathFile',
+			() => workspace.pathFile('r', '~/.bashrc'),
+			'getWorkspacePathFile',
+			answer({}),
+			{ path: { id: 'r' }, query: { path: '~/.bashrc' } }
+		],
+		[
+			'workspace.resolve',
+			() => workspace.resolve('r', 'internal/run/run.go'),
+			'resolveWorkspacePath',
+			answer({}),
+			{ path: { id: 'r' }, query: { path: 'internal/run/run.go', repo: '' } }
+		],
+		[
+			'workspace.resolve in a checkout',
+			() => workspace.resolve('r', 'a.go', 'lib'),
+			'resolveWorkspacePath',
+			answer({}),
+			{ path: { id: 'r' }, query: { path: 'a.go', repo: 'lib' } }
 		],
 		['pings.get', () => pings.get('p'), 'getPing', answer({}), { path: { pid: 'p' } }],
 		['pings.payload', () => pings.payload('p'), 'getPingFiles', answer({}), { path: { pid: 'p' } }],

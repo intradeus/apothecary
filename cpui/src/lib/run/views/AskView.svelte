@@ -15,20 +15,26 @@
 	import Loading from '$lib/ui/Loading.svelte';
 	import Markdown from '$lib/ui/Markdown.svelte';
 	import Select from '$lib/ui/Select.svelte';
-	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import AskComposer from '../AskComposer.svelte';
 	import FileChips, { type StoredFile } from '$lib/artifacts/FileChips.svelte';
 	import type { RunStore } from '../store.svelte';
+	import { pathClick, type PathRef } from '$lib/core/paths';
 
-	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
+	let {
+		rs,
+		visible,
+		onpath
+	}: {
+		rs: RunStore;
+		visible: boolean;
+		/** Open a file an answer names: its paths become buttons. */
+		onpath?: (ref: PathRef) => void;
+	} = $props();
+	const clickPath = $derived(pathClick(onpath));
 
 	let pane = $state<AskState | null>(null);
 	let loadError = $state('');
 	let error = $state('');
-	let draft = $state('');
-	let sending = $state(false);
-	/** The question's files are going up: the box and its files are locked,
-	 *  so what is asked is what was on screen at Enter. */
-	let uploading = $state(false);
 	let pickingModel = $state(false);
 	let creating = $state(false);
 	/** The session on screen ('': none yet — the run has no session). */
@@ -37,9 +43,6 @@
 	 *  agent is doing. */
 	let lives = $state<Record<string, { text: string; tool: string }>>({});
 	let scroller = $state<HTMLDivElement | null>(null);
-	let ta = $state<HTMLTextAreaElement | null>(null);
-	let files = $state<File[]>([]);
-	let picker = $state<ReturnType<typeof AttachFiles> | null>(null);
 
 	const sessions = $derived(pane?.sessions ?? []);
 	const current = $derived(sessions.find((s) => s.id === selected) ?? null);
@@ -143,51 +146,15 @@
 		return stop;
 	});
 
-	async function send() {
-		const text = draft.trim();
-		if ((!text && !files.length) || sending || busy || !enabled) return;
-		sending = true;
-		error = '';
-		// The session it is asked in is the one on screen now, whichever is
-		// picked while the files go up. None yet: the first question opens
-		// one, and the pane follows it there.
-		const into = selected;
-		// Files go up first; if they cannot, nothing is asked and the draft
-		// and its files stay put.
-		let ids: string[] = [];
-		const sent = files;
-		if (sent.length) {
-			uploading = true;
-			try {
-				ids = (await api.files.upload(sent)).map((a) => a.id);
-			} catch (e) {
-				error = errorMessage(e);
-				sending = false;
-				return;
-			} finally {
-				uploading = false;
-			}
-		}
-		draft = '';
-		try {
-			const q = await api.ask.send(rs.runId, text, into || undefined, ids);
-			// Only the files it carried: any picked while it was on its way
-			// are the next question's.
-			files = files.filter((f) => !sent.includes(f));
-			// The question's files join the run's record.
-			if (ids.length) void rs.refreshFiles();
-			if (!session(q.sessionId)) upsert({ id: q.sessionId, busy: true, createdAt: q.at });
-			if (!into) selected = q.sessionId;
-			const s = session(q.sessionId);
-			if (s) s.busy = true;
-			lives[q.sessionId] = { text: '', tool: '' };
-			toBottom();
-		} catch (e) {
-			error = errorMessage(e);
-			if (!draft.trim()) draft = text;
-		} finally {
-			sending = false;
-		}
+	/** The engine took a question: the pane follows it to its session (a
+	 *  first question opened one) and waits on the answer. */
+	function asked(q: AskMessage, into: string) {
+		if (!session(q.sessionId)) upsert({ id: q.sessionId, busy: true, createdAt: q.at });
+		if (!into) selected = q.sessionId;
+		const s = session(q.sessionId);
+		if (s) s.busy = true;
+		lives[q.sessionId] = { text: '', tool: '' };
+		toBottom();
 	}
 
 	async function newSession() {
@@ -225,22 +192,6 @@
 		input.value = current?.model ?? '';
 	}
 
-	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-			e.preventDefault();
-			void send();
-		}
-	}
-
-	// A pasted screenshot (or copied files) joins the question; pasted text
-	// is left to the browser.
-	function onPaste(e: ClipboardEvent) {
-		const pasted = e.clipboardData?.files;
-		if (!pasted?.length) return;
-		e.preventDefault();
-		picker?.add(pasted);
-	}
-
 	/** A question's files, as far as the run's list knows them yet. */
 	const filesOf = (ids: string[]): StoredFile[] =>
 		ids.flatMap((id) => {
@@ -249,13 +200,6 @@
 				? [{ id, filename: a.filename, mime: a.mime, size: a.size, kind: 'attachment' }]
 				: [];
 		});
-
-	$effect(() => {
-		void draft;
-		if (!ta) return;
-		ta.style.height = 'auto';
-		ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
-	});
 
 	const asker = (m: AskMessage) => (m.userId ? t('runview.ask.you') : t('runview.ask.someone'));
 </script>
@@ -312,7 +256,8 @@
 				{/if}
 			{/if}
 		</div>
-		<div class="scroll" bind:this={scroller}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (delegated: the path buttons inside take the keys) -->
+		<div class="scroll" bind:this={scroller} onclick={clickPath}>
 			{#if !enabled}
 				<EmptyState compact inline title={t('runview.ask.off')} text={pane.reason ?? ''} />
 			{:else if messages.length === 0 && !live}
@@ -330,7 +275,7 @@
 						{#if m.error}
 							<div class="error">{t('runview.ask.failed', { error: m.error })}</div>
 						{/if}
-						{#if m.text}<Markdown src={m.text} />{/if}
+						{#if m.text}<Markdown src={m.text} paths={!!onpath} />{/if}
 						<div class="am muted">
 							{[m.model, m.costUsd ? fmtCost(m.costUsd) : '', fmtClock(m.at)]
 								.filter(Boolean)
@@ -341,7 +286,7 @@
 			{/each}
 			{#if live}
 				<div class="a">
-					{#if live.text}<Markdown src={live.text} />{/if}
+					{#if live.text}<Markdown src={live.text} paths={!!onpath} />{/if}
 					<div class="am">
 						<span class="live-dot sm pulse hue-running"></span>
 						{live.tool ? t('runview.ask.doing', { tool: live.tool }) : t('runview.ask.thinking')}
@@ -350,43 +295,7 @@
 			{/if}
 		</div>
 		{#if enabled}
-			<div class="comp inset">
-				<textarea
-					class="bare"
-					bind:this={ta}
-					bind:value={draft}
-					rows="1"
-					placeholder={t('runview.ask.placeholder')}
-					onkeydown={onKey}
-					onpaste={onPaste}
-					disabled={busy}
-					readonly={uploading}
-					aria-label={t('runview.ask.title')}></textarea>
-				<div class="foot">
-					<span class="files">
-						<AttachFiles
-							bind:this={picker}
-							bind:files
-							compact
-							disabled={uploading}
-							label={t('runview.ask.attach')}
-						/>
-					</span>
-					<span class="keys"
-						><span><span class="k">↵</span> {t('runview.ask.keySend')}</span>
-						<span><span class="k">⇧↵</span> {t('runview.ask.keyNewline')}</span></span
-					>
-					{#if error}<span class="error" title={error}>{error}</span>{/if}
-					<span class="spacer"></span>
-					<button
-						class="btn-primary btn-md"
-						onclick={send}
-						aria-busy={sending}
-						disabled={sending || busy || (!draft.trim() && !files.length)}
-						>{t(busy ? 'runview.ask.answering' : 'runview.ask.send')}</button
-					>
-				</div>
-			</div>
+			<AskComposer {rs} session={selected} {busy} onasked={asked} bind:error />
 		{/if}
 	{/if}
 </div>
@@ -468,52 +377,5 @@
 	.error {
 		color: var(--danger-text);
 		font-size: var(--fs-meta);
-	}
-	.comp {
-		flex: none;
-		margin: 0 calc(12px + var(--fab-clear, 0px)) 12px 12px;
-		border-radius: var(--r-btn);
-		background: var(--code-bg);
-		display: flex;
-		flex-direction: column;
-	}
-	textarea {
-		min-height: 44px;
-		padding: 11px 14px;
-		overflow-wrap: anywhere;
-		resize: none;
-	}
-	.comp:focus-within {
-		border-color: var(--brand-line);
-	}
-	.foot {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-		padding: 6px 6px 6px 14px;
-		font-size: var(--fs-meta);
-		color: var(--text-faint);
-		min-width: 0;
-	}
-	.files {
-		flex: 0 1 auto;
-		min-width: 0;
-	}
-	.keys {
-		display: flex;
-		gap: 14px;
-		white-space: nowrap;
-		overflow: hidden;
-		min-width: 0;
-	}
-	.k {
-		font-family: var(--font-code);
-		color: var(--text-muted);
-	}
-	.foot .error {
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
 	}
 </style>

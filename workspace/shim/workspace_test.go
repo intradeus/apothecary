@@ -5,8 +5,11 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -121,11 +124,266 @@ func TestReadRepoFile(t *testing.T) {
 	if err != nil || r.Binary || !r.Truncated || r.Size != int64(len(cut)) || len(r.Content) != maxFileBytes {
 		t.Errorf("big = binary %v truncated %v size %d, %d bytes of content, %v", r.Binary, r.Truncated, r.Size, len(r.Content), err)
 	}
+	st, _ := os.Stat(filepath.Join(root, "big"))
+	if r.Mtime == "" || r.Mtime != strconv.FormatInt(st.ModTime().UnixNano(), 10) {
+		t.Errorf("big mtime = %q, want %d", r.Mtime, st.ModTime().UnixNano())
+	}
 	if _, err := readRepoFile(root, "."); err == nil || !strings.Contains(err.Error(), "is a directory") {
 		t.Errorf("a directory: %v", err)
 	}
 	if _, err := readRepoFile(root, "missing"); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("missing: %v", err)
+	}
+}
+
+// Anything but a regular file is refused before it is opened: a FIFO's open
+// would block for a writer that never comes.
+func TestReadFileRefusesWhatIsNotAFile(t *testing.T) {
+	root := t.TempDir()
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 2)
+	go func() {
+		_, err := readRepoFile(root, "fifo")
+		done <- err
+		_, err = readAbsFile("/dev/null")
+		done <- err
+	}()
+	for _, what := range []string{"fifo", "/dev/null"} {
+		select {
+		case err := <-done:
+			if !errors.Is(err, errNotRegular) {
+				t.Errorf("%s: %v", what, err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("%s: the read blocked", what)
+		}
+	}
+}
+
+func TestReadFileUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "secret"), []byte("x"), 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readRepoFile(root, "secret"); !errors.Is(err, os.ErrPermission) {
+		t.Errorf("mode 000: %v", err)
+	}
+}
+
+// /proc files report size 0; the capped read reads them for real.
+func TestReadFileProc(t *testing.T) {
+	r, err := readAbsFile("/proc/self/status")
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("no /proc")
+	}
+	if err != nil || r.Binary || !strings.Contains(r.Content, "Name:") || r.Size != int64(len(r.Content)) || r.Truncated {
+		t.Errorf("/proc/self/status = %+v, %v", r, err)
+	}
+	// A file that opens but fails its read (/proc/self/mem at offset 0) is
+	// refused as unreadable, never a sidecar failure.
+	if _, err := readAbsFile("/proc/self/mem"); !errors.Is(err, errUnreadable) {
+		t.Errorf("/proc/self/mem: %v", err)
+	}
+}
+
+func TestAbsPath(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	for in, want := range map[string]string{
+		"~":           home,
+		"~/":          home,
+		" ~/.bashrc":  filepath.Join(home, ".bashrc"),
+		"/a/./b/../c": "/a/c",
+		"/":           "/",
+	} {
+		if got, err := absPath(in); err != nil || got != want {
+			t.Errorf("%q = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"", "a/b", "./x", "~user/x", "~x"} {
+		if _, err := absPath(in); !errors.Is(err, errRelative) {
+			t.Errorf("%q: %v", in, err)
+		}
+	}
+	t.Setenv("HOME", "")
+	if _, err := absPath("~/x"); err == nil || errors.Is(err, errRelative) {
+		t.Errorf("no home: %v", err)
+	}
+	if _, err := readAbsFile("x"); !errors.Is(err, errRelative) {
+		t.Errorf("relative read: %v", err)
+	}
+	if _, err := listAbsDir("x"); !errors.Is(err, errRelative) {
+		t.Errorf("relative listing: %v", err)
+	}
+}
+
+func TestReadAbsFile(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, ".bashrc"), []byte("alias x=y\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := readAbsFile("~/.bashrc"); err != nil || r.Path != filepath.Join(home, ".bashrc") || r.Content != "alias x=y\n" || r.Mtime == "" {
+		t.Errorf("~/.bashrc = %+v, %v", r, err)
+	}
+	if _, err := os.Stat("/etc/hosts"); err == nil {
+		if r, err := readAbsFile("/etc/../etc/hosts"); err != nil || r.Path != "/etc/hosts" || r.Binary {
+			t.Errorf("/etc/hosts = %+v, %v", r, err)
+		}
+	}
+	if _, err := readAbsFile("~"); !errors.Is(err, errIsDir) {
+		t.Errorf("a directory: %v", err)
+	}
+	if _, err := readAbsFile("~/missing"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing: %v", err)
+	}
+}
+
+// An absolute listing: absolute paths, links shown as what they lead to
+// (wherever that is), nothing hidden.
+func TestListAbsDir(t *testing.T) {
+	dir := t.TempDir()
+	for _, d := range []string{"sub", ".git"} {
+		if err := os.Mkdir(filepath.Join(dir, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("abc"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	other := t.TempDir()
+	if err := os.Symlink(other, filepath.Join(dir, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(dir, "a.txt"), filepath.Join(dir, "filelink")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/nowhere", filepath.Join(dir, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	ents, err := listAbsDir(dir + "/sub/..")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range ents {
+		if e.Path != filepath.Join(dir, e.Name) || e.Mtime == "" {
+			t.Errorf("entry = %+v", e)
+		}
+		s := e.Name
+		if e.Dir {
+			s += "/"
+		}
+		got = append(got, s+":"+strconv.FormatInt(e.Size, 10))
+	}
+	if strings.Join(got, " ") != ".git/:0 link/:0 sub/:0 a.txt:3 dangling:0 filelink:3" {
+		t.Errorf("entries = %v", got)
+	}
+	if _, err := listAbsDir(filepath.Join(dir, "missing")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("missing: %v", err)
+	}
+}
+
+func TestStatPath(t *testing.T) {
+	dir := t.TempDir()
+	f := filepath.Join(dir, "f")
+	if err := os.WriteFile(f, []byte("abcd"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if r := statPath(f, nil); !r.Exists || r.Dir || r.Size != 4 || r.Mtime == "" || r.Error != "" {
+		t.Errorf("file = %+v", r)
+	}
+	if r := statPath(dir, nil); !r.Exists || !r.Dir || r.Size != 0 {
+		t.Errorf("dir = %+v", r)
+	}
+	for _, p := range []string{filepath.Join(dir, "gone"), filepath.Join(f, "under-a-file")} {
+		if r := statPath(p, nil); r != (statResult{}) {
+			t.Errorf("%s = %+v", p, r)
+		}
+	}
+	if r := statPath("", os.ErrNotExist); r != (statResult{}) {
+		t.Errorf("did not resolve, missing = %+v", r)
+	}
+	if r := statPath("", errOutsideRepo); r.Exists || r.Error != errOutsideRepo.Error() {
+		t.Errorf("outside = %+v", r)
+	}
+}
+
+// resolveFixture: a primary and two extra checkouts, where "shared.go" is in
+// the primary and in "b", and "only-b.go" in "b" alone.
+func resolveFixture(t *testing.T) []checkout {
+	t.Helper()
+	primary, a, b := t.TempDir(), t.TempDir(), t.TempDir()
+	write := func(dir, name string) {
+		t.Helper()
+		full := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(primary, "shared.go")
+	write(primary, "internal/run/run.go")
+	write(b, "shared.go")
+	write(b, "only-b.go")
+	return []checkout{{dir: primary}, {name: "a", dir: a}, {name: "b", dir: b}}
+}
+
+func TestResolvePath(t *testing.T) {
+	cos := resolveFixture(t)
+	primary, b := cos[0].dir, cos[2].dir
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if err := os.WriteFile(filepath.Join(home, "notes.txt"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A link into a checkout from elsewhere resolves to the checkout's file.
+	if err := os.Symlink(b, filepath.Join(home, "b-link")); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		repo, path string
+		want       resolved
+	}{
+		// The named checkout wins over another with the same path.
+		{"", "shared.go", resolved{Path: "shared.go"}},
+		{"repo", "./shared.go", resolved{Path: "shared.go"}},
+		{"b", "shared.go", resolved{Repo: "b", Path: "shared.go"}},
+		// Otherwise the other checkouts, in order.
+		{"", "only-b.go", resolved{Repo: "b", Path: "only-b.go"}},
+		{"a", "internal/run/run.go", resolved{Path: "internal/run/run.go"}},
+		{"", "internal/run", resolved{Path: "internal/run", Dir: true}},
+		{"", ".", resolved{Dir: true}},
+		// An absolute path inside a checkout maps back to it.
+		{"", filepath.Join(b, "only-b.go"), resolved{Repo: "b", Path: "only-b.go"}},
+		{"", filepath.Join(primary, "internal/../shared.go"), resolved{Path: "shared.go"}},
+		{"", "~/b-link/shared.go", resolved{Repo: "b", Path: "shared.go"}},
+		{"b", b, resolved{Repo: "b", Dir: true}},
+		// Anything else that exists is absolute.
+		{"", "~/notes.txt", resolved{Abs: filepath.Join(home, "notes.txt")}},
+		{"", "~", resolved{Abs: home, Dir: true}},
+	}
+	for _, c := range cases {
+		if got, err := resolvePath(cos, c.repo, c.path); err != nil || got != c.want {
+			t.Errorf("(%q, %q) = %+v, %v; want %+v", c.repo, c.path, got, err, c.want)
+		}
+	}
+	for _, p := range []string{"missing.go", "../shared.go", "/no/such/file", "~/missing"} {
+		if got, err := resolvePath(cos, "", p); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("%q = %+v, %v; want not found", p, got, err)
+		}
+	}
+	// A checkout whose directory is gone is skipped.
+	gone := append([]checkout{{name: "gone", dir: filepath.Join(home, "gone")}}, cos...)
+	if got, err := resolvePath(gone, "gone", filepath.Join(b, "only-b.go")); err != nil || got.Repo != "b" {
+		t.Errorf("past a gone checkout = %+v, %v", got, err)
 	}
 }
 

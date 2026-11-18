@@ -92,5 +92,17 @@ export default {
 	'ui.config.secret': 'write-only secret',
 	'ui.fileLayout.label': 'Show files as',
 	'ui.fileLayout.list': 'List',
-	'ui.fileLayout.tree': 'Tree'
+	'ui.fileLayout.tree': 'Tree',
+	'ui.codeViewer.find': 'Find',
+	'ui.codeViewer.next': 'next',
+	'ui.codeViewer.previous': 'previous',
+	'ui.codeViewer.all': 'all',
+	'ui.codeViewer.matchCase': 'match case',
+	'ui.codeViewer.regexp': 'regexp',
+	'ui.codeViewer.byWord': 'by word',
+	'ui.codeViewer.close': 'close',
+	'ui.codeViewer.goToLine': 'Go to line',
+	'ui.codeViewer.go': 'go',
+	'ui.codeViewer.currentMatch': 'current match',
+	'ui.codeViewer.onLine': 'on line'
 } as const;

@@ -125,6 +125,7 @@ import type {
 	WorkspaceEntry,
 	WorkspaceFile
 } from '$lib/domain';
+import type { FileLoc, PathStat, ResolvedPath } from '$lib/domain';
 
 /** Go marshals a nil slice as null, so a list endpoint can legitimately answer
  *  `null` rather than `[]`. Every list goes through here: absent and empty are
@@ -165,6 +166,9 @@ const skillsetBody = (d: SkillsetDraft): Wire.SkillsetRequest => ({
 	...(d.description ? { description: d.description } : {}),
 	skill_ids: d.skillIds
 });
+
+const pathRefBody = (l: FileLoc): Wire.WorkspacePathRef =>
+	'abs' in l ? { abs: l.abs } : { repo: l.repo, path: l.path };
 
 // Every field always travels: an internal ticket's edit replaces it, so an
 // absent key and an empty one would mean the same thing anyway — saying so
@@ -577,6 +581,41 @@ export const workspace = {
 	file: async (runId: string, path: string, repo = ''): Promise<WorkspaceFile> =>
 		map.toWorkspaceFile(
 			await unwrap(gen.getWorkspaceFile({ path: { id: runId }, query: { path, repo } }))
+		),
+
+	/** One directory level anywhere in the workspace, as its remote user:
+	 *  path is absolute or ~ / ~/…; entries carry absolute paths. */
+	pathTree: async (runId: string, path: string): Promise<WorkspaceEntry[]> =>
+		many(
+			await unwrap(gen.getWorkspacePathTree({ path: { id: runId }, query: { path } })),
+			map.toWorkspaceEntry
+		),
+
+	/** One file by absolute or ~/… path; file.path is the expanded, cleaned
+	 *  absolute path. 400 for anything but a regular file, 403 unreadable. */
+	pathFile: async (runId: string, path: string): Promise<WorkspaceFile> =>
+		map.toWorkspaceFile(
+			await unwrap(gen.getWorkspacePathFile({ path: { id: runId }, query: { path } }))
+		),
+
+	/** Each location's existence, size and mtime, in the order asked (at most
+	 *  256 per call). One unreadable location carries its own error. */
+	stat: async (runId: string, locs: FileLoc[]): Promise<PathStat[]> =>
+		many(
+			(
+				await unwrap(
+					gen.statWorkspacePaths({ path: { id: runId }, body: { items: locs.map(pathRefBody) } })
+				)
+			).items,
+			map.toPathStat
+		),
+
+	/** Where a mentioned path lives: tried in checkout repo first, then the
+	 *  others; absolute paths inside a checkout map back to it. 404 when
+	 *  nothing exists. */
+	resolve: async (runId: string, path: string, repo = ''): Promise<ResolvedPath> =>
+		map.toResolvedPath(
+			await unwrap(gen.resolveWorkspacePath({ path: { id: runId }, query: { path, repo } }))
 		),
 
 	/** A checkout's changes against the branch it forked from. */

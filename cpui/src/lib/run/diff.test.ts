@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { editLines, fileLines, lineCounts, parseUnified } from './diff';
+import { editLines, lineCounts, parseUnified } from './diff';
 
 const HEADER = [
 	'diff --git a/x.ts b/x.ts',
@@ -175,14 +175,5 @@ describe('lineCounts', () => {
 
 	it('is zero for no lines', () => {
 		expect(lineCounts([])).toEqual({ add: 0, del: 0 });
-	});
-});
-
-describe('fileLines', () => {
-	it('numbers a file from one', () => {
-		expect(fileLines('a\nb')).toEqual([
-			{ n: 1, text: 'a' },
-			{ n: 2, text: 'b' }
-		]);
 	});
 });

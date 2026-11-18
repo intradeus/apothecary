@@ -20,6 +20,7 @@ import { settled } from '$test/fixtures/run-components';
 import { aFile } from '$test/fixtures/run.svelte';
 import { deferred } from '$test/helpers';
 import SessionView from './SessionView.svelte';
+import type { PathRef } from '$lib/core/paths';
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -43,7 +44,7 @@ const NUDGE = 'The run is waiting on what its watchers watch.';
 function show(
 	over: Parameters<typeof aViewStore>[1] = {},
 	run: Run | null = aLiveRun(),
-	props: { visible?: boolean } = {}
+	props: { visible?: boolean; onpath?: (ref: PathRef) => void } = {}
 ) {
 	const onlog = vi.fn();
 	const onphases = vi.fn();
@@ -81,6 +82,15 @@ describe('SessionView', () => {
 			show({ events: [agentStage, said(2, 'Reading the code')] });
 			expect(screen.getByText('Reading the code')).toBeInTheDocument();
 			expect(screen.queryByText(/^No conversation yet\./)).not.toBeInTheDocument();
+		});
+
+		it('hands a file the agent names to onpath', async () => {
+			const onpath = vi.fn();
+			show({ events: [agentStage, said(2, 'Changed `internal/run/run.go:336`.')] }, aLiveRun(), {
+				onpath
+			});
+			await userEvent.click(screen.getByRole('button', { name: 'internal/run/run.go:336' }));
+			expect(onpath).toHaveBeenCalledExactlyOnceWith({ path: 'internal/run/run.go', from: 336 });
 		});
 
 		it('streams what the agent is writing', async () => {

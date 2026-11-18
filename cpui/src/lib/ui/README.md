@@ -95,12 +95,13 @@ Domain components (`lib/run`, `lib/workshop`, `lib/tickets`, …) and pages buil
 | `CopyCommand` (`help`)                                                                                              | A shell command to run elsewhere, with its copy button                                                                                                                                                                    |
 | `CopyButton`                                                                                                        | Just the copy glyph for a shell command, for a row that already says what it is about                                                                                                                                     |
 | `RefChip` (`plain`)                                                                                                 | A reference (`review#5`, `build#3/decision#1`) as a mono chip that copies it; its click never opens the row it sits in. `plain` inside a button. Attempt references come from `attemptRef` (`$lib/domain`)                |
-| `Markdown` (`doc`, `quiet`), `CodeView`                                                                             | Reading material                                                                                                                                                                                                          |
+| `Markdown` (`doc`, `quiet`, `paths`), `CodeView`                                                                    | Reading material                                                                                                                                                                                                          |
+| `CodeViewer` (`docKey`, `line` + `onrevealed`, `onselect`; `clearSelection()`, `forget(docKey)`)                    | A file to read: read-only CodeMirror, line numbers, find, the grammar loaded on first use. Per-`docKey` state and scroll; new content lands as a minimal change; a line-number click selects, shift extends               |
 | `LogOutput` (`fill`, `lineClass`, `bar`, `head`, `placeholder`, bindable `viewport`, `follow()`)                    | Program output as lines: clickable URLs, a find bar (Ctrl/Cmd+F), copy all, to top / to bottom. It follows the bottom unless the reader scrolled up, has text selected in it or is on a match                             |
 | `FileChip`                                                                                                          | One file (thumb, name, size, missing/refused, removable)                                                                                                                                                                  |
 | `Meter`                                                                                                             | Capacity bar                                                                                                                                                                                                              |
 
-Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bump`, `dragDismiss`, `project`, `rubberband`), `portal.ts` (`use:portal`: under `<body>`, out of a glass pane's clip; `Modal` and `Sheet` always use it), `trap.ts`, `confirm.svelte.ts`, `toast.svelte.ts`, `html.ts` (`esc`), `duration.ts`, `logSegments.ts` (`LogOutput`'s find: matches, a line cut into links and marks).
+Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bump`, `dragDismiss`, `project`, `rubberband`), `portal.ts` (`use:portal`: under `<body>`, out of a glass pane's clip; `Modal` and `Sheet` always use it), `trap.ts`, `confirm.svelte.ts`, `toast.svelte.ts`, `html.ts` (`esc`), `duration.ts`, `logSegments.ts` (`LogOutput`'s find: matches, a line cut into links and marks), `codeLanguages.ts` (`languageFor(path, firstLine?)`: a file's CodeMirror language from its name, extension or shebang, Svelte and shell dotfiles included; null for plain text), `textChange.ts` (`minimalChange`: the one change between two texts).
 
 ## App modules
 
@@ -108,7 +109,8 @@ Modules: `motion.ts` (springs, `materialize`, `slide`, `scrim`, `indicator`, `bu
 - `$lib/core`:
   - `urls`: `to.*` builds every in-app URL. Never hand-write a path.
   - `format`: `stateLabel`, `stateHue` (`stateHueClass`: the same as a `.hue-*` class), `shortId`, `ago`, `age`, `fmtCost`, `fmtClock`, `fmtDuration`, `fmtBytes`.
-  - `markdown`: the one safe markdown renderer.
+  - `markdown`: the one safe markdown renderer; `mdToHtml(src, { paths: true })` makes file references buttons.
+  - `paths`: `findPaths(text)` / `pathParts(text)`, file references (`path:42-50`) in text; `parseRef(loc)`, a known location read; `pathClick(onpath)`, the click handler for a container of them.
   - `errors`: `errorMessage(e)`, what a catch shows.
   - `links`: `linkify(text)`, plain text split into text and http(s) link parts.
   - `ping`: the ping shape shared by the inbox and the run page.

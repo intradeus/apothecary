@@ -119,16 +119,23 @@ func (x *env) seedLiveRun(t *testing.T, id string) {
 	}
 }
 
-// fakeSidecar answers the workspace routes and records what they asked for.
+// fakeSidecar answers the workspace routes and records what they asked for
+// (a POST's body after its query).
 func fakeSidecar(t *testing.T, seen *[]string) *httptest.Server {
 	t.Helper()
 	var mu sync.Mutex
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
 		mu.Lock()
-		*seen = append(*seen, r.URL.Path+"?"+r.URL.RawQuery)
+		*seen = append(*seen, r.URL.Path+"?"+r.URL.RawQuery+string(body))
 		mu.Unlock()
 		q := r.URL.Query()
 		switch {
+		case q.Get("path") == "old":
+			http.NotFound(w, r) // a sidecar that predates the route
+		case q.Get("path") == "missing":
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such file or directory"})
 		case q.Get("path") == "denied":
 			w.WriteHeader(http.StatusForbidden)
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": "outside the checkout"})
@@ -149,6 +156,23 @@ func fakeSidecar(t *testing.T, seen *[]string) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(sidecar.Changes{Branch: "feat/x", Base: q.Get("base")})
 		case r.URL.Path == "/git/diff":
 			_ = json.NewEncoder(w).Encode(sidecar.FileDiff{Path: q.Get("path"), Diff: "+x"})
+		case r.URL.Path == "/fs/abs/tree":
+			_ = json.NewEncoder(w).Encode([]sidecar.TreeEntry{{Name: "hosts", Path: "/etc/hosts", Size: 9, Mtime: "7"}})
+		case r.URL.Path == "/fs/abs/file":
+			_ = json.NewEncoder(w).Encode(sidecar.File{Path: q.Get("path"), Content: "127.0.0.1", Mtime: "7"})
+		case r.URL.Path == "/fs/stat":
+			switch {
+			case strings.Contains(string(body), "old"):
+				http.NotFound(w, r)
+			case strings.Contains(string(body), "broken"):
+				w.WriteHeader(http.StatusInternalServerError)
+			case strings.Contains(string(body), "empty"):
+				_, _ = io.WriteString(w, `{"items":null}`)
+			default:
+				_, _ = io.WriteString(w, `{"items":[{"exists":true,"dir":false,"size":3,"mtime":"9"},{"exists":false,"dir":false,"size":0,"mtime":"","error":"permission denied"}]}`)
+			}
+		case r.URL.Path == "/fs/resolve":
+			_ = json.NewEncoder(w).Encode(sidecar.Resolved{Repo: "lib", Path: q.Get("path")})
 		case r.URL.Path == "/term":
 			_, _ = io.WriteString(w, "terminal for "+q.Get("repo"))
 		default:
@@ -218,6 +242,117 @@ func TestWorkspaceViewsThroughTheSidecar(t *testing.T) {
 	res, body = x.do(t, "GET", base+"/terminal", nil, map[string]string{"Origin": x.ts.URL})
 	if res.StatusCode != http.StatusOK || string(body) != "terminal for repo" {
 		t.Errorf("terminal = %d %s", res.StatusCode, body)
+	}
+}
+
+// The path routes reach anywhere in the workspace through its sidecar: the
+// right sidecar route with the right query or body, its refusals relayed,
+// and an old sidecar (no such route) told apart from a missing file.
+func TestWorkspacePathRoutes(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	var seen []string
+	side := fakeSidecar(t, &seen)
+	x.res.Envp = &workspaceEnv{EnvProvisioner: x.envp, sidecarAddr: strings.TrimPrefix(side.URL, "http://")}
+	if _, err := x.store.Append(context.Background(), "r1",
+		&event.RunCreated{ProjectID: testProject, UserID: testUser, FlowName: "loop", Checkouts: []event.Checkout{
+			{Name: "repo", Dir: "repo", Source: "develop"}, {Name: "lib", Dir: "repos/lib"},
+		}},
+		&event.EnvReady{EnvID: "env-r1"},
+	); err != nil {
+		t.Fatal(err)
+	}
+	base := "/api/runs/r1/workspace"
+	asked := func(want string) {
+		t.Helper()
+		if len(seen) == 0 || seen[len(seen)-1] != want {
+			t.Errorf("the sidecar was asked %v, want last %q", seen, want)
+		}
+	}
+
+	res, body := x.do(t, "GET", base+"/path/tree?path=~/a%20b", nil, nil)
+	if ents := decode[[]sidecar.TreeEntry](t, body); res.StatusCode != 200 || len(ents) != 1 || ents[0].Path != "/etc/hosts" || ents[0].Mtime != "7" {
+		t.Errorf("tree = %d %s", res.StatusCode, body)
+	}
+	asked("/fs/abs/tree?path=~%2Fa+b")
+	res, body = x.do(t, "GET", base+"/path/tree?path=empty", nil, nil)
+	if res.StatusCode != 200 || strings.TrimSpace(string(body)) != "[]" {
+		t.Errorf("empty tree = %d %s, want a list", res.StatusCode, body)
+	}
+	res, body = x.do(t, "GET", base+"/path/file?path=/etc/hosts", nil, nil)
+	if f := decode[sidecar.File](t, body); res.StatusCode != 200 || f.Content != "127.0.0.1" || f.Mtime != "7" {
+		t.Errorf("file = %d %s", res.StatusCode, body)
+	}
+	asked("/fs/abs/file?path=%2Fetc%2Fhosts")
+
+	stat := WorkspaceStatRequest{Items: []sidecar.StatItem{{Path: "a.go"}, {Repo: "lib", Path: "b.go"}, {Abs: "/root/x"}}}
+	res, body = x.do(t, "POST", base+"/stat", stat, nil)
+	if out := decode[WorkspaceStatResponse](t, body); res.StatusCode != 200 || len(out.Items) != 2 || !out.Items[0].Exists || out.Items[0].Mtime != "9" || out.Items[1].Error != "permission denied" {
+		t.Errorf("stat = %d %s", res.StatusCode, body)
+	}
+	asked(`/fs/stat?{"items":[{"path":"a.go"},{"repo":"lib","path":"b.go"},{"abs":"/root/x"}]}`)
+	res, body = x.do(t, "POST", base+"/stat", WorkspaceStatRequest{Items: []sidecar.StatItem{{Path: "empty"}}}, nil)
+	if res.StatusCode != 200 || strings.TrimSpace(string(body)) != `{"items":[]}` {
+		t.Errorf("empty stat = %d %s, want a list", res.StatusCode, body)
+	}
+	before := len(seen)
+	res, body = x.do(t, "POST", base+"/stat", WorkspaceStatRequest{Items: make([]sidecar.StatItem, MaxStatItems+1)}, nil)
+	if res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "at most 256") {
+		t.Errorf("over the cap = %d %s", res.StatusCode, body)
+	}
+	if res, body := x.do(t, "POST", base+"/stat", "not an object", nil); res.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad body = %d %s", res.StatusCode, body)
+	}
+	if len(seen) != before {
+		t.Errorf("a refused batch reached the sidecar: %v", seen[before:])
+	}
+
+	res, body = x.do(t, "GET", base+"/resolve?path=a.go", nil, nil)
+	if got := decode[sidecar.Resolved](t, body); res.StatusCode != 200 || got != (sidecar.Resolved{Repo: "lib", Path: "a.go"}) {
+		t.Errorf("resolve = %d %s", res.StatusCode, body)
+	}
+	asked("/fs/resolve?path=a.go&repo=repo")
+	x.do(t, "GET", base+"/resolve?path=a.go&repo=lib", nil, nil)
+	asked("/fs/resolve?path=a.go&repo=lib")
+	if res, body := x.do(t, "GET", base+"/resolve?path=a.go&repo=nope", nil, nil); res.StatusCode != http.StatusNotFound {
+		t.Errorf("unknown checkout = %d %s", res.StatusCode, body)
+	}
+
+	// The sidecar's refusals keep their status, its failures are a gateway's,
+	// and an old sidecar's unknown route is 501, not a missing file.
+	for _, route := range []string{"path/tree", "path/file", "resolve"} {
+		for path, want := range map[string]int{"denied": 403, "missing": 404, "broken": 502, "old": 501} {
+			res, body := x.do(t, "GET", base+"/"+route+"?path="+path, nil, nil)
+			if res.StatusCode != want {
+				t.Errorf("%s %s = %d %s, want %d", route, path, res.StatusCode, body, want)
+			}
+			if want == 501 && !strings.Contains(string(body), "restart or rebuild the workspace") {
+				t.Errorf("%s old = %s", route, body)
+			}
+		}
+	}
+	for path, want := range map[string]int{"old": 501, "broken": 502} {
+		res, body := x.do(t, "POST", base+"/stat", WorkspaceStatRequest{Items: []sidecar.StatItem{{Path: path}}}, nil)
+		if res.StatusCode != want {
+			t.Errorf("stat %s = %d %s, want %d", path, res.StatusCode, body, want)
+		}
+	}
+
+	// A run with no workspace yet has nothing to ask.
+	if _, err := x.store.Append(context.Background(), "r2", &event.RunCreated{ProjectID: testProject, UserID: testUser, FlowName: "loop"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []struct {
+		method, path string
+		body         any
+	}{
+		{"GET", "/path/tree?path=/", nil},
+		{"GET", "/path/file?path=/etc/hosts", nil},
+		{"POST", "/stat", WorkspaceStatRequest{}},
+		{"GET", "/resolve?path=a.go", nil},
+	} {
+		if res, body := x.do(t, call.method, "/api/runs/r2/workspace"+call.path, call.body, nil); res.StatusCode != http.StatusServiceUnavailable {
+			t.Errorf("no workspace %s = %d %s", call.path, res.StatusCode, body)
+		}
 	}
 }
 

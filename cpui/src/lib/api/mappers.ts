@@ -104,6 +104,7 @@ import type {
 	MergeRequestRow,
 	Model,
 	ParamDecl,
+	PathStat,
 	PhaseSummary,
 	Ping,
 	PingFile,
@@ -117,6 +118,7 @@ import type {
 	Project,
 	ProjectSecret,
 	Repo,
+	ResolvedPath,
 	ResourceSample,
 	Run,
 	RunFacts,
@@ -1384,7 +1386,14 @@ export function toSshKey(w: Wire.SshKey): SshKey {
 // --- workspace ---------------------------------------------------------------
 
 export function toWorkspaceEntry(w: Wire.WorkspaceEntry): WorkspaceEntry {
-	return { name: w.name, path: w.path, dir: w.dir, size: w.size, ignored: w.ignored ?? false };
+	return {
+		name: w.name,
+		path: w.path,
+		dir: w.dir,
+		size: w.size,
+		ignored: w.ignored ?? false,
+		mtime: w.mtime ?? ''
+	};
 }
 
 export function toWorkspaceFile(w: Wire.WorkspaceFile): WorkspaceFile {
@@ -1393,7 +1402,27 @@ export function toWorkspaceFile(w: Wire.WorkspaceFile): WorkspaceFile {
 		size: w.size,
 		binary: w.binary,
 		truncated: w.truncated,
-		content: w.content
+		content: w.content,
+		mtime: w.mtime ?? ''
+	};
+}
+
+export function toPathStat(w: Wire.WorkspacePathStat): PathStat {
+	return {
+		exists: w.exists,
+		dir: w.dir,
+		size: w.size,
+		mtime: w.mtime ?? '',
+		...(w.error ? { error: w.error } : {})
+	};
+}
+
+/** An absolute answer is a FileLoc of its own; anything else is a checkout's
+ *  (the primary is repo ''). */
+export function toResolvedPath(w: Wire.WorkspaceResolvedPath): ResolvedPath {
+	return {
+		loc: w.abs ? { abs: w.abs } : { repo: w.repo ?? '', path: w.path ?? '' },
+		dir: w.dir
 	};
 }
 

@@ -3,6 +3,7 @@ package httpapi
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -141,9 +142,15 @@ func (s *Server) getRunMRStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // sidecarErr passes the sidecar's own client errors (bad path, not found)
-// through, and reports everything else as the gateway failure it is.
+// through, and reports everything else as the gateway failure it is. A
+// sidecar without the route is one started before it existed: 501, so the
+// page can say to restart or rebuild the workspace rather than "not found".
 func sidecarErr(w http.ResponseWriter, err error) {
 	var se *sidecar.Error
+	if sidecar.IsNoRoute(err) {
+		writeErr(w, http.StatusNotImplemented, "this workspace's sidecar predates this feature; restart or rebuild the workspace to use it")
+		return
+	}
 	if errors.As(err, &se) && se.Status >= 400 && se.Status < 500 {
 		writeErr(w, se.Status, se.Msg)
 		return
@@ -204,6 +211,88 @@ func (s *Server) getWorkspaceDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) getWorkspacePathTree(w http.ResponseWriter, r *http.Request) {
+	c, _, ok := s.workspace(w, r)
+	if !ok {
+		return
+	}
+	ents, err := c.AbsTree(r.Context(), r.URL.Query().Get("path"))
+	if err != nil {
+		sidecarErr(w, err)
+		return
+	}
+	if ents == nil {
+		ents = []sidecar.TreeEntry{}
+	}
+	writeJSON(w, http.StatusOK, ents)
+}
+
+func (s *Server) getWorkspacePathFile(w http.ResponseWriter, r *http.Request) {
+	c, _, ok := s.workspace(w, r)
+	if !ok {
+		return
+	}
+	f, err := c.AbsFile(r.Context(), r.URL.Query().Get("path"))
+	if err != nil {
+		sidecarErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
+}
+
+// MaxStatItems caps one stat batch: the open tabs and expanded folders of
+// one Files pane.
+const MaxStatItems = 256
+
+// WorkspaceStatRequest is the paths to look at: each a checkout's (repo, path;
+// repo "" = the primary) or an absolute one (abs).
+type WorkspaceStatRequest struct {
+	Items []sidecar.StatItem `json:"items"`
+}
+
+// WorkspaceStatResponse answers each item in order; one item's failure is its
+// own error, never the batch's.
+type WorkspaceStatResponse struct {
+	Items []sidecar.StatResult `json:"items"`
+}
+
+func (s *Server) statWorkspacePaths(w http.ResponseWriter, r *http.Request) {
+	var req WorkspaceStatRequest
+	if !readJSON(w, r, &req) {
+		return
+	}
+	if len(req.Items) > MaxStatItems {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("at most %d items per call", MaxStatItems))
+		return
+	}
+	c, _, ok := s.workspace(w, r)
+	if !ok {
+		return
+	}
+	items, err := c.Stat(r.Context(), req.Items)
+	if err != nil {
+		sidecarErr(w, err)
+		return
+	}
+	if items == nil {
+		items = []sidecar.StatResult{}
+	}
+	writeJSON(w, http.StatusOK, WorkspaceStatResponse{Items: items})
+}
+
+func (s *Server) resolveWorkspacePath(w http.ResponseWriter, r *http.Request) {
+	c, co, ok := s.workspace(w, r)
+	if !ok {
+		return
+	}
+	res, err := c.Resolve(r.Context(), co.Name, r.URL.Query().Get("path"))
+	if err != nil {
+		sidecarErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, res)
 }
 
 // serveTerminal upgrades to a WebSocket terminal in the run's workspace,
@@ -293,6 +382,25 @@ func (s *Server) workspaceRoutes() []Route {
 			Summary: "One file's unified diff against the branch the checkout forked from",
 			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative file"}},
 			Handler: s.getWorkspaceDiff, Returns: sidecar.FileDiff{}, Scope: ScopeRun},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/path/tree", ID: "getWorkspacePathTree", Tag: tagWorkspace,
+			Summary: "One directory level anywhere in the workspace, by absolute or ~ path",
+			Doc:     "Read as the workspace's remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).",
+			Query:   []Param{{Name: "path", Doc: "absolute directory, or ~ / ~/… for the remote user's home"}},
+			Handler: s.getWorkspacePathTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/path/file", ID: "getWorkspacePathFile", Tag: tagWorkspace,
+			Summary: "One file anywhere in the workspace, by absolute or ~ path",
+			Doc:     "Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.",
+			Query:   []Param{{Name: "path", Doc: "absolute file, or ~/… under the remote user's home"}},
+			Handler: s.getWorkspacePathFile, Returns: sidecar.File{}, Scope: ScopeRun},
+		{Method: "POST", Path: "/api/runs/{id}/workspace/stat", ID: "statWorkspacePaths", Tag: tagWorkspace,
+			Summary: "Whether each of a batch of workspace paths exists, with its size and mtime",
+			Doc:     "What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.",
+			Handler: s.statWorkspacePaths, Body: WorkspaceStatRequest{}, Returns: WorkspaceStatResponse{}, Scope: ScopeRun},
+		{Method: "GET", Path: "/api/runs/{id}/workspace/resolve", ID: "resolveWorkspacePath", Tag: tagWorkspace,
+			Summary: "Where a path mentioned in the run lives: a checkout's file or an absolute one",
+			Doc:     "A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo \"\"), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.",
+			Query:   []Param{{Name: "path", Doc: "repo-relative, absolute or ~/… path"}, {Name: "repo", Doc: "checkout tried first (default: the primary)"}},
+			Handler: s.resolveWorkspacePath, Returns: sidecar.Resolved{}, Scope: ScopeRun},
 		{Method: "GET", Path: "/api/runs/{id}/resources", ID: "getRunResources", Tag: tagWorkspace,
 			Summary: "Rolling window of workspace cpu/memory/network samples",
 			Handler: s.getRunResources, Returns: RunResources{}, Scope: ScopeRun},

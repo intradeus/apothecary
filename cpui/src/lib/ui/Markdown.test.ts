@@ -36,6 +36,18 @@ describe('Markdown', () => {
 		expect(container.firstElementChild).toHaveClass('md', form);
 	});
 
+	it('makes file references buttons with paths on', () => {
+		render(Markdown, { src: 'See `a/b.go:3` and c/d.ts.', paths: true });
+		expect(screen.getByRole('button', { name: 'a/b.go:3' })).toHaveAttribute('data-line', '3');
+		expect(screen.getByRole('button', { name: 'c/d.ts' })).toHaveAttribute('data-path', 'c/d.ts');
+	});
+
+	it('leaves file references as text by default', () => {
+		render(Markdown, { src: 'See `a/b.go:3` and c/d.ts.' });
+		expect(screen.queryByRole('button')).not.toBeInTheDocument();
+		expect(screen.getByText('a/b.go:3').tagName).toBe('CODE');
+	});
+
 	it('updates when the source changes', async () => {
 		const { rerender } = render(Markdown, { src: 'first' });
 		await rerender({ src: 'second' });

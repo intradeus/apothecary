@@ -15,6 +15,8 @@ vi.mock('$lib/api', () => ({
 			diff: vi.fn(),
 			tree: vi.fn(),
 			file: vi.fn(),
+			pathTree: vi.fn(),
+			stat: vi.fn(),
 			terminalUrl: vi.fn()
 		}
 	}
@@ -90,6 +92,9 @@ describe('WorkspaceView', () => {
 		vi.mocked(api.workspace.changes).mockResolvedValue(changes());
 		vi.mocked(api.workspace.diff).mockResolvedValue({ path: '', diff: '', truncated: false });
 		vi.mocked(api.workspace.tree).mockResolvedValue([]);
+		vi.mocked(api.workspace.pathTree).mockResolvedValue([]);
+		vi.mocked(api.workspace.stat).mockResolvedValue([]);
+		localStorage.clear();
 		vi.mocked(api.workspace.terminalUrl).mockReturnValue('ws://terminal.test');
 		// jsdom would dial it for real.
 		vi.stubGlobal(
@@ -158,7 +163,7 @@ describe('WorkspaceView', () => {
 			await tick();
 
 			expect(screen.queryByText('No workspace yet')).not.toBeInTheDocument();
-			expect(api.workspace.tree).toHaveBeenCalledOnce();
+			await vi.waitFor(() => expect(api.workspace.tree).toHaveBeenCalledOnce());
 		});
 
 		it('takes over when the workspace goes', async () => {
@@ -223,10 +228,29 @@ describe('WorkspaceView', () => {
 			expect(api.workspace.changes).toHaveBeenLastCalledWith(RUN, 'lib');
 		});
 
-		it('moves the files view to the repo picked', async () => {
-			show('files', multi());
+		it('moves the files tree to the repo picked', async () => {
+			const { rs } = show('files', multi());
 			await userEvent.click(repoRadio('lib'));
-			expect(api.workspace.tree).toHaveBeenLastCalledWith(RUN, '', 'lib');
+			expect(rs.files.root).toEqual({ repo: 'lib' });
+			expect(repoRadio('lib')).toBeChecked();
+			await vi.waitFor(() => expect(api.workspace.tree).toHaveBeenLastCalledWith(RUN, '', 'lib'));
+		});
+
+		it('keeps the open files across a repo switch', async () => {
+			const { rs } = show('files', multi());
+			rs.files.open({ repo: '', path: 'README.md' });
+			await userEvent.click(repoRadio('lib'));
+			await userEvent.click(repoRadio(/^app/));
+			expect(rs.files.tabs.map((t) => t.key)).toEqual([':README.md']);
+			expect(screen.getByRole('tab', { name: /README\.md/ })).toBeInTheDocument();
+		});
+
+		it('marks no repo while the tree shows an absolute folder', async () => {
+			const rs = multi();
+			rs.files.setRoot({ abs: '/etc' });
+			show('files', rs);
+			expect(repoRadio(/^app/)).not.toBeChecked();
+			expect(repoRadio('lib')).not.toBeChecked();
 		});
 
 		it('opens a new shell in the repo picked, and says where', async () => {

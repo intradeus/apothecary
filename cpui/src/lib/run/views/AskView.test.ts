@@ -18,6 +18,7 @@ import { aFile } from '$test/fixtures/run.svelte';
 import type { RunStore } from '$lib/run/store.svelte';
 import { deferred } from '$test/helpers';
 import AskView from './AskView.svelte';
+import type { PathRef } from '$lib/core/paths';
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -40,11 +41,15 @@ const newBtn = () => screen.getByRole('button', { name: 'New session' });
 const bubble = (text: string) => screen.queryByText(text, { selector: '.bubble' });
 
 /** Opens the pane on a state and hands back the stream's two callbacks. */
-async function open(state: Partial<AskState> = {}, rs: RunStore = aViewStore()) {
+async function open(
+	state: Partial<AskState> = {},
+	rs: RunStore = aViewStore(),
+	onpath?: (ref: PathRef) => void
+) {
 	const stop = vi.fn();
 	vi.mocked(api.ask.state).mockResolvedValue(anAskState(state));
 	vi.mocked(api.ask.stream).mockReturnValue(stop);
-	const view = render(AskView, { rs, visible: true });
+	const view = render(AskView, { rs, visible: true, onpath });
 	await screen.findByText('Ask', { selector: '.ttl' });
 	const [, onFrame, onReconnect] = vi.mocked(api.ask.stream).mock.calls[0];
 	const frame = async (f: AskFrame) => {
@@ -115,6 +120,18 @@ describe('AskView', () => {
 			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 			expect(screen.queryByRole('combobox', { name: 'Model' })).not.toBeInTheDocument();
 			expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument();
+		});
+
+		it('takes lines from the Files viewer while Ask is on', async () => {
+			const rs = aViewStore();
+			await open({}, rs);
+			expect(rs.composers.active?.kind).toBe('ask');
+		});
+
+		it('takes no lines while Ask is off', async () => {
+			const rs = aViewStore();
+			await open({ enabled: false }, rs);
+			expect(rs.composers.active).toBeNull();
 		});
 
 		it('keeps the old conversation readable while Ask is off', async () => {
@@ -213,6 +230,35 @@ describe('AskView', () => {
 			expect(screen.getByText('It is in retry.go')).toBeInTheDocument();
 			expect(screen.queryByText('thinking…')).not.toBeInTheDocument();
 			expect(screen.queryByText('Looking closer')).not.toBeInTheDocument();
+		});
+
+		it('hands a file an answer names to onpath, settled or streaming', async () => {
+			const onpath = vi.fn();
+			const answer = anAskMessage({
+				seq: 2,
+				role: 'answer',
+				text: 'It is in `internal/run/run.go:336`.'
+			});
+			const { frame } = await open({ messages: [answer] }, aViewStore(), onpath);
+
+			await userEvent.click(screen.getByRole('button', { name: 'internal/run/run.go:336' }));
+			expect(onpath).toHaveBeenCalledExactlyOnceWith({ path: 'internal/run/run.go', from: 336 });
+
+			await frame({ kind: 'delta', sessionId: 's1', text: 'Also a/b.ts:4-9' });
+			await userEvent.click(screen.getByRole('button', { name: 'a/b.ts:4-9' }));
+			expect(onpath).toHaveBeenLastCalledWith({ path: 'a/b.ts', from: 4, to: 9 });
+
+			await userEvent.click(screen.getByText('Also', { exact: false }));
+			expect(onpath).toHaveBeenCalledTimes(2);
+		});
+
+		it('leaves an answer’s paths text without onpath', async () => {
+			await open({
+				messages: [anAskMessage({ seq: 2, role: 'answer', text: 'In `internal/run/run.go:336`.' })]
+			});
+			expect(
+				screen.queryByRole('button', { name: 'internal/run/run.go:336' })
+			).not.toBeInTheDocument();
 		});
 
 		it('keeps the live answer through a question landing', async () => {
@@ -496,39 +542,6 @@ describe('AskView', () => {
 			expect(screen.queryByText('thinking…')).not.toBeInTheDocument();
 		});
 
-		it('leaves an Enter that confirms an IME composition alone', async () => {
-			await open();
-			await userEvent.type(box(), 'こんにちは');
-
-			await fireEvent.keyDown(box(), { key: 'Enter', isComposing: true });
-
-			expect(api.ask.send).not.toHaveBeenCalled();
-		});
-
-		it('keeps writing on Shift+Enter', async () => {
-			await open();
-			await userEvent.type(box(), 'one{Shift>}{Enter}{/Shift}two');
-			expect(api.ask.send).not.toHaveBeenCalled();
-			expect(box()).toHaveValue('one\ntwo');
-		});
-
-		it('sends from the button', async () => {
-			vi.mocked(api.ask.send).mockResolvedValue(anAskMessage());
-			await open();
-			await userEvent.type(box(), 'Why?');
-			await userEvent.click(askBtn());
-			expect(api.ask.send).toHaveBeenCalledOnce();
-		});
-
-		it('offers nothing to send until there are words', async () => {
-			await open();
-			expect(askBtn()).toBeDisabled();
-
-			await userEvent.type(box(), '   {Enter}');
-			expect(askBtn()).toBeDisabled();
-			expect(api.ask.send).not.toHaveBeenCalled();
-		});
-
 		it('shows the answer as on its way once the question is in', async () => {
 			vi.mocked(api.ask.send).mockResolvedValue(anAskMessage());
 			await open();
@@ -537,56 +550,6 @@ describe('AskView', () => {
 			expect(await screen.findByText('thinking…')).toBeInTheDocument();
 			expect(box()).toBeDisabled();
 			expect(askBtn()).toHaveTextContent('Answering…');
-		});
-
-		it('holds the button while the question is in flight, sending it once', async () => {
-			const sent = deferred<never>();
-			vi.mocked(api.ask.send).mockReturnValue(sent.promise);
-			await open();
-
-			await userEvent.type(box(), 'Why?{Enter}');
-			expect(askBtn()).toHaveAttribute('aria-busy', 'true');
-
-			await userEvent.type(box(), 'Again');
-			expect(askBtn()).toBeDisabled();
-
-			await userEvent.type(box(), '{Enter}');
-			expect(api.ask.send).toHaveBeenCalledOnce();
-		});
-
-		it('gives the words back with the reason when refused', async () => {
-			vi.mocked(api.ask.send).mockRejectedValue(new Error('an answer is being written'));
-			await open();
-			await userEvent.type(box(), 'Why?{Enter}');
-
-			expect(await screen.findByText('an answer is being written')).toBeInTheDocument();
-			expect(box()).toHaveValue('Why?');
-			expect(screen.queryByText('thinking…')).not.toBeInTheDocument();
-			expect(box()).toBeEnabled();
-		});
-
-		it('keeps what was typed meanwhile over the refused words', async () => {
-			const sent = deferred<never>();
-			vi.mocked(api.ask.send).mockReturnValue(sent.promise);
-			await open();
-			await userEvent.type(box(), 'First{Enter}');
-			await userEvent.type(box(), 'Second');
-
-			sent.reject(new Error('nope'));
-
-			expect(await screen.findByText('nope')).toBeInTheDocument();
-			expect(box()).toHaveValue('Second');
-		});
-
-		it('clears the last failure on the next attempt', async () => {
-			vi.mocked(api.ask.send).mockRejectedValueOnce(new Error('nope'));
-			await open();
-			await userEvent.type(box(), 'Why?{Enter}');
-			await screen.findByText('nope');
-
-			vi.mocked(api.ask.send).mockResolvedValue(anAskMessage());
-			await userEvent.type(box(), '{Enter}');
-			expect(screen.queryByText('nope')).not.toBeInTheDocument();
 		});
 	});
 
@@ -682,74 +645,6 @@ describe('AskView', () => {
 			return e;
 		}
 		const withSession = (): Partial<AskState> => ({ sessions: [anAskSession({ id: 's1' })] });
-		const asked = () =>
-			vi.mocked(api.ask.send).mockResolvedValue(anAskMessage({ seq: 9, sessionId: 's1' }));
-
-		it('takes a pasted image as a chip, not as text', async () => {
-			await open(withSession());
-			await settled();
-			expect(paste(shot()).defaultPrevented).toBe(true);
-			expect(await screen.findByText('shot.png')).toBeInTheDocument();
-			expect(box()).toHaveValue('');
-		});
-
-		it('leaves a paste without files to the browser', async () => {
-			await open(withSession());
-			await settled();
-			expect(paste().defaultPrevented).toBe(false);
-		});
-
-		it('uploads first, then asks with the ids, and re-reads the run’s files', async () => {
-			asked();
-			vi.mocked(api.files.upload).mockResolvedValue([anAttachment({ id: 'att-1' })]);
-			const rs = aViewStore();
-			const refresh = vi.spyOn(rs, 'refreshFiles').mockResolvedValue();
-			await open(withSession(), rs);
-			await settled();
-			paste(shot());
-			await userEvent.type(box(), 'what is this?{Enter}');
-			await vi.waitFor(() =>
-				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'what is this?', 's1', ['att-1'])
-			);
-			expect(api.files.upload).toHaveBeenCalledExactlyOnceWith([expect.any(File)]);
-			await vi.waitFor(() => expect(refresh).toHaveBeenCalledOnce());
-			expect(screen.queryByText('shot.png')).not.toBeInTheDocument();
-		});
-
-		it('asks with files alone', async () => {
-			asked();
-			vi.mocked(api.files.upload).mockResolvedValue([anAttachment({ id: 'att-1' })]);
-			await open(withSession());
-			await settled();
-			paste(shot());
-			await vi.waitFor(() => expect(askBtn()).toBeEnabled());
-			await userEvent.click(askBtn());
-			await vi.waitFor(() =>
-				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, '', 's1', ['att-1'])
-			);
-		});
-
-		it('refuses an oversized paste, which never goes up', async () => {
-			await open(withSession());
-			await settled();
-			paste(aFile('big.png', 'image/png', 2048));
-			expect(await screen.findByText('over the 1 KB limit')).toBeInTheDocument();
-			expect(askBtn()).toBeDisabled();
-			await userEvent.type(box(), '{Enter}');
-			expect(api.files.upload).not.toHaveBeenCalled();
-		});
-
-		it('asks nothing when the upload fails, keeping draft and files', async () => {
-			vi.mocked(api.files.upload).mockRejectedValue(new Error('too big for the server'));
-			await open(withSession());
-			await settled();
-			paste(shot());
-			await userEvent.type(box(), 'what is this?{Enter}');
-			expect(await screen.findByText('too big for the server')).toBeInTheDocument();
-			expect(api.ask.send).not.toHaveBeenCalled();
-			expect(box()).toHaveValue('what is this?');
-			expect(screen.getByText('shot.png')).toBeInTheDocument();
-		});
 
 		it('shows a question’s files, named from the run’s files', async () => {
 			const rs = aViewStore(undefined, {
@@ -852,41 +747,6 @@ describe('AskView', () => {
 				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'More?', 's2', ['att-1'])
 			);
 			expect(bubble('First thing')).toBeInTheDocument();
-		});
-
-		it('holds the question as asked while its files go up, keeping what comes after', async () => {
-			const up = deferred<Attachment[]>();
-			vi.mocked(api.files.upload).mockReturnValue(up.promise);
-			const sent = deferred<AskMessage>();
-			vi.mocked(api.ask.send).mockReturnValue(sent.promise);
-			await open(withSession());
-			await settled();
-			paste(shot());
-			await userEvent.type(box(), 'what is this?{Enter}');
-			await vi.waitFor(() => expect(box()).toHaveAttribute('readonly'));
-
-			// While the files go up, neither the words nor the files move.
-			await userEvent.type(box(), ' and more');
-			paste(aFile('early.png', 'image/png'));
-			expect(box()).toHaveValue('what is this?');
-			expect(screen.queryByText('early.png')).not.toBeInTheDocument();
-			expect(screen.queryByRole('button', { name: 'Remove shot.png' })).not.toBeInTheDocument();
-			expect(screen.getByRole('button', { name: /Attach$/ })).toBeDisabled();
-
-			// Once they are up, the box is the next question's.
-			up.resolve([anAttachment({ id: 'att-1' })]);
-			await vi.waitFor(() =>
-				expect(api.ask.send).toHaveBeenCalledExactlyOnceWith(RUN, 'what is this?', 's1', ['att-1'])
-			);
-			expect(box()).not.toHaveAttribute('readonly');
-			await userEvent.type(box(), 'next');
-			paste(aFile('later.png', 'image/png'));
-			expect(await screen.findByText('later.png')).toBeInTheDocument();
-
-			sent.resolve(anAskMessage({ seq: 9, sessionId: 's1' }));
-			await vi.waitFor(() => expect(screen.queryByText('shot.png')).not.toBeInTheDocument());
-			expect(screen.getByText('later.png')).toBeInTheDocument();
-			expect(box()).toHaveValue('next');
 		});
 	});
 });

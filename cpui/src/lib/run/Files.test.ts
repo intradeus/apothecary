@@ -1,327 +1,498 @@
-import { render, screen, waitFor, within } from '@testing-library/svelte';
+import { EditorView } from '@codemirror/view';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { WorkspaceEntry, WorkspaceFile } from '$lib/domain';
+import { ApiError } from '$lib/api/client';
+import type { RunCheckout, WorkspaceEntry, WorkspaceFile } from '$lib/domain';
 import { anEntry, aWorkspaceFile } from '$test/fixtures/review';
+import { aLiveRun, aViewStore } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
 import Files from './Files.svelte';
+import type { RunStore } from './store.svelte';
 
-vi.mock('$lib/api', () => ({ api: { workspace: { tree: vi.fn(), file: vi.fn() } } }));
+vi.mock('$lib/api', () => ({
+	api: {
+		workspace: {
+			tree: vi.fn(),
+			file: vi.fn(),
+			pathTree: vi.fn(),
+			pathFile: vi.fn(),
+			stat: vi.fn()
+		}
+	}
+}));
 
 const tree = vi.mocked(api.workspace.tree);
 const file = vi.mocked(api.workspace.file);
-const src = anEntry({ path: 'src', dir: true });
-const readme = anEntry({ path: 'README.md' });
-const dist = anEntry({ path: 'dist', dir: true, ignored: true });
-const main = anEntry({ path: 'src/main.ts' });
-const util = anEntry({ path: 'src/util', dir: true });
-const deep = anEntry({ path: 'src/util/deep.ts' });
-const dirs: Record<string, WorkspaceEntry[]> = {
-	'': [src, readme, dist],
-	src: [util, main],
-	'src/util': [deep]
+const pathFile = vi.mocked(api.workspace.pathFile);
+const pathTree = vi.mocked(api.workspace.pathTree);
+const app: RunCheckout = {
+	name: 'app',
+	dir: 'repo',
+	url: 'https://git.test/app.git',
+	branch: 'feat/x',
+	source: 'main',
+	primary: true
 };
+const lib: RunCheckout = { ...app, name: 'lib', dir: 'repos/lib', primary: false };
+const dirs: Record<string, WorkspaceEntry[]> = {
+	'': [anEntry({ path: 'README.md' }), anEntry({ path: 'main.go' })]
+};
+const TEXT = 'first line\nsecond line\nthird line';
 const entry = (path: string) => screen.getByTitle(path);
-const refresh = () => screen.getByRole('button', { name: 'Refresh' });
+const viewer = (path: string) => screen.getByRole('textbox', { name: `Contents of ${path}` });
+const editor = (path: string) => EditorView.findFromDOM(viewer(path))!;
 
-async function mount(props = {}) {
-	tree.mockImplementation(async (_run, path = '') => dirs[path] ?? []);
-	file.mockResolvedValue(aWorkspaceFile());
-	const view = render(Files, { runId: 'r1', ...props });
+/** A store on a run of two checkouts, as the page makes it. */
+const aStore = () => aViewStore(aLiveRun({ checkouts: [app, lib] }));
+
+function show(rs: RunStore = aStore(), props: { visible?: boolean } = {}) {
+	const onannotated = vi.fn();
+	const view = render(Files, { rs, visible: true, onannotated, ...props });
+	return { ...view, rs, onannotated };
+}
+async function mount(rs?: RunStore) {
+	const view = show(rs);
 	await screen.findByTitle('README.md');
 	return view;
 }
+async function openReadme() {
+	await userEvent.click(entry('README.md'));
+	return viewer('README.md');
+}
+/** Select lines `from`–`to` (1-based) of the shown file. */
+function select(path: string, from: number, to: number) {
+	const v = editor(path);
+	v.dispatch({ selection: { anchor: v.state.doc.line(from).from, head: v.state.doc.line(to).to } });
+}
+
+beforeAll(() => {
+	// CodeMirror measures text; jsdom lays nothing out.
+	Range.prototype.getClientRects = () => [] as unknown as DOMRectList;
+	Range.prototype.getBoundingClientRect = () => new DOMRect();
+});
+
+beforeEach(() => {
+	vi.resetAllMocks();
+	localStorage.clear();
+	tree.mockImplementation(async (_run, path = '') => dirs[path] ?? []);
+	file.mockImplementation(async (_run, path) => aWorkspaceFile({ path, content: TEXT }));
+	vi.mocked(api.workspace.stat).mockResolvedValue([]);
+});
 
 describe('Files', () => {
-	beforeEach(() => vi.resetAllMocks());
+	it('asks to pick a file until one is', async () => {
+		await mount();
+		expect(screen.getByText('Pick a file.')).toBeInTheDocument();
+		expect(screen.queryByRole('tablist')).not.toBeInTheDocument();
+	});
 
-	describe('the tree', () => {
-		it('says it is loading until the checkout is listed', () => {
-			tree.mockReturnValue(deferred<WorkspaceEntry[]>().promise);
-			render(Files, { runId: 'r1' });
-			expect(screen.getByRole('status')).toHaveTextContent('Loading…');
-		});
+	it('says it is loading until the file arrives', async () => {
+		await mount();
+		file.mockReturnValue(deferred<WorkspaceFile>().promise);
 
-		it('says files are unavailable, with the cause folded', async () => {
-			tree.mockRejectedValue(new Error('no workspace for this run'));
-			render(Files, { runId: 'r1' });
-			expect(await screen.findByRole('alert')).toHaveTextContent('Files are unavailable.');
-			expect(screen.getByText('no workspace for this run')).toBeInTheDocument();
-		});
+		await userEvent.click(entry('README.md'));
 
-		it('tries again on Retry', async () => {
-			tree.mockRejectedValueOnce(new Error('no workspace'));
-			tree.mockResolvedValue([readme]);
-			render(Files, { runId: 'r1' });
+		expect(screen.getByRole('status')).toHaveTextContent('Loading…');
+		expect(screen.queryByText('Pick a file.')).not.toBeInTheDocument();
+	});
 
-			await userEvent.click(await screen.findByRole('button', { name: /Retry/ }));
+	it('shows a file picked in the tree, in a tab, with its size', async () => {
+		await mount();
 
-			expect(await screen.findByTitle('README.md')).toBeInTheDocument();
-			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-		});
+		const shown = await openReadme();
 
-		it('stops loading on an empty checkout', async () => {
-			tree.mockResolvedValue([]);
-			render(Files, { runId: 'r1' });
-			await waitFor(() => expect(screen.queryByRole('status')).not.toBeInTheDocument());
-			expect(screen.getByText('Pick a file.')).toBeInTheDocument();
-		});
+		expect(shown).toHaveTextContent('first line');
+		expect(screen.getByText('· 2 KB')).toBeInTheDocument();
+		expect(file).toHaveBeenCalledExactlyOnceWith(expect.any(String), 'README.md', '');
+		expect(screen.getByRole('tab', { name: /README\.md/ })).toHaveAttribute(
+			'aria-selected',
+			'true'
+		);
+	});
 
-		it('asks for the run and repo it was given', async () => {
-			await mount({ runId: 'r9', repo: 'api' });
-			expect(tree).toHaveBeenCalledExactlyOnceWith('r9', '', 'api');
-		});
+	it('switches, moves and closes tabs', async () => {
+		const { rs } = await mount();
+		await openReadme();
+		await userEvent.click(entry('main.go'));
+		expect(await screen.findByRole('textbox', { name: 'Contents of main.go' })).toBeVisible();
 
-		it('marks folders and leaves files plain', async () => {
+		await userEvent.click(screen.getByRole('tab', { name: /README\.md/ }));
+		expect(viewer('README.md')).toBeInTheDocument();
+
+		screen.getByRole('tab', { name: /README\.md/ }).focus();
+		await userEvent.keyboard('{Alt>}{Shift>}{ArrowRight}{/Shift}{/Alt}');
+		expect(rs.files.tabs.map((t) => t.key)).toEqual([':main.go', ':README.md']);
+
+		await userEvent.click(screen.getByRole('button', { name: /Close .*README\.md/ }));
+		expect(rs.files.tabs.map((t) => t.key)).toEqual([':main.go']);
+		expect(await screen.findByRole('textbox', { name: 'Contents of main.go' })).toBeVisible();
+	});
+
+	it.each([
+		['still loading', () => deferred<WorkspaceFile>().promise],
+		['binary', async () => aWorkspaceFile({ path: 'main.go', binary: true })]
+	])('keeps a tab’s place and selection across a tab that is %s', async (_, read) => {
+		await mount();
+		await openReadme();
+		const before = editor('README.md');
+		select('README.md', 2, 3);
+		await waitFor(() => screen.getByRole('group', { name: /README\.md:2-3/ }));
+		before.scrollDOM.scrollTop = 120;
+		file.mockImplementation(read);
+
+		await userEvent.click(entry('main.go'));
+		await waitFor(() =>
+			expect(screen.getByRole('tab', { name: /main\.go/ })).toHaveAttribute('aria-selected', 'true')
+		);
+		expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+		await userEvent.click(screen.getByRole('tab', { name: /README\.md/ }));
+
+		const after = editor('README.md');
+		expect(after).toBe(before);
+		expect(after.scrollDOM.scrollTop).toBe(120);
+		const sel = after.state.selection.main;
+		expect(after.state.sliceDoc(sel.from, sel.to)).toBe('second line\nthird line');
+		expect(screen.getByRole('group', { name: /README\.md:2-3/ })).toBeInTheDocument();
+	});
+
+	it('lets a closed tab’s selection go with it', async () => {
+		const { rs } = await mount();
+		await openReadme();
+		select('README.md', 2, 3);
+		await waitFor(() => screen.getByRole('group', { name: /README\.md:2-3/ }));
+
+		await userEvent.click(screen.getByRole('button', { name: /Close .*README\.md/ }));
+		expect(rs.files.tabs).toEqual([]);
+		await openReadme();
+
+		expect(editor('README.md').state.selection.main.empty).toBe(true);
+		expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+	});
+
+	it.each([
+		['still loading', () => deferred<WorkspaceFile>().promise],
+		['binary', async () => aWorkspaceFile({ path: 'main.go', binary: true })]
+	])(
+		'lets a tab closed behind one that is %s come back fresh with the same text',
+		async (_, read) => {
 			await mount();
-			expect(entry('src')).toHaveTextContent('src/');
-			expect(entry('src')).toHaveAttribute('aria-expanded', 'false');
-			expect(entry('README.md')).toHaveTextContent(/README\.md$/);
-			expect(entry('README.md')).not.toHaveAttribute('aria-expanded');
-		});
+			await openReadme();
+			const before = editor('README.md');
+			select('README.md', 2, 3);
+			await waitFor(() => screen.getByRole('group', { name: /README\.md:2-3/ }));
+			before.scrollDOM.scrollTop = 120;
+			file.mockImplementation(async (_run, path) =>
+				path === 'main.go' ? read() : aWorkspaceFile({ path, content: TEXT })
+			);
+			await userEvent.click(entry('main.go'));
+			await waitFor(() =>
+				expect(screen.getByRole('tab', { name: /main\.go/ })).toHaveAttribute(
+					'aria-selected',
+					'true'
+				)
+			);
 
-		it('hides what git ignores until asked', async () => {
-			await mount();
-			expect(screen.queryByTitle('dist')).not.toBeInTheDocument();
+			await userEvent.click(screen.getByRole('button', { name: /Close .*README\.md/ }));
+			await openReadme();
 
-			await userEvent.click(screen.getByRole('checkbox', { name: 'Show ignored' }));
-			expect(entry('dist')).toBeInTheDocument();
+			const after = editor('README.md');
+			expect(after.state.selection.main.empty).toBe(true);
+			expect(after.scrollDOM.scrollTop).toBe(0);
+			expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+			select('README.md', 2, 3);
+			expect(await screen.findByRole('group', { name: /README\.md:2-3/ })).toBeInTheDocument();
+		}
+	);
 
-			await userEvent.click(screen.getByRole('checkbox', { name: 'Show ignored' }));
-			expect(screen.queryByTitle('dist')).not.toBeInTheDocument();
-		});
+	it('keeps tabs from two repos across a remount', async () => {
+		const first = await mount();
+		await openReadme();
+		first.rs.files.setRoot({ repo: 'lib' });
+		await waitFor(() => expect(first.rs.files.dirs['']).toBeDefined());
+		await tick();
+		await userEvent.click(entry('main.go'));
+		await screen.findByRole('textbox', { name: 'Contents of main.go' });
+		first.unmount();
 
-		it('opens a folder in place, listing it once', async () => {
-			await mount();
+		const rs = aStore();
+		show(rs);
 
-			await userEvent.click(entry('src'));
+		const tabs = await screen.findAllByRole('tab');
+		expect(tabs.map((t) => t.textContent?.trim())).toEqual([
+			expect.stringContaining('README.md'),
+			expect.stringContaining('main.go')
+		]);
+		expect(tabs[1]).toHaveAttribute('aria-selected', 'true');
+		expect(await screen.findByRole('textbox', { name: 'Contents of main.go' })).toBeVisible();
+		expect(file).toHaveBeenLastCalledWith(rs.runId, 'main.go', 'lib');
+	});
 
-			expect(await screen.findByTitle('src/main.ts')).toBeInTheDocument();
-			expect(entry('src')).toHaveAttribute('aria-expanded', 'true');
-			expect(tree).toHaveBeenLastCalledWith('r1', 'src', '');
-			const shown = screen.getAllByRole('button').map((b) => b.title);
-			expect(shown.indexOf('src/main.ts')).toBe(shown.indexOf('src') + 2);
-			expect(shown.indexOf('src/main.ts')).toBeLessThan(shown.indexOf('README.md'));
+	it('says when only the head of a file is shown', async () => {
+		file.mockResolvedValue(aWorkspaceFile({ truncated: true }));
+		await mount();
+		await userEvent.click(entry('README.md'));
 
-			await userEvent.click(entry('src'));
-			expect(screen.queryByTitle('src/main.ts')).not.toBeInTheDocument();
+		expect(await screen.findByText('· 2 KB · first 1 MB shown')).toBeInTheDocument();
+		expect(screen.getByText('truncated · first 1 MB shown')).toBeInTheDocument();
+	});
 
-			await userEvent.click(entry('src'));
-			expect(entry('src/main.ts')).toBeInTheDocument();
-			expect(tree.mock.calls.filter(([, path]) => path === 'src')).toHaveLength(1);
-		});
+	it('shows no text for a binary file', async () => {
+		file.mockResolvedValue(aWorkspaceFile({ binary: true, content: 'garbage' }));
+		await mount();
+		await userEvent.click(entry('README.md'));
 
-		it('indents by depth', async () => {
-			await mount();
-			await userEvent.click(entry('src'));
-			await userEvent.click(await screen.findByTitle('src/util'));
-			expect(entry('src')).toHaveStyle({ paddingLeft: '8px' });
-			expect(entry('src/util')).toHaveStyle({ paddingLeft: '20px' });
-			expect(await screen.findByTitle('src/util/deep.ts')).toHaveStyle({ paddingLeft: '32px' });
-		});
+		expect(await screen.findByText('Binary file · 2 KB')).toBeInTheDocument();
+		expect(screen.queryByText('garbage')).not.toBeInTheDocument();
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
 
-		it('says so when a folder cannot be listed', async () => {
-			await mount();
-			tree.mockRejectedValue(new Error('permission denied'));
+	it('says the file could not be read, and reads it again on Retry', async () => {
+		file.mockRejectedValueOnce(new Error('EIO'));
+		await mount();
+		await userEvent.click(entry('README.md'));
 
-			await userEvent.click(entry('src'));
+		expect(await screen.findByRole('alert')).toHaveTextContent('This file could not be read.');
+		expect(screen.getByText('EIO')).toBeInTheDocument();
 
-			expect(await screen.findByRole('alert')).toBeInTheDocument();
-		});
+		await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
 
-		it('names the folder, and lists it on Retry', async () => {
-			await mount();
-			tree.mockRejectedValueOnce(new Error('permission denied'));
-			await userEvent.click(entry('src'));
-			const card = await screen.findByRole('alert');
-			expect(card).toHaveTextContent('Could not list src.');
+		expect(await screen.findByRole('textbox', { name: 'Contents of README.md' })).toBeVisible();
+		expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+	});
 
-			await userEvent.click(within(card).getByRole('button', { name: /Retry/ }));
+	it('says a restored tab’s file is gone, and closes the tab on request', async () => {
+		file.mockRejectedValue(new ApiError('not found', 404, null));
+		const rs = aStore();
+		rs.files.open({ repo: '', path: 'old.go' });
+		await mount(rs);
 
-			expect(await screen.findByTitle('src/main.ts')).toBeInTheDocument();
-			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-		});
+		const alert = await screen.findByRole('alert');
+		expect(alert).toHaveTextContent('This file is no longer in the workspace.');
 
-		it('keeps both folders when two opened at once land out of order', async () => {
-			await mount();
-			const slow = deferred<WorkspaceEntry[]>();
-			const other = anEntry({ path: 'dist/out.js' });
-			tree.mockImplementationOnce(() => slow.promise);
-			tree.mockImplementationOnce(async () => [other]);
-			await userEvent.click(screen.getByRole('checkbox'));
+		await userEvent.click(within(alert).getByRole('button', { name: 'Close tab' }));
 
-			await userEvent.click(entry('src'));
-			await userEvent.click(entry('dist'));
-			await screen.findByTitle('dist/out.js');
-			slow.resolve([main]);
+		expect(rs.files.tabs).toEqual([]);
+		expect(screen.getByText('Pick a file.')).toBeInTheDocument();
+	});
 
-			expect(await screen.findByTitle('src/main.ts')).toBeInTheDocument();
-			expect(screen.getByTitle('dist/out.js')).toBeInTheDocument();
+	it('keeps a deleted file’s last content, and says so', async () => {
+		const { rs } = await mount();
+		await openReadme();
+
+		rs.files.active!.deleted = true;
+
+		expect(
+			await screen.findByText('Deleted from the workspace: this is its last content.')
+		).toBeInTheDocument();
+		expect(viewer('README.md')).toHaveTextContent('first line');
+	});
+
+	it('reveals the line a tab was opened at', async () => {
+		const { rs } = await mount();
+		rs.files.open({ repo: '', path: 'README.md' }, { from: 2, to: 2 });
+
+		await waitFor(() => expect(rs.files.active?.line).toBeNull());
+		const v = editor('README.md');
+		const sel = v.state.selection.main;
+		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
+	});
+
+	it('reveals a linked line in the file as edited since its tab was read, while the pane is hidden', async () => {
+		const { rs } = show(aStore(), { visible: false });
+		await screen.findByTitle('README.md');
+		await openReadme();
+		await userEvent.click(entry('main.go'));
+		await screen.findByRole('textbox', { name: 'Contents of main.go' });
+		// The agent adds two lines on top of README.md; no poll runs while hidden.
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+
+		rs.files.open({ repo: '', path: 'README.md' }, { from: 4, to: 4 });
+		await tick();
+
+		// The copy on show is not the one the line is of: nothing is picked in it.
+		const before = editor('README.md');
+		expect(before.state.doc.toString()).toBe(TEXT);
+		expect(before.state.selection.main.empty).toBe(true);
+		fresh.resolve(aWorkspaceFile({ path: 'README.md', content: `new\nnewer\n${TEXT}` }));
+
+		await waitFor(() => expect(rs.files.active?.line).toBeNull());
+		const v = editor('README.md');
+		const sel = v.state.selection.main;
+		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
+	});
+
+	it('reveals a linked line only in the content a Retry reads, not the copy kept through a failed read', async () => {
+		const { rs } = await mount();
+		await openReadme();
+		file.mockRejectedValueOnce(new Error('EIO'));
+		rs.files.open({ repo: '', path: 'README.md' }, { from: 4, to: 4 });
+		expect(await screen.findByRole('alert')).toHaveTextContent('This file could not be read.');
+		// The agent adds two lines on top of README.md before the Retry reads it.
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+
+		await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+
+		// The copy kept through the failure is not the one the line is of: nothing is picked in it.
+		const before = editor('README.md');
+		expect(before.state.doc.toString()).toBe(TEXT);
+		expect(before.state.selection.main.empty).toBe(true);
+		expect(rs.files.active?.line).toBeNull();
+		fresh.resolve(aWorkspaceFile({ path: 'README.md', content: `new\nnewer\n${TEXT}` }));
+
+		await waitFor(() => expect(editor('README.md').state.doc.lines).toBe(5));
+		await waitFor(() => expect(rs.files.active?.line).toBeNull());
+		const v = editor('README.md');
+		const sel = v.state.selection.main;
+		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
+	});
+
+	it('names an absolute file by its path', async () => {
+		pathFile.mockResolvedValue(aWorkspaceFile({ path: '/etc/hosts', content: '127.0.0.1' }));
+		const { rs } = await mount();
+		rs.files.open({ abs: '/etc/hosts' });
+		expect(await screen.findByRole('textbox', { name: 'Contents of /etc/hosts' })).toBeVisible();
+	});
+
+	describe('live refresh', () => {
+		it('runs while the pane is visible', async () => {
+			const { rs, rerender, unmount } = show(aStore(), { visible: false });
+			expect(rs.files.visible).toBe(false);
+			await rerender({ visible: true });
+			expect(rs.files.visible).toBe(true);
+			unmount();
+			expect(rs.files.visible).toBe(false);
 		});
 	});
 
-	describe('the file', () => {
-		it('asks to pick one until one is', async () => {
-			await mount();
-			expect(screen.getByText('Pick a file.')).toBeInTheDocument();
+	describe('go to path', () => {
+		const go = async (path: string) => {
+			await userEvent.click(screen.getByRole('button', { name: 'Go to path…' }));
+			const input = await screen.findByRole('combobox', { name: 'Path' });
+			await userEvent.clear(input);
+			await userEvent.type(input, `${path}{Enter}`);
+		};
+
+		it('opens a file in a tab', async () => {
+			pathTree.mockResolvedValue([]);
+			pathFile.mockResolvedValue(aWorkspaceFile({ path: '/etc/hosts' }));
+			const { rs } = await mount();
+
+			await go('/etc/hosts');
+
+			await waitFor(() => expect(rs.files.activeKey).toBe('/etc/hosts'));
+			await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
 		});
 
-		it('says it is loading until the file arrives', async () => {
-			await mount();
-			file.mockReturnValue(deferred<WorkspaceFile>().promise);
+		it('makes a folder the tree’s root', async () => {
+			pathTree.mockResolvedValue([anEntry({ path: '/etc/hosts' })]);
+			const { rs } = await mount();
 
-			await userEvent.click(entry('README.md'));
+			await go('/etc/');
 
-			expect(screen.getByRole('status')).toHaveTextContent('Loading…');
-			expect(screen.queryByText('Pick a file.')).not.toBeInTheDocument();
-		});
-
-		it('shows the file with its size', async () => {
-			await mount({ repo: 'api' });
-
-			await userEvent.click(entry('README.md'));
-
-			expect(await screen.findByText('first line')).toBeInTheDocument();
-			expect(screen.getByText('second line')).toBeInTheDocument();
-			expect(screen.getByText('· 2 KB')).toBeInTheDocument();
-			expect(file).toHaveBeenCalledExactlyOnceWith('r1', 'README.md', 'api');
-			expect(entry('README.md')).toHaveClass('on');
-		});
-
-		it('says when only the head of a file is shown', async () => {
-			await mount();
-			file.mockResolvedValue(aWorkspaceFile({ truncated: true }));
-
-			await userEvent.click(entry('README.md'));
-
-			expect(await screen.findByText('· 2 KB · first 1 MB shown')).toBeInTheDocument();
-			expect(screen.getByText('truncated · first 1 MB shown')).toBeInTheDocument();
-		});
-
-		it('shows no text for a binary file', async () => {
-			await mount();
-			file.mockResolvedValue(aWorkspaceFile({ binary: true, content: 'garbage' }));
-
-			await userEvent.click(entry('README.md'));
-
-			expect(await screen.findByText('Binary file · 2 KB')).toBeInTheDocument();
-			expect(screen.queryByText('garbage')).not.toBeInTheDocument();
-		});
-
-		it('says the file could not be read, and reads it again on Retry', async () => {
-			await mount();
-			file.mockRejectedValueOnce(new Error('EIO'));
-
-			await userEvent.click(entry('README.md'));
-
-			expect(await screen.findByRole('alert')).toHaveTextContent('This file could not be read.');
-			expect(screen.getByText('EIO')).toBeInTheDocument();
-
-			await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
-
-			expect(await screen.findByText('first line')).toBeInTheDocument();
-			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
-		});
-
-		it('drops the last error when another file is picked', async () => {
-			await mount();
-			await userEvent.click(entry('src'));
-			file.mockRejectedValueOnce(new Error('EIO'));
-			await userEvent.click(entry('README.md'));
-			await screen.findByRole('alert');
-
-			await userEvent.click(await screen.findByTitle('src/main.ts'));
-
-			await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
-		});
-
-		it('shows the last file picked when an earlier read lands after it', async () => {
-			await mount();
-			await userEvent.click(entry('src'));
-			const slow = deferred<WorkspaceFile>();
-			file.mockReturnValueOnce(slow.promise);
-			file.mockResolvedValueOnce(aWorkspaceFile({ content: 'from main' }));
-
-			await userEvent.click(entry('README.md'));
-			await userEvent.click(await screen.findByTitle('src/main.ts'));
-			await screen.findByText('from main');
-			slow.resolve(aWorkspaceFile({ content: 'from readme' }));
-			await slow.promise;
-			await tick();
-
-			expect(screen.getByText('from main')).toBeInTheDocument();
-		});
-
-		it('ignores an earlier read that fails after another file is picked', async () => {
-			await mount();
-			await userEvent.click(entry('src'));
-			const slow = deferred<WorkspaceFile>();
-			file.mockReturnValueOnce(slow.promise);
-			file.mockResolvedValueOnce(aWorkspaceFile({ content: 'from main' }));
-
-			await userEvent.click(entry('README.md'));
-			await userEvent.click(await screen.findByTitle('src/main.ts'));
-			await screen.findByText('from main');
-			slow.reject(new Error('too late'));
-			await expect(slow.promise).rejects.toThrow();
-			await tick();
-
-			expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+			await waitFor(() => expect(rs.files.root).toEqual({ abs: '/etc' }));
+			expect(await screen.findByTitle('/etc/hosts')).toBeInTheDocument();
 		});
 	});
 
-	describe('refreshing', () => {
-		it('lists every folder it has read again', async () => {
+	describe('annotating', () => {
+		const box = () => screen.getByRole('group', { name: /README\.md:2-3/ });
+
+		it('offers no box without a selection', async () => {
 			await mount();
-			await userEvent.click(entry('src'));
-			await screen.findByTitle('src/main.ts');
-			tree.mockClear();
-
-			await userEvent.click(refresh());
-
-			await waitFor(() => expect(tree).toHaveBeenCalledTimes(2));
-			expect(tree.mock.calls.map(([, path]) => path)).toEqual(['', 'src']);
+			await openReadme();
+			expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
 		});
 
-		it('shows what changed', async () => {
+		it('is off, with its reason, when no chat takes annotations', async () => {
 			await mount();
-			tree.mockResolvedValue([readme, anEntry({ path: 'NEW.md' })]);
+			await openReadme();
 
-			await userEvent.click(refresh());
+			select('README.md', 2, 3);
 
-			expect(await screen.findByTitle('NEW.md')).toBeInTheDocument();
+			const send = await within(await waitFor(box)).findByRole('button', {
+				name: 'Send to Session'
+			});
+			expect(send).toBeDisabled();
+			expect(
+				within(box()).getByText('Take over the agent or open Ask to send this to a chat')
+			).toBeInTheDocument();
 		});
 
-		it('reads the open file again', async () => {
-			await mount();
-			await userEvent.click(entry('README.md'));
-			await screen.findByText('first line');
-			file.mockResolvedValue(aWorkspaceFile({ content: 'rewritten' }));
+		it('sends the selected lines, then lets the selection go and reveals the chat', async () => {
+			const rs = aStore();
+			const add = vi.fn();
+			rs.composers.register({ kind: 'ask', add });
+			const { onannotated } = await mount(rs);
+			await openReadme();
+			select('README.md', 2, 3);
+			await waitFor(box);
 
-			await userEvent.click(refresh());
+			await userEvent.type(within(box()).getByRole('textbox'), 'why?');
+			await userEvent.click(within(box()).getByRole('button', { name: 'Send to Ask' }));
 
-			expect(await screen.findByText('rewritten')).toBeInTheDocument();
-			expect(file).toHaveBeenCalledTimes(2);
+			expect(add).toHaveBeenCalledOnce();
+			expect(JSON.stringify(add.mock.calls[0][0])).toContain('second line\\nthird line');
+			expect(onannotated).toHaveBeenCalledExactlyOnceWith('ask');
+			expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+			const sel = editor('README.md').state.selection.main;
+			expect(sel.empty).toBe(true);
 		});
 
-		it('reads no file when none is open', async () => {
-			await mount();
-			await userEvent.click(refresh());
-			await waitFor(() => expect(tree).toHaveBeenCalledTimes(2));
-			expect(file).not.toHaveBeenCalled();
+		it('annotates a blank line picked from the gutter, inside the file and at its end', async () => {
+			const rs = aStore();
+			const add = vi.fn();
+			rs.composers.register({ kind: 'ask', add });
+			file.mockImplementation(async (_run, path) =>
+				aWorkspaceFile({ path, content: 'first line\n\nthird line\n' })
+			);
+			await mount(rs);
+			const shown = await openReadme();
+			const v = editor('README.md');
+			// jsdom has no layout: a gutter click lands on whichever line the test names.
+			const gutterClick = (n: number) => {
+				vi.spyOn(v, 'lineBlockAtHeight').mockReturnValue(v.lineBlockAt(v.state.doc.line(n).from));
+				const number = shown
+					.closest('.cm-editor')!
+					.querySelector('.cm-lineNumbers .cm-gutterElement:last-child')!;
+				fireEvent.mouseDown(number, { button: 0 });
+			};
+
+			gutterClick(2);
+			expect(await screen.findByRole('group', { name: /README\.md:2$/ })).toBeInTheDocument();
+
+			gutterClick(4);
+			const last = await screen.findByRole('group', { name: /README\.md:4$/ });
+			await userEvent.click(within(last).getByRole('button', { name: 'Send to Ask' }));
+			expect(add).toHaveBeenCalledOnce();
+			expect(JSON.stringify(add.mock.calls[0][0])).toContain('README.md:4');
 		});
 
-		it('keeps the tree when a refresh fails', async () => {
+		it('lets the selection go on cancel', async () => {
 			await mount();
-			tree.mockRejectedValue(new Error('blip'));
+			await openReadme();
+			select('README.md', 2, 3);
+			await waitFor(box);
 
-			await userEvent.click(refresh());
+			await userEvent.click(within(box()).getByRole('button', { name: 'Cancel' }));
 
-			await waitFor(() => expect(tree).toHaveBeenCalledTimes(2));
-			expect(entry('README.md')).toBeInTheDocument();
-			expect(screen.queryByText('Files are unavailable.')).not.toBeInTheDocument();
+			expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
+		});
+
+		it('drops the box when another tab is shown', async () => {
+			await mount();
+			await openReadme();
+			select('README.md', 2, 3);
+			await waitFor(box);
+
+			await userEvent.click(entry('main.go'));
+
+			await screen.findByRole('textbox', { name: 'Contents of main.go' });
+			expect(screen.queryByRole('group', { name: /README/ })).not.toBeInTheDocument();
 		});
 	});
 });

@@ -61,6 +61,9 @@ const base = "http://sidecar"
 type Error struct {
 	Status int
 	Msg    string
+	// NoRoute: a 404 that is not the shim's own JSON error — the sidecar has
+	// no such route (it predates it), rather than no such file.
+	NoRoute bool
 }
 
 func (e *Error) Error() string { return fmt.Sprintf("sidecar %d: %s", e.Status, e.Msg) }
@@ -69,6 +72,13 @@ func (e *Error) Error() string { return fmt.Sprintf("sidecar %d: %s", e.Status, 
 func IsStatus(err error, status int) bool {
 	var e *Error
 	return errors.As(err, &e) && e.Status == status
+}
+
+// IsNoRoute reports whether err is a sidecar that lacks the route: one
+// started before the route existed.
+func IsNoRoute(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.NoRoute
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
@@ -97,10 +107,11 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 			Error string `json:"error"`
 		}
 		data, _ := io.ReadAll(io.LimitReader(res.Body, 64<<10))
-		if json.Unmarshal(data, &e) != nil || e.Error == "" {
+		shimErr := json.Unmarshal(data, &e) == nil && e.Error != ""
+		if !shimErr {
 			e.Error = strings.TrimSpace(string(data))
 		}
-		return &Error{Status: res.StatusCode, Msg: e.Error}
+		return &Error{Status: res.StatusCode, Msg: e.Error, NoRoute: res.StatusCode == http.StatusNotFound && !shimErr}
 	}
 	if out == nil {
 		_, _ = io.Copy(io.Discard, res.Body)
@@ -404,6 +415,9 @@ type TreeEntry struct {
 	Dir     bool   `json:"dir"`
 	Size    int64  `json:"size,omitempty"`
 	Ignored bool   `json:"ignored,omitempty"`
+	// Mtime: nanoseconds since the epoch as a decimal string (beyond
+	// JavaScript's safe integers); "" when unknown.
+	Mtime string `json:"mtime,omitempty"`
 }
 
 // Workspace calls take repo: the checkout name of a multi-repo run ("" or
@@ -420,11 +434,72 @@ type File struct {
 	Binary    bool   `json:"binary"`
 	Truncated bool   `json:"truncated"`
 	Content   string `json:"content"`
+	Mtime     string `json:"mtime"`
 }
 
 func (c *Client) File(ctx context.Context, repo, path string) (File, error) {
 	var out File
 	err := c.do(ctx, http.MethodGet, "/fs/file?"+url.Values{"repo": {repo}, "path": {path}}.Encode(), nil, &out)
+	return out, err
+}
+
+// AbsTree lists a directory by absolute or ~ path, as the workspace's remote
+// user; entries carry absolute paths.
+func (c *Client) AbsTree(ctx context.Context, path string) ([]TreeEntry, error) {
+	var out []TreeEntry
+	err := c.do(ctx, http.MethodGet, "/fs/abs/tree?"+url.Values{"path": {path}}.Encode(), nil, &out)
+	return out, err
+}
+
+// AbsFile reads a file by absolute or ~ path; File.Path is the expanded,
+// cleaned path.
+func (c *Client) AbsFile(ctx context.Context, path string) (File, error) {
+	var out File
+	err := c.do(ctx, http.MethodGet, "/fs/abs/file?"+url.Values{"path": {path}}.Encode(), nil, &out)
+	return out, err
+}
+
+// StatItem is a path in a checkout (Repo, Path; "" = the primary) or an
+// absolute one (Abs).
+type StatItem struct {
+	Repo string `json:"repo,omitempty"`
+	Path string `json:"path,omitempty"`
+	Abs  string `json:"abs,omitempty"`
+}
+
+// StatResult is one item's answer: Error says why it could not be looked
+// at (unreadable, outside the checkout); a missing path is Exists false.
+type StatResult struct {
+	Exists bool   `json:"exists"`
+	Dir    bool   `json:"dir"`
+	Size   int64  `json:"size"`
+	Mtime  string `json:"mtime"`
+	Error  string `json:"error,omitempty"`
+}
+
+// Stat looks at each item on its own; the answers come in the same order.
+func (c *Client) Stat(ctx context.Context, items []StatItem) ([]StatResult, error) {
+	var out struct {
+		Items []StatResult `json:"items"`
+	}
+	err := c.do(ctx, http.MethodPost, "/fs/stat", map[string][]StatItem{"items": items}, &out)
+	return out.Items, err
+}
+
+// Resolved is where a mentioned path lives: a checkout's (Repo, Path; the
+// primary is repo "") or an absolute one (Abs).
+type Resolved struct {
+	Repo string `json:"repo,omitempty"`
+	Path string `json:"path,omitempty"`
+	Abs  string `json:"abs,omitempty"`
+	Dir  bool   `json:"dir"`
+}
+
+// Resolve finds path: relative in the checkout named repo first, then the
+// others; absolute (or ~) mapped back to a checkout when it lies in one.
+func (c *Client) Resolve(ctx context.Context, repo, path string) (Resolved, error) {
+	var out Resolved
+	err := c.do(ctx, http.MethodGet, "/fs/resolve?"+url.Values{"repo": {repo}, "path": {path}}.Encode(), nil, &out)
 	return out, err
 }
 
