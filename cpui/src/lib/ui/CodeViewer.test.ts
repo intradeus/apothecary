@@ -361,6 +361,34 @@ describe('CodeViewer', () => {
 			expect(props.onselect).toHaveBeenLastCalledWith({ from: 1, to: 1 });
 		});
 
+		it("keeps each document's search match apart from another's selection", async () => {
+			const { props, view } = setup({ docKey: 'A', content: 'a1\na2\na3' });
+			view.dispatch({ selection: { anchor: 3, head: 5 }, userEvent: 'select.search' });
+			props.docKey = 'B';
+			props.content = 'b1\nb2\nb3';
+			await tick();
+			view.dispatch({ selection: { anchor: 0, head: 2 }, userEvent: 'select.pointer' });
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 1, to: 1 });
+
+			// Back on A, its match is still a match, not lines.
+			props.docKey = 'A';
+			props.content = 'a1\na2\na3';
+			await tick();
+			expect(lineText(view)).toBe('a2');
+			expect(props.onselect).toHaveBeenLastCalledWith(null);
+
+			// Back on B, a live refresh keeps its lines picked.
+			props.docKey = 'B';
+			props.content = 'b1\nb2\nb3';
+			await tick();
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 1, to: 1 });
+			props.content = 'b1\nb2\nb3\nb4';
+			await tick();
+			expect(view.state.doc.toString()).toBe('b1\nb2\nb3\nb4');
+			expect(lineText(view)).toBe('b1');
+			expect(props.onselect).toHaveBeenLastCalledWith({ from: 1, to: 1 });
+		});
+
 		it('clears the selection', () => {
 			const { props, view, component } = setup();
 			view.dispatch({ selection: { anchor: 0, head: 6 } });

@@ -66,8 +66,13 @@
 	let wanted = '';
 	/** The last selection reported, with its document: what the caller holds. */
 	let reported: string | null = null;
-	/** The selection was last set by search (a match, not lines to talk about). */
-	let bySearch = false;
+
+	// The selection was last set by search: a match, not lines to talk
+	// about. It lives in the state, so it travels with each document.
+	const bySearch = StateField.define<boolean>({
+		create: () => false,
+		update: (value, tr) => (tr.selection ? tr.isUserEvent('select.search') : value)
+	});
 
 	// Lines picked whole (a line number, a revealed line), by the starts of
 	// the first and last: a blank line has no text to select, so its pick
@@ -255,7 +260,7 @@
 	// ending at a line's start (a drag down to the next line's edge) stops
 	// on the line before. A search match is a selection too, but not lines
 	// picked to talk about.
-	function report(state: EditorState, searched = false) {
+	function report(state: EditorState) {
 		const sel = state.selection.main;
 		const whole = state.field(pickedLines);
 		let range: Lines | null = null;
@@ -264,7 +269,7 @@
 				from: state.doc.lineAt(whole.from).number,
 				to: state.doc.lineAt(whole.to).number
 			};
-		else if (!sel.empty && !searched) {
+		else if (!sel.empty && !state.field(bySearch)) {
 			const last = state.doc.lineAt(sel.to);
 			range = {
 				from: state.doc.lineAt(sel.from).number,
@@ -301,6 +306,7 @@
 	const fixed: Extension = [
 		minimalSetup,
 		pickedLines,
+		bySearch,
 		lineNumbers({ domEventHandlers: { mousedown: gutterDown } }),
 		EditorState.readOnly.of(true),
 		search({ top: true }),
@@ -309,8 +315,7 @@
 		syntaxHighlighting(hues),
 		theme,
 		EditorView.updateListener.of((u) => {
-			if (u.selectionSet) bySearch = u.transactions.some((tr) => tr.isUserEvent('select.search'));
-			if (u.selectionSet || u.docChanged) report(u.state, bySearch);
+			if (u.selectionSet || u.docChanged) report(u.state);
 		})
 	];
 
