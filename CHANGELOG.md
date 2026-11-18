@@ -2,6 +2,26 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v4.1.0 (2026-11-18)
+
+### Features
+
+- **run**: turn the Files pane into a tabbed, live code viewer
+
+### Fixes
+
+- **run**: relist a folder whose listing had no stat baseline
+- **run**: keep a linked line pending when a deleted tab's read fails
+- **run**: keep a linked line pending through a failed file tab read
+- **run**: drop a Go to path read that lands after the modal closed
+- **run**: reopen a closed file tab fresh, without its old scroll
+- **run**: ignore a closed file tab's late read after it reopens
+- **run**: reveal a linked line in a fresh read of its file tab
+- **run**: keep a search match per file tab, not across tabs
+- **run**: stop live refresh re-reading a file tab already loading
+- **run**: let blank lines be picked from the gutter and annotated
+- **run**: keep file tabs' scroll and selection across loading tabs
+
 ## v4.0.1 (2026-11-18)
 
 ### Fixes
