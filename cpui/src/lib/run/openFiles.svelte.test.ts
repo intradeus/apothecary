@@ -990,22 +990,30 @@ describe('live refresh', () => {
 		expect(tree).toHaveBeenCalledExactlyOnceWith(RUN, '', '');
 	});
 
-	it('takes a baseline for a folder listed without one, and skips a vanished one', async () => {
+	it('lists a folder again when its listing had no baseline, and skips a vanished one', async () => {
+		// The pre-list stat fails, the listing succeeds, then the folder changes.
 		stat.mockRejectedValueOnce(new Error('blip'));
+		tree.mockResolvedValue([]);
 		const f = new OpenFiles(RUN);
 		f.visible = true;
 		f.show();
 		await settled();
 		stop = f.start(() => true);
+		expect(f.dirs['']).toEqual([]);
+		const added = anEntry({ path: 'new.ts' });
+		tree.mockResolvedValue([added]);
 
 		statsAre(() => aStat({ dir: true, mtime: '5' }));
 		await tickNow();
+		await settled();
+		expect(tree).toHaveBeenCalledTimes(2);
+		expect(f.dirs['']).toEqual([added]);
+
 		statsAre(() => aStat({ exists: false }));
 		await tickNow();
 		statsAre(() => aStat({ dir: true, mtime: '5' }));
 		await tickNow();
-
-		expect(tree).toHaveBeenCalledOnce();
+		expect(tree).toHaveBeenCalledTimes(2);
 	});
 
 	it('watches the folders of the root on show', async () => {

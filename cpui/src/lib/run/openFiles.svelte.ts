@@ -507,10 +507,11 @@ export class OpenFiles {
 
 	#applyDir(root: TreeRoot, path: string, st: PathStat) {
 		if (!st.exists) return;
-		const k = locKey(folderLoc(root, path));
-		const base = this.#dirStat.get(k);
-		if (!base) this.#dirStat.set(k, st);
-		else if (!same(base, st) && this.#claim(root, path)) void this.#list(root, path, st);
+		const base = this.#dirStat.get(locKey(folderLoc(root, path)));
+		if (base && same(base, st)) return;
+		// Listed without a baseline (its stat failed): the folder may have changed since,
+		// so it is listed again, with this stat, issued before that listing, as its baseline.
+		if (this.#claim(root, path)) void this.#list(root, path, st);
 	}
 
 	// --- storage --------------------------------------------------------------------
