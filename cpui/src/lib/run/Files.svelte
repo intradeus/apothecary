@@ -47,6 +47,9 @@
 	// loads, is binary or failed, so every document keeps its state and scroll.
 	type Held = { key: string; content: string; path: string; line: LineRange | null };
 	let last: Held | null = null;
+	// The held tab was closed: the viewer forgot it, so the tab opened again
+	// is a new document to it, even with the very same text.
+	let closed = false;
 	const held = $derived.by(() => {
 		if (!files.tabs.length) return (last = null);
 		if (!active || !text) return last;
@@ -54,11 +57,15 @@
 		// The same document as held: the same object, so the viewer is not stirred.
 		const same =
 			last &&
+			!closed &&
 			last.key === next.key &&
 			last.content === next.content &&
 			last.path === next.path &&
 			last.line === next.line;
-		if (!same) last = next;
+		if (!same) {
+			last = next;
+			closed = false;
+		}
 		return last;
 	});
 
@@ -84,6 +91,7 @@
 	});
 
 	function close(key: string) {
+		if (last?.key === key) closed = true;
 		files.close(key);
 		viewer?.forget(key);
 		if (selection?.key === key) selection = null;

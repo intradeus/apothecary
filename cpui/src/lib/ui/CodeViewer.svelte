@@ -371,6 +371,8 @@
 						extensions: [fixed, lang.of([]), local.of(localised())]
 					})
 				);
+				// A new state keeps the scroller where the last one left it.
+				v.scrollDOM.scrollTop = 0;
 			}
 			report(v.state);
 		}
