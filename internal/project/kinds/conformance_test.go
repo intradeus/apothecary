@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -183,6 +184,9 @@ func startACP(t *testing.T, command string, env []string, dir string) *acpClient
 	t.Helper()
 	cmd := exec.Command("sh", "-c", "exec "+command)
 	cmd.Env, cmd.Dir = env, dir
+	// Its own process group: the harness's children (the CLI under a bridge,
+	// their MCP servers) are stopped with it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
 		t.Fatal(err)
@@ -205,11 +209,38 @@ func startACP(t *testing.T, command string, env []string, dir string) *acpClient
 			_ = cmd.Process.Kill()
 			<-c.exited
 		}
+		c.stopGroup()
 		if t.Failed() {
 			t.Logf("%s stderr:\n%s", command, tail(c.stderrText(), 4000))
 		}
 	})
 	return c
+}
+
+// stopGroup waits for the rest of the harness's process group to go once the
+// harness itself has: its children outlive it a moment, still writing under
+// its HOME, and t.TempDir's cleanup removing that HOME meanwhile fails the
+// test ("directory not empty"). What is still there after five seconds is
+// killed, and waited for the same way.
+func (c *acpClient) stopGroup() {
+	pgid := c.cmd.Process.Pid
+	gone := func() bool {
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			if syscall.Kill(-pgid, 0) == syscall.ESRCH {
+				return true
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		return false
+	}
+	if gone() {
+		return
+	}
+	_ = syscall.Kill(-pgid, syscall.SIGKILL)
+	if !gone() {
+		c.t.Errorf("process group %d outlived SIGKILL", pgid)
+	}
 }
 
 type lockedWriter struct {
