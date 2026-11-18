@@ -166,10 +166,31 @@ describe('tabs', () => {
 		f.open(at('b.go'), { from: 3, to: 3 });
 		await settled();
 		expect(f.active?.error).not.toBe('');
+		expect(f.active?.line).toBeNull();
 		f.reload(':b.go');
 		await settled();
 		expect(f.active?.file?.path).toBe('b.go');
 		expect(f.active?.line).toEqual({ from: 3, to: 3 });
+	});
+
+	it('keeps a linked line pending through a failed read of a shown tab, for the content a Retry reads', async () => {
+		const f = new OpenFiles(RUN);
+		f.open(at('a.go'));
+		await settled();
+		file.mockRejectedValueOnce(refused(500));
+		f.open(at('a.go'), { from: 9, to: 9 });
+		await settled();
+		expect(f.active?.error).not.toBe('');
+		expect(f.active?.line).toBeNull();
+
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+		f.reload(':a.go');
+		expect(f.active?.line).toBeNull();
+		fresh.resolve(aFile({ path: 'a.go', content: 'new\n'.repeat(9), mtime: '2' }));
+		await settled();
+		expect(f.active?.file?.mtime).toBe('2');
+		expect(f.active?.line).toEqual({ from: 9, to: 9 });
 	});
 
 	it('keeps the line until it was revealed', async () => {

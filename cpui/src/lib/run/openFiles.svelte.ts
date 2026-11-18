@@ -306,8 +306,9 @@ export class OpenFiles {
 				if (t.file) t.deleted = true;
 				else t.gone = true;
 			} else t.error = errorMessage(e);
-			// Shown on the last content when the file was deleted; else once a retry reads it.
-			this.#land(t);
+			// A deleted file shows the lines on its last content; any other failure
+			// keeps them pending until a read succeeds, never on the content retained.
+			if (t.deleted) this.#land(t);
 		}
 	}
 

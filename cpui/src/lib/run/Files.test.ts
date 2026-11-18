@@ -325,6 +325,32 @@ describe('Files', () => {
 		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
 	});
 
+	it('reveals a linked line only in the content a Retry reads, not the copy kept through a failed read', async () => {
+		const { rs } = await mount();
+		await openReadme();
+		file.mockRejectedValueOnce(new Error('EIO'));
+		rs.files.open({ repo: '', path: 'README.md' }, { from: 4, to: 4 });
+		expect(await screen.findByRole('alert')).toHaveTextContent('This file could not be read.');
+		// The agent adds two lines on top of README.md before the Retry reads it.
+		const fresh = deferred<WorkspaceFile>();
+		file.mockReturnValueOnce(fresh.promise);
+
+		await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+
+		// The copy kept through the failure is not the one the line is of: nothing is picked in it.
+		const before = editor('README.md');
+		expect(before.state.doc.toString()).toBe(TEXT);
+		expect(before.state.selection.main.empty).toBe(true);
+		expect(rs.files.active?.line).toBeNull();
+		fresh.resolve(aWorkspaceFile({ path: 'README.md', content: `new\nnewer\n${TEXT}` }));
+
+		await waitFor(() => expect(editor('README.md').state.doc.lines).toBe(5));
+		await waitFor(() => expect(rs.files.active?.line).toBeNull());
+		const v = editor('README.md');
+		const sel = v.state.selection.main;
+		expect(v.state.sliceDoc(sel.from, sel.to)).toBe('second line');
+	});
+
 	it('names an absolute file by its path', async () => {
 		pathFile.mockResolvedValue(aWorkspaceFile({ path: '/etc/hosts', content: '127.0.0.1' }));
 		const { rs } = await mount();
