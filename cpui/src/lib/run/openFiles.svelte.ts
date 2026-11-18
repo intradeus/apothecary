@@ -160,8 +160,10 @@ export class OpenFiles {
 	#expanded = $state.raw<Record<string, Record<string, true>>>({});
 	/** The checkout to go back to from an absolute root. */
 	#lastRepo = '';
-	/** Reads per tab in the order they were asked: only the latest lands. */
+	/** The latest read asked per tab: only it lands. Numbers come from one
+	 *  counter, so a tab closed and opened again never reuses a closed one's. */
 	#reads = new Map<string, number>();
+	#readSeq = 0;
 	/** Lines a line-targeted open asked for, by tab: they become the tab's
 	 *  `line` with the content of the read that open issued (or a later one). */
 	#wanted = new Map<string, LineRange>();
@@ -277,7 +279,7 @@ export class OpenFiles {
 
 	async #read(key: string) {
 		const tab = this.#tab(key)!;
-		const asked = (this.#reads.get(key) ?? 0) + 1;
+		const asked = ++this.#readSeq;
 		this.#reads.set(key, asked);
 		const loc = plainLoc(tab.loc);
 		tab.loading = true;

@@ -298,6 +298,28 @@ describe('tabs', () => {
 
 		expect(f.tabs).toEqual([]);
 	});
+
+	it.each(['read', 'failure'])(
+		'keeps a reopened tab’s content over the closed one’s late %s',
+		async (late) => {
+			const old = deferred<WorkspaceFile>();
+			const fresh = deferred<WorkspaceFile>();
+			file.mockReturnValueOnce(old.promise).mockReturnValueOnce(fresh.promise);
+			const f = new OpenFiles(RUN);
+			f.open(at('a.go'));
+			f.close(':a.go');
+			f.open(at('a.go'));
+
+			fresh.resolve(aFile({ content: 'new' }));
+			await settled();
+			if (late === 'read') old.resolve(aFile({ content: 'old' }));
+			else old.reject(new Error('late'));
+			await settled();
+
+			expect(f.active).toMatchObject({ error: '', loading: false });
+			expect(f.active?.file?.content).toBe('new');
+		}
+	);
 });
 
 describe('storage', () => {
