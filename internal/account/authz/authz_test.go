@@ -112,7 +112,8 @@ var relations = []string{"owner", "maintainer", "operator", "viewer", "none"}
 
 // workshopMatrix is the spec of a shared workshop, one column per relation
 // above: what each holds on the workshop's own resources, for every
-// instance role alike — the instance role adds nothing inside a workshop.
+// instance role alike — the instance role adds nothing inside a workshop,
+// but takes ownership away: a guest owns nothing (ownerAsGuest).
 var workshopMatrix = map[Action][5]Outcome{
 	ProjectRead:    {A, A, A, A, H},
 	ProjectWrite:   {A, A, R, R, H},
@@ -160,9 +161,18 @@ var instanceMatrix = map[Action][3]Outcome{
 	SettingsWrite:    {A, A, A},
 }
 
+// ownerAsGuest is the owner column for an account demoted to guest: its
+// workshop is not there for it.
+const ownerAsGuest = H
+
 // personalKinds are never shared: their owner holds them, nobody else
 // knows they are there.
 var personalKinds = []Kind{KindIntegration, KindCredential, KindChannel, KindSkill, KindAnalytics, KindNotice, KindSettings}
+
+// frozenForGuests are the personal kinds whose changes are a member's: a
+// guest still sees its own, as it still sees its notices, settings and
+// dashboards and changes them.
+var frozenForGuests = []Kind{KindIntegration, KindCredential, KindChannel, KindSkill}
 
 // sharedWorld is one workshop P owned by "owner" and shared with one
 // account at each role, plus "none", who is not in it.
@@ -210,6 +220,9 @@ func TestPolicyMatrix(t *testing.T) {
 						if read := workshopMatrix[kind.Read()][i]; read == H {
 							exp = H
 						}
+						if rel == "owner" && r == auth.RoleGuest {
+							exp = ownerAsGuest
+						}
 						if got != exp {
 							t.Errorf("%s (%s) %s on a %s = %v, want %v", rel, r, act, kind, got, exp)
 						}
@@ -238,7 +251,11 @@ func TestPolicyMatrix(t *testing.T) {
 				for _, rel := range relations {
 					for _, r := range auth.Roles {
 						want := H
-						if rel == "owner" {
+						switch {
+						case rel != "owner":
+						case r == auth.RoleGuest && act != kind.Read() && slices.Contains(frozenForGuests, kind):
+							want = R
+						default:
 							want = A
 						}
 						if got := decide(t, a, person(rel, r), act, res); got != want {
@@ -391,7 +408,7 @@ func TestVisibility(t *testing.T) {
 	a := newAuthorizer(t, f)
 	ctx := context.Background()
 
-	v, err := a.Visibility(ctx, person("viewer", auth.RoleGuest), KindRun)
+	v, err := a.Visibility(ctx, person("viewer", auth.RoleMember), KindRun)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,6 +416,16 @@ func TestVisibility(t *testing.T) {
 		t.Errorf("viewer = %+v, want %+v", v, want)
 	}
 	if !v.Sees("viewer", "") || !v.Sees("owner", "P") || v.Sees("stranger", "S") || v.Sees("", "") {
+		t.Errorf("Sees disagrees with %+v", v)
+	}
+
+	// Demoted to guest, the workshop it made is gone from its lists, and so
+	// are its own rows: it keeps only what is shared with it.
+	v, err = a.Visibility(ctx, person("viewer", auth.RoleGuest), KindRun)
+	if want := (Visibility{ProjectIDs: []string{"P"}}); err != nil || !reflect.DeepEqual(v, want) {
+		t.Errorf("viewer demoted to guest = %+v, %v; want %+v", v, err, want)
+	}
+	if v.Sees("viewer", "") || v.Sees("viewer", "Q") || !v.Sees("owner", "P") {
 		t.Errorf("Sees disagrees with %+v", v)
 	}
 
@@ -451,6 +478,9 @@ func TestAccess(t *testing.T) {
 	tok := withToken(person("maintainer", auth.RoleMember), []string{"run:read", "run:shell"}, nil)
 	if _, acts, _ := a.Access(ctx, tok, "P"); !reflect.DeepEqual(acts, []Action{RunRead, RunShell}) {
 		t.Errorf("a token's access = %v", acts)
+	}
+	if _, acts, err := a.Access(ctx, person("owner", auth.RoleGuest), "P"); acts != nil || err != nil {
+		t.Errorf("an owner demoted to guest holds %v, %v", acts, err)
 	}
 	if role, acts, err := a.Access(ctx, person("owner", auth.RoleMember), "gone"); role != "" || acts != nil || err != nil {
 		t.Errorf("a missing workshop = %s %v %v", role, acts, err)

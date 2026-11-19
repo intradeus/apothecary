@@ -70,7 +70,7 @@ func staticEntities() cedar.EntityMap {
 	m[member] = cedar.Entity{UID: member}
 	m[guest] = cedar.Entity{UID: guest}
 	m[instance] = cedar.Entity{UID: instance}
-	for _, g := range []string{groupAdmin, groupBrowse, groupPersonal, groupOwned, groupViewer, groupOperator, groupMaintainer, groupManageSelf} {
+	for _, g := range []string{groupAdmin, groupBrowse, groupPersonal, groupOwned, groupMine, groupViewer, groupOperator, groupMaintainer, groupManageSelf} {
 		m[actionUID(g)] = cedar.Entity{UID: actionUID(g)}
 	}
 	for _, s := range vocabulary {

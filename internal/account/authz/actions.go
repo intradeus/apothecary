@@ -69,7 +69,8 @@ const (
 	groupAdmin      = "admin"      // the instance admin's
 	groupBrowse     = "browse"     // on a route with no resource: anyone signed in
 	groupPersonal   = "personal"   // on a route with no resource: members and admins
-	groupOwned      = "owned"      // on a resource: its owner, and its workshop's
+	groupOwned      = "owned"      // on a resource: its owner, and its workshop's — a member or an admin
+	groupMine       = "mine"       // on one's own personal resource: its owner, whatever its role
 	groupViewer     = "viewer"     // on a workshop's resource: a viewer and up
 	groupOperator   = "operator"   // ... an operator and up
 	groupMaintainer = "maintainer" // ... a maintainer
@@ -89,7 +90,7 @@ type Spec struct {
 	groups []string
 }
 
-const b, p, own = groupBrowse, groupPersonal, groupOwned
+const b, p, own, mine = groupBrowse, groupPersonal, groupOwned, groupMine
 
 // vocabulary is every action, in the order the UI lists them.
 var vocabulary = []Spec{
@@ -112,20 +113,20 @@ var vocabulary = []Spec{
 	{TicketRead, KindTicket, true, "See tickets", []string{b, own, groupViewer}},
 	{TicketWrite, KindTicket, true, "Create and change tickets", []string{b, own, groupOperator}},
 
-	{IntegrationRead, KindIntegration, true, "See one's integrations", []string{b, own}},
+	{IntegrationRead, KindIntegration, true, "See one's integrations", []string{b, mine}},
 	{IntegrationWrite, KindIntegration, true, "Create and change one's integrations", []string{p, own}},
-	{CredentialRead, KindCredential, true, "See one's model credentials", []string{b, own}},
+	{CredentialRead, KindCredential, true, "See one's model credentials", []string{b, mine}},
 	{CredentialWrite, KindCredential, true, "Create and change one's model credentials", []string{p, own}},
-	{ChannelRead, KindChannel, true, "See one's notification channels", []string{b, own}},
+	{ChannelRead, KindChannel, true, "See one's notification channels", []string{b, mine}},
 	{ChannelWrite, KindChannel, true, "Add and remove one's notification channels", []string{p, own}},
-	{SkillRead, KindSkill, true, "See one's skills and skillsets", []string{b, own}},
+	{SkillRead, KindSkill, true, "See one's skills and skillsets", []string{b, mine}},
 	{SkillWrite, KindSkill, true, "Create and change one's skills and skillsets", []string{p, own}},
-	{AnalyticsRead, KindAnalytics, true, "Query run analytics; see one's dashboards", []string{b, own}},
-	{AnalyticsWrite, KindAnalytics, true, "Change one's dashboards and scorecards", []string{b, own}},
-	{NoticeRead, KindNotice, true, "See one's notices", []string{b, own}},
-	{NoticeWrite, KindNotice, true, "Dismiss one's notices", []string{b, own}},
-	{SettingsRead, KindSettings, true, "See one's settings", []string{b, own}},
-	{SettingsWrite, KindSettings, true, "Change one's settings", []string{b, own}},
+	{AnalyticsRead, KindAnalytics, true, "Query run analytics; see one's dashboards", []string{b, mine}},
+	{AnalyticsWrite, KindAnalytics, true, "Change one's dashboards and scorecards", []string{b, mine}},
+	{NoticeRead, KindNotice, true, "See one's notices", []string{b, mine}},
+	{NoticeWrite, KindNotice, true, "Dismiss one's notices", []string{b, mine}},
+	{SettingsRead, KindSettings, true, "See one's settings", []string{b, mine}},
+	{SettingsWrite, KindSettings, true, "Change one's settings", []string{b, mine}},
 }
 
 var byAction = func() map[Action]Spec {

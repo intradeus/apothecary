@@ -45,7 +45,8 @@ const (
 	// RoleMember keeps workshops and configuration of its own.
 	RoleMember Role = "member"
 	// RoleGuest has only what is shared with it: it creates no workshop,
-	// integration, credential, skill or channel.
+	// integration, credential, skill or channel, and an account demoted to
+	// it loses the ones it owns (hidden, or frozen for its configuration).
 	RoleGuest Role = "guest"
 )
 

@@ -50,7 +50,7 @@ type Context = { token: Token };
 
 // The action groups the policies grant. An action's membership is in
 // actions.go; this file declares the same and the test holds them equal.
-action admin, browse, personal, owned, viewer, operator, maintainer, manageself;
+action admin, browse, personal, owned, mine, viewer, operator, maintainer, manageself;
 
 action "instance:admin" in [admin] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "account:read" in [browse] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
@@ -70,17 +70,17 @@ action "run:shell" in [browse, owned, maintainer] appliesTo { principal: User, r
 action "ticket:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "ticket:write" in [browse, owned, operator] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 
-action "integration:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "integration:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "integration:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "credential:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "credential:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "credential:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "channel:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "channel:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "channel:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "skill:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "skill:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "skill:write" in [personal, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "analytics:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "analytics:write" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "notice:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "notice:write" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "settings:read" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
-action "settings:write" in [browse, owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "analytics:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "analytics:write" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "notice:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "notice:write" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "settings:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "settings:write" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };

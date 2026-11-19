@@ -25,14 +25,23 @@ permit (principal in Role::"member", action in Action::"personal", resource is I
 
 // --- What one owns ------------------------------------------------------------
 
+// Ownership is a member's (an admin is one): an account demoted to guest
+// keeps its rows but none of their powers — its old workshops, their runs
+// and tickets are hidden from it, its personal configuration frozen.
 @id("owner")
-permit (principal, action in Action::"owned", resource is Resource)
+permit (principal in Role::"member", action in Action::"owned", resource is Resource)
 when { resource.owner == principal };
 
 // A workshop's owner holds everything in it, whoever made it.
 @id("workshop-owner")
-permit (principal, action in Action::"owned", resource is Resource)
+permit (principal in Role::"member", action in Action::"owned", resource is Resource)
 when { resource has project && resource.project.owner == principal };
+
+// What is one's own whatever one's role: one's notices, settings and
+// dashboards, and seeing one's personal configuration.
+@id("mine")
+permit (principal, action in Action::"mine", resource is Resource)
+when { resource.owner == principal };
 
 // --- A shared workshop: viewer < operator < maintainer ------------------------
 

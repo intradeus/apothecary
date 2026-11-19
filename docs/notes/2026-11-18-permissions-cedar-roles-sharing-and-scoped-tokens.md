@@ -45,7 +45,16 @@ policy matrix is the real guard.
   who also holds `instance:admin` — and nothing else: no rule grants an
   admin a view into anyone's work. `member` is today's user. `guest`
   creates no workshop, integration, credential, skill or channel (403); it
-  has what is shared with it, and its own account, tokens and keys. The
+  has what is shared with it, and its own account, tokens and keys.
+  Ownership is a member's (the `owner` and `workshop-owner` policies
+  require `Role::"member"`, which an admin is in), so an account demoted
+  to guest keeps its rows but not their powers: the workshops it made,
+  their runs and tickets, are not there for it (404, and gone from its
+  lists: `Visibility` adds own rows only where the policies let the
+  account read one); its integrations, credentials, channels and skills
+  stay readable and frozen (403 on a change); its notices, settings and
+  dashboards (the `mine` group) stay its own. Promoted back, it all
+  returns. Collaborators on its workshops keep their roles. The
   last-admin rule carries over to the role, and is now the store's: a
   demotion or a disable that may take an enabled admin away locks every
   enabled admin's row in the same transaction as its write, so of two at
@@ -155,7 +164,7 @@ relation × action, with the 404/403 split), `TestAdminSeesNoOneElsesWork`,
 (schema validation of the policies, entities and requests). `httpapi`:
 `TestEveryRouteDeclaresItsAccess`, `TestSharedWorkshop`,
 `TestWorkspaceBeyondTheCheckoutsIsTheShells`, `TestMembersRoutes`,
-`TestMemberChangesFromAStaleRole`, `TestGuestRole`,
+`TestMemberChangesFromAStaleRole`, `TestGuestRole`, `TestDemotedOwnerKeepsNothing`,
 `TestScopedTokenLifecycle`, `TestListsEqualTheGuard`, and the existing
 guard walks unchanged in what they assert;
 `TestAppGrantFollowsTheMembership`, `TestOperatorsAttachTheirOwnUploads`.

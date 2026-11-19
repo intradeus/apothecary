@@ -381,6 +381,59 @@ func TestGuestRole(t *testing.T) {
 	x.expect(t, "guest", guest, "PUT", "/api/projects/"+testProject+"/secrets/token", ProjectSecretRequest{Value: "x"}, 403)
 }
 
+// An account demoted to guest keeps its rows but none of their powers: the
+// workshop it made as a member, the runs in it, and changes to its own
+// configuration are a member's. Promoted back, all of it is there again.
+func TestDemotedOwnerKeepsNothing(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	ctx := context.Background()
+	erin := x.account(t, "erin", auth.RoleMember)
+	prj := "prj-erin"
+	conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: prj, UserID: "erin", Name: "erin's"})
+	integ := decode[map[string]any](t, x.expect(t, "member", erin, "POST", "/api/integrations",
+		map[string]any{"port": "repository", "kind": "fake", "name": "mine"}, 201))["id"].(string)
+	if _, err := x.store.Append(ctx, "r-e", &event.RunCreated{ProjectID: prj, UserID: "erin", FlowName: "loop"}); err != nil {
+		t.Fatal(err)
+	}
+	projPath, runPath, integPath := "/api/projects/"+prj, "/api/runs/r-e", "/api/integrations/"+integ
+	x.expect(t, "member", erin, "GET", projPath, nil, 200)
+	x.expect(t, "member", erin, "GET", runPath, nil, 200)
+
+	if _, err := x.srv.Auth.SetRole(ctx, "erin", auth.RoleGuest); err != nil {
+		t.Fatal(err)
+	}
+	for _, list := range []struct{ path, field string }{{"/api/projects", "id"}, {"/api/runs", "run_id"}} {
+		if got := ids(t, x.expect(t, "guest", erin, "GET", list.path, nil, 200), list.field); len(got) != 0 {
+			t.Errorf("a demoted owner's %s = %v", list.path, got)
+		}
+	}
+	sameOrigin := merged(erin, map[string]string{"Origin": x.ts.URL})
+	for _, c := range []struct{ method, path string }{
+		{"GET", projPath},
+		{"PUT", projPath},
+		{"PUT", projPath + "/secrets/token"},
+		{"DELETE", projPath},
+		{"GET", runPath},
+		{"POST", runPath + "/abort"},
+		{"GET", runPath + "/terminal"},
+	} {
+		x.expect(t, "guest", sameOrigin, c.method, c.path, map[string]any{"name": "x", "value": "x"}, 404)
+	}
+	// Its configuration stays its own to see, frozen.
+	x.expect(t, "guest", erin, "GET", integPath, nil, 200)
+	for _, method := range []string{"PUT", "DELETE"} {
+		if data := x.expect(t, "guest", erin, method, integPath, map[string]any{"name": "changed"}, 403); !strings.Contains(string(data), "integration:write") {
+			t.Errorf("%s refused without naming integration:write: %s", method, data)
+		}
+	}
+
+	if _, err := x.srv.Auth.SetRole(ctx, "erin", auth.RoleMember); err != nil {
+		t.Fatal(err)
+	}
+	x.expect(t, "member again", erin, "GET", projPath, nil, 200)
+	x.expect(t, "member again", erin, "GET", runPath, nil, 200)
+}
+
 // limitedTo is a token of the test user's holding ticket:read in one
 // workshop.
 func limitedTo(t *testing.T, x *env, project string) map[string]string {
@@ -487,20 +540,21 @@ func TestScopedTokenLifecycle(t *testing.T) {
 }
 
 // What a list holds is exactly what its guard lets the caller read: for
-// every principal — owner, member at each role, stranger, admin, a token
-// limited to some workshops — and every listable kind, the list equals the
-// set of resources whose GET answers 200. Lists are SQL (or their Mem
-// twin) and the guard is Cedar; this holds them together.
+// every principal — owner, member at each role, stranger, admin, a member
+// demoted to guest after making a workshop, a token limited to some
+// workshops — and every listable kind, the list equals the set of resources
+// whose GET answers 200. Lists are SQL (or their Mem twin) and the guard is
+// Cedar; this holds them together.
 func TestListsEqualTheGuard(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	ctx := context.Background()
 	hdr := map[string]map[string]string{"tester": nil}
-	for _, u := range []string{"alice", "bob", "carol", "dave"} {
+	for _, u := range []string{"alice", "bob", "carol", "dave", "erin"} {
 		hdr[u] = x.account(t, u, auth.RoleMember)
 	}
 	hdr["root"] = x.account(t, "root", auth.RoleAdmin)
 	hdr["guest"] = x.account(t, "guest", auth.RoleGuest)
-	for _, p := range []struct{ id, owner string }{{"prj-a", "alice"}, {"prj-b", "bob"}} {
+	for _, p := range []struct{ id, owner string }{{"prj-a", "alice"}, {"prj-b", "bob"}, {"prj-e", "erin"}} {
 		conftest.SeedProject(t, x.srv.Conf, confstore.Project{ID: p.id, UserID: p.owner, Name: p.id})
 	}
 	x.share(t, "prj-a", "carol", confstore.MemberViewer)
@@ -508,14 +562,19 @@ func TestListsEqualTheGuard(t *testing.T) {
 	x.share(t, "prj-b", "dave", confstore.MemberOperator)
 	x.share(t, testProject, "guest", confstore.MemberViewer)
 	x.share(t, "prj-b", "alice", confstore.MemberViewer)
-	runs := map[string]string{"r-t": testProject, "r-a1": "prj-a", "r-a2": "prj-a", "r-b": "prj-b"}
-	owners := map[string]string{testProject: testUser, "prj-a": "alice", "prj-b": "bob"}
+	x.share(t, "prj-b", "erin", confstore.MemberViewer)
+	runs := map[string]string{"r-t": testProject, "r-a1": "prj-a", "r-a2": "prj-a", "r-b": "prj-b", "r-e": "prj-e"}
+	owners := map[string]string{testProject: testUser, "prj-a": "alice", "prj-b": "bob", "prj-e": "erin"}
 	for id, project := range runs {
 		if _, err := x.store.Append(ctx, id,
 			&event.RunCreated{ProjectID: project, UserID: owners[project], FlowName: "loop"},
 			&event.PingRaised{PingID: "ping-" + id, Type: "clarification", Question: "?"}); err != nil {
 			t.Fatal(err)
 		}
+	}
+	// Erin made prj-e as a member; demoted to guest, she keeps prj-b only.
+	if _, err := x.srv.Auth.SetRole(ctx, "erin", auth.RoleGuest); err != nil {
+		t.Fatal(err)
 	}
 	limited := func(user string, projects []string) map[string]string {
 		secret, _, err := x.srv.Auth.NewToken(ctx, user, "limited", nil,
@@ -529,7 +588,7 @@ func TestListsEqualTheGuard(t *testing.T) {
 	hdr["alice, nowhere she reaches"] = limited("alice", []string{testProject})
 	hdr["carol, any workshop"] = limited("carol", nil)
 
-	projects := []string{testProject, "prj-a", "prj-b"}
+	projects := []string{testProject, "prj-a", "prj-b", "prj-e"}
 	allRuns, allPings := []string{}, []string{}
 	for id := range runs {
 		allRuns = append(allRuns, id)
@@ -566,7 +625,7 @@ func TestListsEqualTheGuard(t *testing.T) {
 	// a limited token sees inside its workshops only.
 	for who, want := range map[string][]string{
 		"root": {}, "carol": {"r-a1", "r-a2"}, "dave": {"r-a1", "r-a2", "r-b"}, "dave, prj-b only": {"r-b"},
-		"alice, nowhere she reaches": {}, "guest": {"r-t"}, "alice": {"r-a1", "r-a2", "r-b"},
+		"alice, nowhere she reaches": {}, "guest": {"r-t"}, "alice": {"r-a1", "r-a2", "r-b"}, "erin": {"r-b"},
 	} {
 		if got := ids(t, x.expect(t, who, hdr[who], "GET", "/api/runs", nil, 200), "run_id"); !slices.Equal(got, want) {
 			t.Errorf("%s's runs = %v, want %v", who, got, want)

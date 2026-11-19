@@ -171,8 +171,9 @@ func (a *Authorizer) Decide(ctx context.Context, p auth.Principal, act Action, r
 }
 
 // Visibility is what a principal's lists of a kind may hold: its own rows
-// (UserID; empty when a token limits it to workshops) and the rows of the
-// workshops it may read the kind in. Empty both: nothing — never everything.
+// (UserID; empty when a token limits it to workshops, or for a guest, which
+// owns nothing) and the rows of the workshops it may read the kind in.
+// Empty both: nothing — never everything.
 type Visibility struct {
 	UserID     string
 	ProjectIDs []string
@@ -190,7 +191,8 @@ func (a *Authorizer) Visibility(ctx context.Context, p auth.Principal, kind Kind
 	g := grantOf(p)
 	g.scoped, g.actions = false, nil
 	v := Visibility{}
-	if !g.limited {
+	// Its own rows, as the guard would read one of them in no workshop.
+	if a.allows(p, kind.Read(), &Resource{Kind: kind, ID: "*", Owner: p.User.ID}, nil, g) {
 		v.UserID = p.User.ID
 	}
 	ms, err := a.facts.Workshops(ctx, p.User.ID)
