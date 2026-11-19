@@ -1799,8 +1799,14 @@ describe('accounts', () => {
 			)
 		).toMatchObject({ actions: ['run:read'], projectIds: ['p1'] });
 		expect(
-			map.toPermission({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true })
-		).toEqual({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true });
+			map.toPermission({
+				action: 'run:read',
+				kind: 'run',
+				doc: 'See runs.',
+				grantable: true,
+				mcp: true
+			})
+		).toEqual({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true, mcp: true });
 		expect(
 			map.toToken(
 				wire<Wire.Token>({ id: 't', name: 'n', prefix: 'p', created_at: AT, idle_seconds: 604800 })

@@ -1151,6 +1151,7 @@ export type Permission = {
 	doc: string;
 	grantable: boolean;
 	kind: string;
+	mcp: boolean;
 };
 
 export type PhaseInfo = {

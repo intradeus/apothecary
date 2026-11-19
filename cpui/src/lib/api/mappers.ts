@@ -1405,7 +1405,7 @@ export function toToken(w: Wire.Token): Token {
 }
 
 export function toPermission(w: Wire.Permission): Permission {
-	return { action: w.action, kind: w.kind, doc: w.doc, grantable: w.grantable };
+	return { action: w.action, kind: w.kind, doc: w.doc, grantable: w.grantable, mcp: w.mcp };
 }
 
 export function toCliLogin(w: Wire.CliLoginInfo): CliLogin {

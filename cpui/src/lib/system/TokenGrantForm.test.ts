@@ -17,15 +17,16 @@ const perm = (action: string, over: Partial<Permission> = {}): Permission => ({
 	kind: action.split(':')[0],
 	doc: `Doc of ${action}.`,
 	grantable: true,
+	mcp: false,
 	...over
 });
 const PERMS = [
 	perm('account:read'),
 	perm('account:manage'),
-	perm('run:read'),
+	perm('run:read', { mcp: true }),
 	perm('run:operate'),
 	perm('run:shell', { grantable: false }),
-	perm('ticket:read'),
+	perm('ticket:read', { mcp: true }),
 	perm('widget:spin')
 ];
 const minted = { token: { id: 't1', name: 'ci', prefix: 'apo_x' } as Token, secret: 's3cret' };
@@ -33,6 +34,7 @@ const minted = { token: { id: 't1', name: 'ci', prefix: 'apo_x' } as Token, secr
 const nameField = () => screen.getByRole('textbox', { name: 'Token name' });
 const submit = () => screen.getByRole('button', { name: /Mint a token/ });
 const limited = () => userEvent.click(screen.getByRole('radio', { name: 'Limited' }));
+const mcp = () => userEvent.click(screen.getByRole('radio', { name: 'MCP client' }));
 const box = (name: RegExp | string) => screen.getByRole('checkbox', { name });
 
 function setup() {
@@ -59,7 +61,7 @@ describe('TokenGrantForm', () => {
 		await userEvent.type(nameField(), '  ci  ');
 		await userEvent.click(submit());
 
-		await waitFor(() => expect(oncreated).toHaveBeenCalledWith(minted));
+		await waitFor(() => expect(oncreated).toHaveBeenCalledWith({ ...minted, mcp: false }));
 		expect(api.auth.createToken).toHaveBeenCalledWith('ci', { full: true });
 		expect(api.auth.permissions).not.toHaveBeenCalled();
 		expect(nameField()).toHaveValue('');
@@ -82,6 +84,47 @@ describe('TokenGrantForm', () => {
 		expect(screen.getByRole('group', { name: 'widget' })).toBeInTheDocument();
 		expect(screen.queryByRole('checkbox', { name: /account:manage/ })).not.toBeInTheDocument();
 		expect(screen.queryByRole('checkbox', { name: /run:shell/ })).not.toBeInTheDocument();
+	});
+
+	it('mints a read-only token for an MCP client: the actions the engine marks', async () => {
+		const read = deferred<Permission[]>();
+		vi.mocked(api.auth.permissions).mockReturnValue(read.promise);
+		const { oncreated } = setup();
+		await userEvent.type(nameField(), 'laptop agent');
+		await mcp();
+		expect(screen.getByText(/Read-only, for an agent you connect/)).toBeInTheDocument();
+		expect(submit()).toBeDisabled();
+		read.resolve(PERMS);
+
+		expect(await screen.findByText('run:read · ticket:read')).toBeInTheDocument();
+		expect(screen.queryByRole('checkbox', { name: /run:operate/ })).not.toBeInTheDocument();
+		await userEvent.click(box('billing'));
+		await userEvent.click(submit());
+
+		await waitFor(() => expect(oncreated).toHaveBeenCalledWith({ ...minted, mcp: true }));
+		expect(api.auth.createToken).toHaveBeenCalledWith('laptop agent', {
+			full: false,
+			actions: ['run:read', 'ticket:read'],
+			projectIds: ['p1']
+		});
+	});
+
+	it('will not mint an MCP client token when the engine marks no action', async () => {
+		vi.mocked(api.auth.permissions).mockResolvedValue([perm('run:read')]);
+		setup();
+		await userEvent.type(nameField(), 'agent');
+		await mcp();
+		await waitFor(() => expect(api.auth.permissions).toHaveBeenCalledOnce());
+		expect(submit()).toBeDisabled();
+	});
+
+	it('shows a failed permissions read under MCP client too', async () => {
+		vi.mocked(api.auth.permissions).mockRejectedValueOnce(new Error('engine down'));
+		setup();
+		await mcp();
+		expect(await screen.findByText('engine down')).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+		expect(await screen.findByText('run:read · ticket:read')).toBeInTheDocument();
 	});
 
 	it('will not mint a limited token with no action', async () => {

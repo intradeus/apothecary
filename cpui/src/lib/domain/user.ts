@@ -67,6 +67,9 @@ export interface Permission {
 	doc: string;
 	/** Whether a token may be limited to it (account:manage never is). */
 	grantable: boolean;
+	/** A tool of the engine's MCP server needs it: the read-only grant for an
+	 *  MCP client is these actions. */
+	mcp: boolean;
 }
 
 /** A terminal sign-in waiting for its approval in the browser

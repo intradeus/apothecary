@@ -372,6 +372,11 @@ export default {
 	'page.account.access': 'Access',
 	'page.account.accessFull': 'Full access',
 	'page.account.accessLimited': 'Limited',
+	'page.account.accessMcp': 'MCP client',
+	'page.account.accessMcpHelp':
+		'Read-only, for an agent you connect to this instance’s MCP server: it reads workshops, tickets, flows, skills and runs, checks a flow, and changes nothing.',
+	'page.account.mcpConnect':
+		'Connect your MCP client to {url} with this token as a bearer header. Most clients take this configuration:',
 	'page.account.accessFullHelp':
 		'Everything your account may do, in every workshop you can reach. Never more than you may.',
 	'page.account.accessLimitedHelp':

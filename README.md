@@ -263,6 +263,10 @@ Members). An account is an admin, a member or a guest (who only has what
 is shared with it); a personal token is the account itself or limited to
 some actions and workshops.
 
+An agent outside the instance reads it through the engine's MCP server, at
+`/mcp`, with a token minted as **MCP client** on the Account page; see
+[docs/mcp.md](docs/mcp.md).
+
 ## Development
 
 The checks run with exactly CI's tools:

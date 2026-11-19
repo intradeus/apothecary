@@ -834,9 +834,11 @@ func (s *Server) createMyToken(w http.ResponseWriter, r *http.Request) {
 // given, so the UI does not hard-code it.
 func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request) {
 	all := authz.Actions()
+	tools := mcpActions()
 	out := make([]Permission, 0, len(all))
 	for _, a := range all {
-		out = append(out, Permission{Action: string(a.Action), Kind: string(a.Kind), Doc: a.Doc, Grantable: a.Grantable})
+		out = append(out, Permission{Action: string(a.Action), Kind: string(a.Kind), Doc: a.Doc, Grantable: a.Grantable,
+			MCP: slices.Contains(tools, a.Action)})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

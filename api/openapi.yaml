@@ -2600,11 +2600,14 @@ components:
           type: boolean
         kind:
           type: string
+        mcp:
+          type: boolean
       required:
         - action
         - doc
         - grantable
         - kind
+        - mcp
       type: object
     PhaseInfo:
       properties:

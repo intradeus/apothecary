@@ -25,8 +25,8 @@ const aToken = (over: Partial<Token> = {}): Token => ({
 	...over
 });
 const PERMS: Permission[] = [
-	{ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true },
-	{ action: 'run:operate', kind: 'run', doc: 'Steer runs.', grantable: true }
+	{ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true, mcp: true },
+	{ action: 'run:operate', kind: 'run', doc: 'Steer runs.', grantable: true, mcp: false }
 ];
 
 const row = (name: string) => screen.getByText(name).closest('.r') as HTMLElement;
@@ -117,6 +117,32 @@ describe('TokenSection', () => {
 			})
 		);
 		expect(await screen.findByText('apo_s3cret')).toBeInTheDocument();
+	});
+
+	it('shows an MCP client token with the configuration to connect it', async () => {
+		vi.mocked(api.auth.createToken).mockResolvedValue({ token: aToken(), secret: 'apo_s3cret' });
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+		render(TokenSection);
+		await userEvent.type(screen.getByRole('textbox', { name: 'Token name' }), 'agent');
+		await userEvent.click(screen.getByRole('radio', { name: 'MCP client' }));
+		await screen.findByText('run:read');
+		await userEvent.click(submit());
+
+		const url = `${location.origin}/mcp`;
+		expect(
+			await screen.findByText(new RegExp(`Connect your MCP client to ${url}`))
+		).toBeInTheDocument();
+		const config = JSON.parse(screen.getByText(/mcpServers/).textContent ?? '');
+		expect(config.mcpServers.apothecary).toEqual({
+			type: 'http',
+			url,
+			headers: { Authorization: 'Bearer apo_s3cret' }
+		});
+		expect(screen.queryByText(/Send it as a bearer token/)).not.toBeInTheDocument();
+		const [, copyConfig] = screen.getAllByRole('button', { name: 'Copy' });
+		await userEvent.click(copyConfig);
+		expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"mcpServers"'));
 	});
 
 	it('copies the secret, and dismisses it', async () => {
