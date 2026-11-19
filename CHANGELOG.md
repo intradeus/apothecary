@@ -2,6 +2,33 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.0.0 (2026-11-19)
+
+### BREAKING CHANGE
+
+- the API's user `admin` field is now `role`;
+`apothecaryd user set-admin` is replaced by `user set-role <handle>
+admin|member|guest`; admin-only routes now answer 403 by action.
+
+### Features
+
+- **BREAKING** **account**: authorize every request with Cedar roles and grants
+
+### Fixes
+
+- **account**: read a shared workshop's ticket statuses and types
+- **account**: strip credentials from a shared tracker's browse address
+- **account**: strip a demoted guest's powers over what it owned
+- **account**: take skillsets from the starter; show ticket sources
+- **account**: find a ticket's workshop within a member token's scope
+- **account**: keep a shared workshop's owner integrations in its form
+- **account**: close gaps in workspace reach, member writes and leaving
+- **account**: close gaps in last-admin, app access and shared uploads
+
+### Chores
+
+- drop the stray root .svelte-kit output and ignore it
+
 ## v4.1.0 (2026-11-18)
 
 ### Features
