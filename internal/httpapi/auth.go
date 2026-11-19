@@ -77,6 +77,7 @@ const (
 	ScopeDashboard
 	ScopeScorecard
 	ScopeNotice
+	ScopeAssistant
 )
 
 // sessionCookie is the browser session's cookie.
@@ -238,6 +239,8 @@ func scopeName(sc Scope) string {
 		return "scorecard"
 	case ScopeNotice:
 		return "notice"
+	case ScopeAssistant:
+		return "assistant session"
 	}
 	return "resource"
 }
@@ -332,6 +335,8 @@ func scopeKind(sc Scope) authz.Kind {
 		return authz.KindAnalytics
 	case ScopeNotice:
 		return authz.KindNotice
+	case ScopeAssistant:
+		return authz.KindAssistant
 	}
 	return ""
 }
@@ -451,6 +456,15 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (owner, proje
 		}
 		n, err := s.Notices.Get(ctx, id)
 		return n.UserID, "", err
+	case ScopeAssistant:
+		if s.Assistant == nil {
+			return "", "", errors.New("no assistant")
+		}
+		v, ok, err := s.Assistant.Store.AssistantSession(ctx, id)
+		if err == nil && !ok {
+			err = errors.New("no such session")
+		}
+		return v.UserID, "", err
 	}
 	return "", "", fmt.Errorf("unknown scope %d", sc)
 }

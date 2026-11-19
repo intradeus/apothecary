@@ -20,6 +20,7 @@ export * from './workspace';
 export * from './service';
 export * from './user';
 export * from './ask';
+export * from './assistant';
 export * from './skill';
 export * from './analytics';
 export * from './notice';

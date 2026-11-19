@@ -13,9 +13,14 @@ vi.mock('$lib/api', () => ({
 	api: {
 		tickets: { create: vi.fn(), update: vi.fn(), attachments: vi.fn() },
 		projects: { ticketTypes: vi.fn() },
-		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() }
+		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() },
+		assistant: { setSubject: vi.fn() }
 	}
 }));
+vi.mock(
+	'$lib/assistant/AssistantPanel.svelte',
+	() => import('$test/fixtures/AssistantPanelStub.svelte')
+);
 
 const project = aProject({ id: 'p1', ticketSourceId: 'own' });
 const title = () => screen.getByLabelText('Title');
@@ -42,6 +47,7 @@ beforeEach(() => {
 	vi.mocked(api.projects.ticketTypes).mockResolvedValue([]);
 	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.files.limits).mockResolvedValue(null as never);
+	vi.mocked(api.assistant.setSubject).mockResolvedValue({} as never);
 	toasts.list = [];
 });
 
@@ -281,5 +287,87 @@ describe('TicketForm, editing', () => {
 		expect(api.tickets.create).not.toHaveBeenCalled();
 		expect(onsaved).toHaveBeenCalledWith(saved);
 		expect(toasts.list.at(-1)?.text).toBe('Ticket saved');
+	});
+});
+
+describe('TicketForm, the assistant', () => {
+	const openIt = () => userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
+	const offer = async (fill: unknown) => {
+		const box = screen.getByRole('textbox', { name: 'fill' });
+		await userEvent.clear(box);
+		box.focus();
+		await userEvent.paste(JSON.stringify(fill));
+		await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
+	};
+
+	it('opens beside a new ticket as a draft, reads the form, and fills it', async () => {
+		vi.mocked(api.projects.ticketTypes).mockResolvedValue([type('t1', 'Bug', 'fix')]);
+		setup();
+		expect(screen.queryByRole('region', { name: 'Assistant' })).not.toBeInTheDocument();
+		await openIt();
+		const panel = screen.getByRole('region', { name: 'Assistant' });
+		expect(panel.dataset.kind).toBe('ticket');
+		expect(panel.dataset.subject).toMatch(/^draft-/);
+		expect(panel.dataset.workshop).toBe('p1');
+
+		await userEvent.type(goal(), 'my notes');
+		await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
+		expect(JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!)).toEqual({
+			title: '',
+			goal: 'my notes',
+			change_type: 'feat',
+			type_id: '',
+			base_branch: '',
+			issue_types: [{ id: 't1', name: 'Bug', change_type: 'fix' }]
+		});
+
+		await offer({ title: 'Fix the login', goal: 'It works.', change_type: 'fix', type_id: 't1' });
+		expect(title()).toHaveValue('Fix the login');
+		expect(goal()).toHaveValue('It works.');
+		expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent(
+			'title,goal,changeType,typeId'
+		);
+		await userEvent.click(screen.getByRole('button', { name: 'undo the fill' }));
+		expect(title()).toHaveValue('');
+		expect(goal()).toHaveValue('my notes');
+	});
+
+	it('moves a draft’s conversation onto the created ticket', async () => {
+		created({ key: 'APO-7' });
+		const { onsaved } = setup();
+		await openIt();
+		await offer({ title: 'T', goal: 'G' });
+		await userEvent.click(create());
+		await waitFor(() => expect(onsaved).toHaveBeenCalled());
+		expect(api.assistant.setSubject).toHaveBeenCalledWith('s1', 'APO-7');
+		expect(lastBody()).toMatchObject({ title: 'T', goal: 'G' });
+	});
+
+	it('still hands the ticket over when the conversation cannot move', async () => {
+		const saved = created({ key: 'APO-7' });
+		vi.mocked(api.assistant.setSubject).mockRejectedValue(new Error('gone'));
+		const { onsaved } = setup();
+		await openIt();
+		await offer({ title: 'T', goal: 'G' });
+		await userEvent.click(create());
+		await waitFor(() => expect(onsaved).toHaveBeenCalledWith(saved));
+	});
+
+	it('moves nothing when it was never opened', async () => {
+		created();
+		const { onsaved } = setup();
+		await userEvent.type(title(), 'T');
+		await userEvent.type(goal(), 'G');
+		await userEvent.click(create());
+		await waitFor(() => expect(onsaved).toHaveBeenCalled());
+		expect(api.assistant.setSubject).not.toHaveBeenCalled();
+	});
+
+	it('is about the ticket’s key when editing one', async () => {
+		setup({ existing: aTicketDetail({ key: 'APO-3', internal: true }) });
+		await openIt();
+		expect(screen.getByRole('region', { name: 'Assistant' }).dataset.subject).toBe('APO-3');
+		await userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
+		expect(screen.queryByRole('region', { name: 'Assistant' })).not.toBeInTheDocument();
 	});
 });

@@ -64,6 +64,11 @@ export class FlowEditor {
 
 	validateOpen = $state(false);
 	showVersions = $state(false);
+	/** The assistant's panel is open beside the canvas. */
+	showAssistant = $state(false);
+	/** Bumped each time the flow is loaded, saved or replaced by a version:
+	 *  what an assistant's fill could undo is gone. */
+	replaced = $state(0);
 	cloning = $state(false);
 
 	/** What is selected, and the sequence open beside the flow. */
@@ -120,6 +125,7 @@ export class FlowEditor {
 		try {
 			this.flow = await api.flows.get(this.projectId, this.name);
 			this.yaml = this.flow.yaml;
+			this.replaced++;
 			this.versions = await api.flows.versions(this.projectId, this.flow.name);
 			const r = await api.flows.validate(this.flow.yaml);
 			if (r.ok && r.doc) {
@@ -166,6 +172,20 @@ export class FlowEditor {
 		if (this.doc && (this.tab !== 'yaml' || this.graphDirty)) return docToYaml(this.doc);
 		return this.yaml;
 	}
+
+	/** The flow as the person has it now, unsaved edits included: what the
+	 *  assistant reads. */
+	currentYAML = (): string => this.#currentYAML();
+
+	/** An assistant's fill: into the YAML tab, the way a loaded version goes
+	 *  (Save makes it current). The graph re-reads it on the way back. */
+	applyYAML = (yaml: string) => {
+		this.yaml = yaml;
+		this.tab = 'yaml';
+		this.graphDirty = false;
+		this.validation = null;
+		this.notice = null;
+	};
 
 	markChanged = () => {
 		this.graphDirty = true;
@@ -340,6 +360,7 @@ export class FlowEditor {
 			const y = this.#currentYAML();
 			this.flow = await api.flows.save(this.projectId, this.flow.name, y, { nodes: this.layout });
 			this.yaml = this.flow.yaml;
+			this.replaced++;
 			// The engine took it: what follows reads it back, and a failure there
 			// says nothing about the save.
 			const r = await api.flows.validate(this.flow.yaml).catch(() => null);
@@ -403,6 +424,7 @@ export class FlowEditor {
 		try {
 			const full = await api.flows.version(this.projectId, v.hash);
 			this.yaml = full.yaml; // into the YAML tab; Save makes it current again
+			this.replaced++;
 			this.tab = 'yaml';
 			this.graphDirty = false;
 			this.showVersions = false;

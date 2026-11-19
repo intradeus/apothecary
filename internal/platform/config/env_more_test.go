@@ -266,3 +266,45 @@ func TestSSHAdvertiseKeepsIPv6Listen(t *testing.T) {
 		}
 	}
 }
+
+// The assistant: on with a Kubernetes namespace, off without; its knobs
+// read, its refusals named.
+func TestAssistantFromEnv(t *testing.T) {
+	t.Setenv("APOTHECARY_POSTGRES_DSN", "postgres://x")
+	b, err := FromEnv()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Assistant.Enabled || b.Assistant.IdleAfter != 30*time.Minute || b.Assistant.VolumeAfter != 30*24*time.Hour || b.Assistant.VolumeSize != "10Gi" {
+		t.Errorf("no namespace = %+v", b.Assistant)
+	}
+	t.Setenv("APOTHECARY_ASSISTANT", "on")
+	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "APOTHECARY_K8S_NAMESPACE") {
+		t.Errorf("on without a namespace = %v", err)
+	}
+	t.Setenv("APOTHECARY_K8S_NAMESPACE", "ws")
+	t.Setenv("APOTHECARY_ASSISTANT_IDLE", "10m")
+	t.Setenv("APOTHECARY_ASSISTANT_VOLUME_DAYS", "0")
+	t.Setenv("APOTHECARY_ASSISTANT_VOLUME_SIZE", "20Gi")
+	t.Setenv("APOTHECARY_ASSISTANT_STORAGE_CLASS", "fast")
+	t.Setenv("APOTHECARY_ASSISTANT_IMAGE", "mirror/assistant:1")
+	if b, err = FromEnv(); err != nil {
+		t.Fatal(err)
+	}
+	a := b.Assistant
+	if !a.Enabled || a.IdleAfter != 10*time.Minute || a.VolumeAfter != 0 || a.VolumeSize != "20Gi" || a.StorageClass != "fast" || a.Image != "mirror/assistant:1" {
+		t.Errorf("set = %+v", a)
+	}
+	t.Setenv("APOTHECARY_ASSISTANT", "off")
+	if b, _ = FromEnv(); b.Assistant.Enabled {
+		t.Error("off is on")
+	}
+	for key, bad := range map[string]string{"APOTHECARY_ASSISTANT": "maybe", "APOTHECARY_ASSISTANT_IDLE": "soon", "APOTHECARY_ASSISTANT_VOLUME_DAYS": "-1"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv(key, bad)
+			if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), key) {
+				t.Errorf("%s=%s = %v", key, bad, err)
+			}
+		})
+	}
+}

@@ -8,12 +8,25 @@
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import { api } from '$lib/api';
-	import type { Skill, SkillFileContent, Skillset } from '$lib/domain';
+	import type { Skill, SkillFileContent, SkillFields, Skillset } from '$lib/domain';
+	import { draftSubject, skillFill } from '$lib/domain';
+	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import { ago, fmtAbs, fmtBytes } from '$lib/core/format';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
 	import SkillFileEditor from '$lib/skills/SkillFileEditor.svelte';
-	import { decodeText, encodeText, isText, SKILL_NAME } from '$lib/skills/files';
+	import {
+		decodeText,
+		encodeText,
+		fillFiles,
+		isText,
+		SKILL_NAME,
+		textFiles,
+		type EditFile
+	} from '$lib/skills/files';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import FileChip from '$lib/ui/FileChip.svelte';
@@ -23,10 +36,6 @@
 
 	const skillId = $derived(page.params.skillId ?? '');
 	const creating = $derived(skillId === 'new');
-
-	/** A file as the editor holds it: text when it reads as UTF-8, else the
-	 *  bytes stay opaque. */
-	type EditFile = { path: string; bytes: Uint8Array; mode?: number; text: string | null };
 
 	let skill = $state<Skill | null>(null);
 	let usedBy = $state<Skillset[]>([]);
@@ -45,6 +54,36 @@
 	let renameTo = $state('');
 	let uploader = $state<HTMLInputElement | null>(null);
 
+	// The assistant beside the editor: its fill sets the name and the text
+	// files through the guard; files that are not text stay as they are. A
+	// new skill's conversation is a draft's until it is created.
+	let showAssistant = $state(false);
+	let subject = $state(draftSubject());
+	// A workshop attached: the assistant reads its repositories too.
+	let assistWorkshop = $state('');
+	const workshopOptions = $derived<SelectOption[]>([
+		{ value: '', label: t('assistant.noWorkshop') },
+		...fleet.projects.map((p) => ({ value: p.id, label: p.name }))
+	]);
+	let sessionId = '';
+	const skillGuard = new FillGuard<SkillFields>(
+		() => ({ name, files: textFiles(files) }),
+		(v) => {
+			name = v.name;
+			files = fillFiles(files, v.files);
+			if (!files.some((f) => f.path === selected)) selected = 'SKILL.md';
+			text = files.find((f) => f.path === selected)?.text ?? '';
+			dirty = true;
+		},
+		skillFill
+	);
+	const skillState = () => ({
+		name,
+		files: textFiles(files),
+		other_files: files.filter((f) => f.text === null).map((f) => f.path),
+		open_file: selected
+	});
+
 	const template = (n: string) => t('skills.skill.template', { name: n || 'my-skill' });
 	let templateFor = 'my-skill';
 
@@ -59,6 +98,8 @@
 		loaded = false;
 		loadErr = '';
 		dirty = false;
+		subject = id === 'new' ? draftSubject() : id;
+		skillGuard.settle();
 		if (id === 'new') {
 			skill = null;
 			name = '';
@@ -186,11 +227,19 @@
 			};
 			if (creating) {
 				const created = await api.skills.create(draft);
+				if (sessionId) {
+					try {
+						await api.assistant.setSubject(sessionId, created.id);
+					} catch {
+						/* the skill is saved; its conversation stays the draft's */
+					}
+				}
 				toast(t('skills.skill.created', { name: created.name }));
 				await goto(to.skill(created.id));
 			} else {
 				skill = await api.skills.update(skillId, draft);
 				dirty = false;
+				skillGuard.settle();
 				toast(t('skills.skill.saved'));
 			}
 		} catch (e) {
@@ -266,6 +315,12 @@
 					>{I.retry} {refreshing ? t('skills.skill.refreshing') : t('skills.skill.refresh')}</button
 				>
 			{/if}
+			<button
+				class="btn-sm"
+				class:btn-sel={showAssistant}
+				aria-pressed={showAssistant}
+				onclick={() => (showAssistant = !showAssistant)}>{t('assistant.open')}</button
+			>
 			{#if !creating}
 				<button class="btn-sm" onclick={del}>{t('skills.skill.delete')}</button>
 			{/if}
@@ -355,6 +410,32 @@
 				{/if}
 			{/if}
 		</section>
+
+		{#if showAssistant}
+			<aside class="assist">
+				{#if fleet.projects.length}
+					<div class="field">
+						<label for="sk-assist-ws">{t('assistant.skillWorkshop')}</label>
+						<Select
+							id="sk-assist-ws"
+							size="sm"
+							options={workshopOptions}
+							bind:value={assistWorkshop}
+						/>
+					</div>
+				{/if}
+				{#key assistWorkshop}
+					<AssistantPanel
+						kind="skill"
+						{subject}
+						workshop={assistWorkshop}
+						guard={skillGuard}
+						pageState={skillState}
+						onsession={(id) => (sessionId = id)}
+					/>
+				{/key}
+			</aside>
+		{/if}
 	</div>
 
 	{#if skill && (skill.source || usedBy.length)}
@@ -483,6 +564,14 @@
 		display: flex;
 		flex-direction: column;
 	}
+	.assist {
+		width: 360px;
+		flex-shrink: 0;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 10px;
+	}
 	.ed {
 		flex: 1;
 		min-height: 400px;
@@ -510,7 +599,8 @@
 		.split {
 			flex-direction: column;
 		}
-		.files {
+		.files,
+		.assist {
 			width: 100%;
 		}
 	}

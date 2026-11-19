@@ -690,7 +690,7 @@ tasks:
       - helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint >/dev/null
       - for: { var: VALUES }
         cmd: helm lint {{.CHART}} -f {{.ITEM}} && helm template lint {{.CHART}} -f {{.ITEM}} >/dev/null
-      - for: [workspaces.runtimeClassName=, access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2]
+      - for: [workspaces.runtimeClassName=, access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2, assistant.idle=soon, assistant.volumeDays=-1]
         cmd: '! helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint --set {{.ITEM}} >/dev/null 2>&1 || { echo "the schema must refuse {{.ITEM}}"; exit 1; }'
       - '{{.HELM_DOCS}} -c charts -s file --skip-version-footer -l warning -d | diff -u {{.CHART}}/README.md - || { echo "charts/apothecary/README.md is stale: run task chart:docs"; exit 1; }'
 

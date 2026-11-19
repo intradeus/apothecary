@@ -61,6 +61,12 @@ documents each.
   `APOTHECARY_SANDBOX_IMAGE`, `_SHIM_IMAGE`, `_TOOLS_IMAGE`, `_GATEWAY_IMAGE`,
   `_BROWSER_IMAGE`. `APOTHECARY_WORKSPACE_DOCKER`: the
   [daemon door](../README.md#docker-in-workspaces).
+- **Assistant:** `APOTHECARY_ASSISTANT` (`on`|`off`; default on with a
+  Kubernetes namespace), `APOTHECARY_ASSISTANT_IMAGE`, `_IDLE` (a person's
+  pod stops after that long unused, default `30m`), `_VOLUME_DAYS` (their
+  volume is deleted after that many days unused, default 30, 0 never),
+  `_VOLUME_SIZE` (default `10Gi`), `_STORAGE_CLASS`
+  ([requirements](kubernetes.md#cluster-requirements)).
 - **Access:** `APOTHECARY_PUBLIC_URL`, `APOTHECARY_APPS_DOMAIN` (needs the
   public URL), `APOTHECARY_APPS_SCHEME`, `APOTHECARY_PORT_AUTOEXPOSE`,
   `APOTHECARY_SSH_LISTEN`, `APOTHECARY_SSH_ADVERTISE`,

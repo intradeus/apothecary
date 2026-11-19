@@ -132,7 +132,14 @@ func TestMCPCatalog(t *testing.T) {
 			t.Errorf("%s names route %s, which the table does not have", name, tl.route.ID)
 			continue
 		}
-		// This face reads: a write is never a tool (phase 1).
+		// This face reads: a write is never a tool, but the assistant's
+		// fill, which stores nothing and is its session's token's alone.
+		if rt.ID == fillRouteID {
+			if rt.Action != authz.AssistantFill {
+				t.Errorf("fill needs %s", rt.Action)
+			}
+			continue
+		}
 		if !readRoute(rt) || tl.def.Annotations["readOnlyHint"] != true {
 			t.Errorf("%s is %s %s (%s): not a read", name, rt.Method, rt.Path, rt.Action)
 		}
@@ -350,8 +357,9 @@ func TestMCPListEqualsTheGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every tool but fill, which only an assistant session's token lists.
 	full := x.mcpToolNames(t, nil)
-	if len(full) != len(all) {
+	if len(full) != len(all)-1 || slices.Contains(full, "fill") {
 		t.Errorf("a full token lists %d of %d tools: %v", len(full), len(all), full)
 	}
 

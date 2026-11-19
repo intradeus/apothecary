@@ -159,6 +159,10 @@ var instanceMatrix = map[Action][3]Outcome{
 	NoticeWrite:      {A, A, A},
 	SettingsRead:     {A, A, A},
 	SettingsWrite:    {A, A, A},
+	// The assistant is a person's own, guests' too: it reads what they may.
+	AssistantRead:  {A, A, A},
+	AssistantWrite: {A, A, A},
+	AssistantFill:  {A, A, A},
 }
 
 // ownerAsGuest is the owner column for an account demoted to guest: its
@@ -167,7 +171,7 @@ const ownerAsGuest = H
 
 // personalKinds are never shared: their owner holds them, nobody else
 // knows they are there.
-var personalKinds = []Kind{KindIntegration, KindCredential, KindChannel, KindSkill, KindAnalytics, KindNotice, KindSettings}
+var personalKinds = []Kind{KindIntegration, KindCredential, KindChannel, KindSkill, KindAnalytics, KindNotice, KindSettings, KindAssistant}
 
 // frozenForGuests are the personal kinds whose changes are a member's: a
 // guest still sees its own, as it still sees its notices, settings and
@@ -542,7 +546,7 @@ func TestValidateGrant(t *testing.T) {
 // the authorizer builds.
 func TestVocabularyIsClosed(t *testing.T) {
 	kinds := []Kind{KindInstance, KindAccount, KindProject, KindRun, KindTicket, KindIntegration, KindCredential,
-		KindChannel, KindSkill, KindAnalytics, KindNotice, KindSettings}
+		KindChannel, KindSkill, KindAnalytics, KindNotice, KindSettings, KindAssistant}
 	for _, s := range vocabulary {
 		if !slices.Contains(kinds, s.Kind) || s.Doc == "" {
 			t.Errorf("%s: kind %q, doc %q", s.Action, s.Kind, s.Doc)

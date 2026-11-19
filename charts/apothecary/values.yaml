@@ -120,6 +120,22 @@ workspaces:
   # -- The cluster's DNS domain.
   clusterDomain: cluster.local
 
+# The assistant beside the flow, ticket and skill pages: one pod per person
+# who uses it, in the workspaces namespace, with that person's volume
+# (their clones of the repositories they read) and their own egress gateway.
+assistant:
+  # -- Run it. People still each choose their harness (Claude Code or
+  # opencode) in their settings.
+  enabled: true
+  # -- Stop a person's pod after this long unused; their volume stays.
+  idle: 30m
+  # -- Delete a person's volume after this many days unused (0: never).
+  volumeDays: 30
+  # -- Each person's volume.
+  volumeSize: 10Gi
+  # -- Storage class of those volumes; empty for the cluster default.
+  storageClass: ""
+
 # The engine is one pod (strategy Recreate): it holds in-process state (runs'
 # loops, live tunnels, the SSH door, the cache of tracker reads) and owns the
 # runs volume, so it never runs twice.

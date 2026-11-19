@@ -1,0 +1,38 @@
+// The assistant beside the flow, ticket and skill pages.
+export default {
+	'assistant.title': 'Assistant',
+	'assistant.open': 'Assistant',
+	'assistant.close': 'Close the assistant',
+	'assistant.loading': 'Waking your assistant…',
+	'assistant.off': 'The assistant is off',
+	'assistant.chooseHarness': 'Choose the harness it runs on, one of your own:',
+	'assistant.noHarness':
+		'Add a Claude Code or opencode harness integration (Settings → Integrations): the assistant runs on your own.',
+	'assistant.useHarness': 'Use this harness',
+	'assistant.model': 'Model',
+	'assistant.modelDefault': 'the harness’s default',
+	'assistant.repos': 'Repositories',
+	'assistant.skillWorkshop': 'Read a workshop’s repositories',
+	'assistant.noWorkshop': 'None',
+	'assistant.refresh': 'Refresh',
+	'assistant.refreshed': 'Repositories fetched',
+	'assistant.fetching': 'fetching…',
+	'assistant.repoFailed': '{name}: {error}',
+	'assistant.empty':
+		'Ask about this page. Its answer fills the page for you to read, change and save.',
+	'assistant.placeholder': 'Ask the assistant…',
+	'assistant.send': 'Ask',
+	'assistant.stop': 'Stop',
+	'assistant.you': 'You',
+	'assistant.it': 'Assistant',
+	'assistant.thinking': 'Thinking…',
+	'assistant.fillAgain': 'Fill the page with this',
+	'assistant.filledNote': 'Filled the page',
+	'assistant.changed': 'Filled: {fields}',
+	'assistant.undo': 'Undo',
+	'assistant.stale': 'You changed the page since you asked. Fill it anyway?',
+	'assistant.applyAnyway': 'Fill it anyway',
+	'assistant.keepMine': 'Keep mine',
+	'assistant.failed': 'The assistant could not answer',
+	'assistant.cost': '${cost}'
+} as const;

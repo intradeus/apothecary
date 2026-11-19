@@ -26,6 +26,7 @@ const (
 	KindAnalytics   Kind = "analytics"
 	KindNotice      Kind = "notice"
 	KindSettings    Kind = "settings"
+	KindAssistant   Kind = "assistant"
 )
 
 const (
@@ -62,6 +63,10 @@ const (
 	NoticeWrite      Action = "notice:write"
 	SettingsRead     Action = "settings:read"
 	SettingsWrite    Action = "settings:write"
+
+	AssistantRead  Action = "assistant:read"
+	AssistantWrite Action = "assistant:write"
+	AssistantFill  Action = "assistant:fill"
 )
 
 // The action groups policies.cedar grants (an action entity's parents).
@@ -127,6 +132,9 @@ var vocabulary = []Spec{
 	{NoticeWrite, KindNotice, true, "Dismiss one's notices", []string{b, mine}},
 	{SettingsRead, KindSettings, true, "See one's settings", []string{b, mine}},
 	{SettingsWrite, KindSettings, true, "Change one's settings", []string{b, mine}},
+	{AssistantRead, KindAssistant, true, "See one's assistant: its sessions and its state", []string{b, mine}},
+	{AssistantWrite, KindAssistant, true, "Talk to one's assistant: ask, pick its harness and model, refresh its repositories", []string{b, mine}},
+	{AssistantFill, KindAssistant, true, "Fill a page from an assistant session (the session's own token only)", []string{b, mine}},
 }
 
 var byAction = func() map[Action]Spec {

@@ -84,3 +84,6 @@ action "notice:read" in [browse, mine] appliesTo { principal: User, resource: [I
 action "notice:write" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "settings:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "settings:write" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "assistant:read" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "assistant:write" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "assistant:fill" in [browse, mine] appliesTo { principal: User, resource: [Instance, Resource], context: Context };

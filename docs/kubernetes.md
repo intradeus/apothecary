@@ -119,6 +119,18 @@ itself, in a namespace of its own:
   the engine's recovery of a run it restarted under) replaces the pod,
   keeping its volume — the checkout, agent commits and inner docker state.
   With `storage: emptydir` the checkout goes with the pod.
+- **The assistant** (chart `assistant.enabled`, on by default) runs one pod
+  per person who uses it, in the workspaces namespace, beside that person's
+  own egress gateway and volume (`assistant.volumeSize`, `storageClass`).
+  The pod runs unprivileged in a user namespace of its own (`hostUsers:
+  false`, so Kubernetes user namespaces, as above, on any node it lands
+  on), and each conversation runs under **Landlock ABI 6 or later: Linux ≥
+  6.12** with Landlock among the node's LSMs (`cat
+  /sys/kernel/security/lsm`). On an older kernel the pod starts but every
+  question is refused with the reason, rather than run unconfined. A
+  person's pod stops after `assistant.idle` unused (default 30m) and their
+  volume is deleted after `assistant.volumeDays` unused (default 30; 0
+  never). Turn it off with `--set assistant.enabled=false`.
 - A **local or block storage class** for workspace volumes: the inner docker
   daemon cannot run on NFS.
 - Clusters whose pod or service ranges differ from k3s's defaults:

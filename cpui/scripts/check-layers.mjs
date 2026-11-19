@@ -25,6 +25,8 @@ const LAYERS = [
 	// The design system, then what every page shares.
 	['ui'],
 	['app'],
+	// The assistant's panel and fill guard, which feature pages host.
+	['assistant'],
 	// Features, in dependency order.
 	['artifacts', 'desk', 'flow', 'skills', 'system', 'analytics', 'notices'],
 	['pings'],

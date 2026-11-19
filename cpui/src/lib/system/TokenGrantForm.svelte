@@ -13,7 +13,8 @@
 		'skill',
 		'analytics',
 		'notice',
-		'settings'
+		'settings',
+		'assistant'
 	] as const;
 	type Kind = (typeof KINDS)[number];
 	const known = (k: string): k is Kind => (KINDS as readonly string[]).includes(k);

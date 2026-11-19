@@ -131,6 +131,20 @@ spec:
               value: {{ include "apothecary.image" (dict "root" . "key" "tools" "name" "tools") }}
             - name: APOTHECARY_GATEWAY_IMAGE
               value: {{ include "apothecary.image" (dict "root" . "key" "gateway" "name" "egress-gw") }}
+            - name: APOTHECARY_ASSISTANT
+              value: {{ ternary "on" "off" .Values.assistant.enabled | quote }}
+            - name: APOTHECARY_ASSISTANT_IMAGE
+              value: {{ include "apothecary.image" (dict "root" . "key" "assistant" "name" "assistant") }}
+            - name: APOTHECARY_ASSISTANT_IDLE
+              value: {{ .Values.assistant.idle | quote }}
+            - name: APOTHECARY_ASSISTANT_VOLUME_DAYS
+              value: {{ .Values.assistant.volumeDays | quote }}
+            - name: APOTHECARY_ASSISTANT_VOLUME_SIZE
+              value: {{ .Values.assistant.volumeSize | quote }}
+            {{- with .Values.assistant.storageClass }}
+            - name: APOTHECARY_ASSISTANT_STORAGE_CLASS
+              value: {{ . | quote }}
+            {{- end }}
             {{- with .Values.image.overrides.browser }}
             - name: APOTHECARY_BROWSER_IMAGE
               value: {{ . | quote }}

@@ -90,6 +90,11 @@ Kubernetes: `>=1.29.0-0`
 | workspaces.privileged | bool | `false` | Run sandboxes privileged instead. Sandbox root is then root on its node: for a cluster of your own without sysbox (k3d, a dev box), never a shared one. Needed when runtimeClassName is empty. |
 | workspaces.protectCIDRs | string | `"10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"` | Destinations no workspace may reach through its gateway: the cluster's pod and service ranges and link-local metadata. The defaults are k3s's; set your cluster's (EKS: the VPC CIDR). |
 | workspaces.clusterDomain | string | `"cluster.local"` | The cluster's DNS domain. |
+| assistant.enabled | bool | `true` | Run it. People still each choose their harness (Claude Code or opencode) in their settings. |
+| assistant.idle | string | `"30m"` | Stop a person's pod after this long unused; their volume stays. |
+| assistant.volumeDays | int | `30` | Delete a person's volume after this many days unused (0: never). |
+| assistant.volumeSize | string | `"10Gi"` | Each person's volume. |
+| assistant.storageClass | string | `""` | Storage class of those volumes; empty for the cluster default. |
 | engine.runsDir.size | string | `"20Gi"` | The engine's runs volume: uploads, snapshots, exec logs, markers. |
 | engine.runsDir.storageClass | string | `""` | Storage class; empty for the cluster default. |
 | engine.portAutoExpose | bool | `false` | Publish ports the workspace starts listening on without a click (with an apps domain). |

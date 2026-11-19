@@ -15,7 +15,15 @@
 		TicketDraft,
 		TrackerType
 	} from '$lib/domain';
-	import { CHANGE_TYPES, projectCan } from '$lib/domain';
+	import {
+		CHANGE_TYPES,
+		draftSubject,
+		projectCan,
+		ticketFill,
+		type TicketFields
+	} from '$lib/domain';
+	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import FileChips from '$lib/artifacts/FileChips.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
@@ -48,6 +56,32 @@
 	let typeId = $state(init?.typeId ?? '');
 	let files = $state<File[]>([]);
 	let types = $state<TrackerType[]>([]);
+
+	// The assistant beside the form: its fill sets the fields through the
+	// guard (undo, the changed marker, the click before overwriting newer
+	// edits). A new ticket's conversation is a draft's until it is created,
+	// then moves onto its key.
+	let showAssistant = $state(false);
+	let sessionId = '';
+	const subject = init?.key ?? draftSubject();
+	const guard = new FillGuard<TicketFields>(
+		() => ({ title, goal, changeType, typeId }),
+		(v) => {
+			title = v.title;
+			goal = v.goal;
+			changeType = v.changeType as ChangeType;
+			typeId = v.typeId;
+		},
+		ticketFill
+	);
+	const pageState = () => ({
+		title,
+		goal,
+		change_type: changeType,
+		type_id: typeId,
+		base_branch: branch,
+		issue_types: types.map((y) => ({ id: y.id, name: y.name, change_type: y.changeType }))
+	});
 
 	// Already-attached files, shown when editing so the list isn't invisible
 	// state the form silently round-trips.
@@ -113,6 +147,14 @@
 			const saved = init
 				? await api.tickets.update(project.id, init.key, draft)
 				: await api.tickets.create(project.id, draft);
+			if (!init && sessionId) {
+				try {
+					await api.assistant.setSubject(sessionId, saved.key);
+				} catch {
+					/* the ticket is saved; its conversation stays the draft's */
+				}
+			}
+			guard.settle();
 			toast(init ? t('form.ticket.saved') : t('form.ticket.created'));
 			onsaved(saved);
 		} catch (err) {
@@ -123,93 +165,124 @@
 	}
 </script>
 
-<form class="tf glass pane" onsubmit={submit}>
-	<div class="field">
-		<label for="t-title">{t('form.ticket.title')}</label>
-		<input
-			id="t-title"
-			bind:value={title}
-			required
-			placeholder={t('form.ticket.titlePlaceholder')}
-		/>
-	</div>
-
-	<div class="field">
-		<label for="t-goal">{t('form.ticket.goal')}</label>
-		<span class="help">{t('form.ticket.goalHelp')}</span>
-		<textarea
-			id="t-goal"
-			class="goal"
-			bind:value={goal}
-			required
-			rows="10"
-			placeholder={t('form.ticket.goalPlaceholder')}></textarea>
-	</div>
-
-	<div class="trow">
+<div class="tf-wrap" class:assisted={showAssistant}>
+	<form class="tf glass pane" onsubmit={submit}>
 		<div class="field">
-			<label for="t-type">{t('form.ticket.type')}</label>
-			<Select id="t-type" options={typeOptions} bind:value={typeId} onchange={pickType} />
-		</div>
-		<div class="field">
-			<label for="t-change">{t('form.ticket.changeType')}</label>
-			<Select
-				id="t-change"
-				options={changeOptions}
-				bind:value={changeType}
-				mono
-				title={t('form.ticket.changeTypeTitle')}
+			<label for="t-title">{t('form.ticket.title')}</label>
+			<input
+				id="t-title"
+				bind:value={title}
+				required
+				placeholder={t('form.ticket.titlePlaceholder')}
 			/>
 		</div>
-	</div>
 
-	<div class="field">
-		<label for="t-branch"
-			>{t('form.ticket.baseBranch')} <span class="muted">· {t('form.ticket.optional')}</span></label
-		>
-		<input
-			id="t-branch"
-			bind:value={branch}
-			placeholder={renderBranch(
-				project.repo.branchFormat,
-				changeType,
-				'',
-				title || 'Short description'
-			)}
-			class="mono"
-		/>
-		<span class="help">{t('form.ticket.branchHelp')}</span>
-	</div>
+		<div class="field">
+			<label for="t-goal">{t('form.ticket.goal')}</label>
+			<span class="help">{t('form.ticket.goalHelp')}</span>
+			<textarea
+				id="t-goal"
+				class="goal"
+				bind:value={goal}
+				required
+				rows="10"
+				placeholder={t('form.ticket.goalPlaceholder')}></textarea>
+		</div>
 
-	<div class="field">
-		<span class="field-label">{t('form.ticket.attachments')}</span>
-		{#if attached.length}
-			<FileChips
-				items={attached.map((a) => ({ ...a, kind: 'attachment' as const }))}
-				label={t('form.ticket.alreadyAttached')}
+		<div class="trow">
+			<div class="field">
+				<label for="t-type">{t('form.ticket.type')}</label>
+				<Select id="t-type" options={typeOptions} bind:value={typeId} onchange={pickType} />
+			</div>
+			<div class="field">
+				<label for="t-change">{t('form.ticket.changeType')}</label>
+				<Select
+					id="t-change"
+					options={changeOptions}
+					bind:value={changeType}
+					mono
+					title={t('form.ticket.changeTypeTitle')}
+				/>
+			</div>
+		</div>
+
+		<div class="field">
+			<label for="t-branch"
+				>{t('form.ticket.baseBranch')}
+				<span class="muted">· {t('form.ticket.optional')}</span></label
+			>
+			<input
+				id="t-branch"
+				bind:value={branch}
+				placeholder={renderBranch(
+					project.repo.branchFormat,
+					changeType,
+					'',
+					title || 'Short description'
+				)}
+				class="mono"
 			/>
-		{/if}
-		<AttachFiles bind:files label={t('form.ticket.dropLabel')} />
-	</div>
+			<span class="help">{t('form.ticket.branchHelp')}</span>
+		</div>
 
-	{#if error}<div class="error">{error}</div>{/if}
-	<div class="form-actions">
-		{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}
-				>{t('common.cancel')}</button
-			>{/if}
-		<button
-			class="btn-primary btn-lg"
-			type="submit"
-			aria-busy={submitting}
-			disabled={!canWrite || !title.trim() || !goal.trim()}
-			title={canWrite ? undefined : t('common.needsPermission')}
-		>
-			{init ? t('form.ticket.save') : t('form.ticket.create')}
-		</button>
-	</div>
-</form>
+		<div class="field">
+			<span class="field-label">{t('form.ticket.attachments')}</span>
+			{#if attached.length}
+				<FileChips
+					items={attached.map((a) => ({ ...a, kind: 'attachment' as const }))}
+					label={t('form.ticket.alreadyAttached')}
+				/>
+			{/if}
+			<AttachFiles bind:files label={t('form.ticket.dropLabel')} />
+		</div>
+
+		{#if error}<div class="error">{error}</div>{/if}
+		<div class="form-actions">
+			<button
+				type="button"
+				class="btn-sm assist-toggle"
+				class:btn-sel={showAssistant}
+				aria-pressed={showAssistant}
+				onclick={() => (showAssistant = !showAssistant)}>{t('assistant.open')}</button
+			>
+			{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}
+					>{t('common.cancel')}</button
+				>{/if}
+			<button
+				class="btn-primary btn-lg"
+				type="submit"
+				aria-busy={submitting}
+				disabled={!canWrite || !title.trim() || !goal.trim()}
+				title={canWrite ? undefined : t('common.needsPermission')}
+			>
+				{init ? t('form.ticket.save') : t('form.ticket.create')}
+			</button>
+		</div>
+	</form>
+	{#if showAssistant}
+		<aside class="assist">
+			<AssistantPanel
+				kind="ticket"
+				{subject}
+				workshop={project.id}
+				{guard}
+				{pageState}
+				onsession={(id) => (sessionId = id)}
+			/>
+		</aside>
+	{/if}
+</div>
 
 <style>
+	.tf-wrap.assisted {
+		display: grid;
+		grid-template-columns: minmax(0, 1fr) minmax(280px, 380px);
+		gap: 12px;
+		align-items: start;
+	}
+	.assist-toggle {
+		margin-right: auto;
+	}
 	.tf {
 		padding: 16px 18px 18px;
 		display: flex;
@@ -229,6 +302,9 @@
 		padding-top: 4px;
 	}
 	@media (max-width: 760px) {
+		.tf-wrap.assisted {
+			grid-template-columns: minmax(0, 1fr);
+		}
 		.trow {
 			grid-template-columns: minmax(0, 1fr);
 		}

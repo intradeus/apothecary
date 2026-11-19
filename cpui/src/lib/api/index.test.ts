@@ -28,6 +28,7 @@ import {
 	pings,
 	projects,
 	runs,
+	assistant,
 	skills,
 	skillsets,
 	system,
@@ -138,6 +139,8 @@ describe('a list the engine answers null', () => {
 		['automations', () => automations.list('p'), 'listAutomations'],
 		['tokens', () => auth.tokens(), 'listMyTokens'],
 		['ssh keys', () => auth.sshKeys(), 'listMySshKeys'],
+		['assistant messages', () => assistant.messages('s'), 'listAssistantMessages'],
+		['assistant repos', () => assistant.refresh('w'), 'refreshAssistantRepos'],
 		['users', () => users.list(), 'listUsers'],
 		['skills', () => skills.list(), 'listSkills'],
 		['skillsets', () => skillsets.list(), 'listSkillsets'],
@@ -2177,5 +2180,210 @@ describe('the rest of the surface', () => {
 	it('reads a negative cap as no cap', async () => {
 		reply('getLimits', answer({ max_concurrent_runs: -1, max_environments: 2 }));
 		expect(await system.limits()).toEqual({ maxConcurrentRuns: null, maxEnvironments: 2 });
+	});
+});
+
+describe('the assistant', () => {
+	const session = {
+		id: 's1',
+		user_id: 'u1',
+		kind: 'ticket',
+		workshop: 'w1',
+		subject: 'draft-1',
+		model: 'acme/one',
+		created_at: 'T0',
+		updated_at: 'T1'
+	};
+	const message = {
+		session_id: 's1',
+		seq: 2,
+		role: 'assistant',
+		text: 'done',
+		fill: { title: 'x' },
+		cost_usd: 0.5,
+		at: 'T2'
+	};
+
+	it('reads the status, a workshop asked for', async () => {
+		const fn = reply(
+			'getAssistant',
+			answer({
+				enabled: false,
+				reason: 'choose a harness',
+				choice: { integration: '', model: '' },
+				integrations: null,
+				models: null,
+				pod: { state: 'absent' },
+				repos: [{ workshop: 'w1', name: 'api', ok: true, at: 'T' }],
+				pages: { flow: { presets: null, repos: true }, odd: { presets: [], repos: false } }
+			})
+		);
+		const st = await assistant.status('w1');
+		expect(fn).toHaveBeenCalledWith({ query: { workshop: 'w1' } });
+		expect(st).toMatchObject({
+			enabled: false,
+			reason: 'choose a harness',
+			integrations: [],
+			models: [],
+			pod: { state: 'absent', error: undefined },
+			repos: [{ workshop: 'w1', name: 'api', ok: true, at: 'T', head: undefined }],
+			pages: { flow: { presets: [], repos: true } }
+		});
+		await assistant.status();
+		expect(fn).toHaveBeenLastCalledWith({ query: undefined });
+	});
+
+	it('opens a session and maps its messages', async () => {
+		const fn = reply('openAssistantSession', answer({ session, messages: [message], busy: true }));
+		const out = await assistant.open('ticket', 'draft-1', 'w1');
+		expect(out.busy).toBe(true);
+		expect(fn).toHaveBeenCalledWith({
+			body: { kind: 'ticket', subject: 'draft-1', workshop_id: 'w1' }
+		});
+		expect(out.session).toEqual({
+			id: 's1',
+			kind: 'ticket',
+			workshop: 'w1',
+			subject: 'draft-1',
+			integration: undefined,
+			model: 'acme/one',
+			createdAt: 'T0',
+			updatedAt: 'T1'
+		});
+		expect(out.messages[0]).toEqual({
+			sessionId: 's1',
+			seq: 2,
+			role: 'assistant',
+			text: 'done',
+			fill: { title: 'x' },
+			error: undefined,
+			costUsd: 0.5,
+			at: 'T2'
+		});
+		await assistant.open('skill', 'k');
+		expect(fn).toHaveBeenLastCalledWith({
+			body: { kind: 'skill', subject: 'k', workshop_id: undefined }
+		});
+	});
+
+	it('sends, picks, moves and stops', async () => {
+		const send = reply('sendAssistantMessage', answer({ ...message, role: 'person', fill: null }));
+		const m = await assistant.send('s1', 'hi', { title: '' });
+		expect(send).toHaveBeenCalledWith({
+			path: { id: 's1' },
+			body: { text: 'hi', context: { title: '' } }
+		});
+		expect(m.role).toBe('person');
+		expect(m.fill).toBeUndefined();
+		const model = reply('setAssistantModel', answer({ ...session, kind: 'flow' }));
+		expect((await assistant.setModel('s1', 'acme/two')).kind).toBe('flow');
+		expect(model).toHaveBeenCalledWith({ path: { id: 's1' }, body: { model: 'acme/two' } });
+		const subject = reply('setAssistantSubject', answer({ ...session, kind: 'odd' }));
+		expect((await assistant.setSubject('s1', 'APO-1')).kind).toBe('flow');
+		expect(subject).toHaveBeenCalledWith({ path: { id: 's1' }, body: { subject: 'APO-1' } });
+		const cancel = reply('cancelAssistantTurn');
+		await assistant.cancel('s1');
+		expect(cancel).toHaveBeenCalledWith({ path: { id: 's1' } });
+		const choice = reply('setAssistantChoice', answer({}));
+		await assistant.setChoice('int-1');
+		expect(choice).toHaveBeenCalledWith({ body: { integration: 'int-1', model: '' } });
+		const msgs = reply('listAssistantMessages', answer([message]));
+		await assistant.messages('s1', 4);
+		expect(msgs).toHaveBeenCalledWith({ path: { id: 's1' }, query: { after: 4 } });
+	});
+});
+
+describe('the assistant stream', () => {
+	class FakeES {
+		static last: FakeES;
+		static all: FakeES[] = [];
+		onerror: (() => void) | null = null;
+		listeners: Record<string, (m: { data: string }) => void> = {};
+		closed = false;
+		readyState = 1;
+		static CLOSED = 2;
+		constructor(public url: string) {
+			FakeES.last = this;
+			FakeES.all.push(this);
+		}
+		addEventListener(name: string, fn: (m: { data: string }) => void) {
+			this.listeners[name] = fn;
+		}
+		close() {
+			this.closed = true;
+		}
+		send(name: string, data: unknown) {
+			this.listeners[name]({ data: JSON.stringify(data) });
+		}
+	}
+	beforeEach(() => {
+		vi.useFakeTimers();
+		FakeES.all = [];
+		vi.stubGlobal('EventSource', FakeES);
+	});
+	afterEach(() => {
+		vi.useRealTimers();
+		vi.unstubAllGlobals();
+	});
+
+	it('maps every frame, and resumes after the last one seen', () => {
+		const got: unknown[] = [];
+		const stop = assistant.stream((f) => got.push(f));
+		const es = FakeES.last;
+		// From now: nothing kept is replayed to a panel just opened.
+		expect(es.url).toBe('/api/assistant/stream');
+		es.send('head', { seq: 2 });
+		es.send('delta', { seq: 3, session: 's1', text: 'hel', tool: 'Read' });
+		es.send('state', { seq: 4, session: 's1', busy: true });
+		es.send('status', { seq: 5, session: 's1', text: 'starting' });
+		es.send('fill', { seq: 6, session: 's1', page: 'ticket', subject: 'd', fill: { title: 't' } });
+		es.send('fill', { seq: 7, session: 's1', page: 'odd', fill: null });
+		es.send('repos', {
+			seq: 8,
+			workshop: 'w1',
+			repos: [{ workshop: 'w1', name: 'a', ok: true, at: 'T' }]
+		});
+		es.send('repos', { seq: 9, workshop: 'w1', text: 'fetching' });
+		es.send('message', {
+			seq: 10,
+			session: 's1',
+			message: { session_id: 's1', seq: 1, role: 'assistant', text: 'x', at: 'T' }
+		});
+		es.send('message', { seq: 11 });
+		es.send('gap', {});
+		expect(got).toEqual([
+			{ kind: 'delta', seq: 3, sessionId: 's1', text: 'hel', tool: 'Read' },
+			{ kind: 'state', seq: 4, sessionId: 's1', busy: true },
+			{ kind: 'status', seq: 5, sessionId: 's1', text: 'starting' },
+			{ kind: 'fill', seq: 6, sessionId: 's1', page: 'ticket', subject: 'd', fill: { title: 't' } },
+			{ kind: 'fill', seq: 7, sessionId: 's1', page: 'flow', subject: '', fill: null },
+			{
+				kind: 'repos',
+				seq: 8,
+				workshop: 'w1',
+				text: undefined,
+				repos: [expect.objectContaining({ name: 'a' })]
+			},
+			{ kind: 'repos', seq: 9, workshop: 'w1', text: 'fetching', repos: undefined },
+			expect.objectContaining({ kind: 'message', seq: 10, sessionId: 's1' }),
+			{ kind: 'gap' }
+		]);
+		// A stream the engine closed opens again, after the last frame.
+		es.readyState = FakeES.CLOSED;
+		es.onerror?.();
+		vi.advanceTimersByTime(3000);
+		expect(FakeES.last.url).toBe('/api/assistant/stream?after=11');
+		// An error on a live stream is the browser's own retry.
+		FakeES.last.onerror?.();
+		expect(FakeES.all).toHaveLength(2);
+		// The engine restarted: its head is behind where the stream was, so
+		// the next reconnect resumes from the new head.
+		FakeES.last.send('head', { seq: 1 });
+		FakeES.last.readyState = FakeES.CLOSED;
+		FakeES.last.onerror?.();
+		vi.advanceTimersByTime(3000);
+		expect(FakeES.last.url).toBe('/api/assistant/stream?after=1');
+		stop();
+		expect(FakeES.last.closed).toBe(true);
 	});
 });

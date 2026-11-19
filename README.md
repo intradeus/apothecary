@@ -67,6 +67,13 @@ query. Between the start and the end, it does whatever your flow says.
   session, its changes, files, terminal, logs, egress, ports, services and
   vitals. *Take over* to talk to the agent; the *Ask* pane answers questions
   about the code without touching the run.
+- **An assistant beside the flow, ticket and skill pages.** It reads the
+  workshop's repositories, their history and the platform, and fills the
+  page you are on: a flow's YAML, a ticket's title and goal, a skill's
+  files. You read it, undo it or change it, and save it yourself. It runs
+  on your own Claude Code or opencode harness.
+- **An MCP server** ([docs/mcp.md](docs/mcp.md)): connect an MCP client
+  with a token you scope, and it reads what that token reads.
 - **From your machine.** Forward a run's ports, `ssh` in, or open it in
   VS Code, all through the one HTTPS address.
 - **Harnesses and models.** opencode, codex, omp or Claude Code. Model
@@ -127,6 +134,14 @@ sandbox is the boundary, not the agent's permission prompts.
   ownership, and a registered key for SSH. Web apps get browser links only
   with an apps domain, behind their owner's sign-in.
 
+- **The assistant** runs in a pod of its own per person: unprivileged in
+  a user namespace, every capability dropped, behind that person's own
+  gateway. Each conversation runs under Landlock, reading only the
+  repositories of the page's workshop and writing only its own folder,
+  with no shell; it reaches the platform with a token of its own that
+  reads and fills, never more. Repository credentials reach the pod only
+  for the length of a fetch, one repository's for its own host.
+
 ### Unprivileged sandboxes
 
 A nested dockerd needs to mount overlayfs, manage cgroups and program
@@ -172,6 +187,7 @@ Any Kubernetes cluster, k3s included, with:
   ([why](docs/kubernetes.md#cluster-requirements)).
 - **NetworkPolicy enforcement**, and the **`wireguard`** kernel module.
 - A **local or block storage class**, not NFS.
+- For the assistant, nodes on **Linux ≥ 6.12** with Landlock enabled.
 
 [docs/kubernetes.md](docs/kubernetes.md) has the details, EKS and a local
 k3d cluster.

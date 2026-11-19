@@ -99,6 +99,7 @@ const (
 	tagAnalytics    = "analytics"
 	tagNotices      = "notices"
 	tagSwarm        = "swarm"
+	tagAssistant    = "assistant"
 )
 
 var (
@@ -137,6 +138,7 @@ func (s *Server) routes() []Route {
 		s.ticketRoutes(),
 		s.flowRoutes(),
 		s.analyticsRoutes(),
+		s.assistantRoutes(),
 		s.swarmRoutes(),
 		s.healthRoutes(),
 	)

@@ -20,6 +20,14 @@ var ErrNoHost = errors.New("the assistant needs a Kubernetes deployment with it 
 // (decision 8: never an unconfined one).
 var ErrNoLandlock = errors.New("the assistant's node cannot confine a session (Landlock is off or missing in its kernel)")
 
+// Paths in the pod a session's harness command names.
+const (
+	// ShimBin is the shim (the git tool's server).
+	ShimBin = "/opt/apothecary/bin/apothecary-shim"
+	// ToolsMusl is the harnesses' musl tree.
+	ToolsMusl = "/opt/apothecary/tools/musl"
+)
+
 // Dialer opens one connection to the pod's agent host.
 type Dialer interface {
 	Dial(ctx context.Context) (net.Conn, error)

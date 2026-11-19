@@ -10,6 +10,11 @@
 
 import type * as Wire from './generated/types.gen';
 import type {
+	AssistantKind,
+	AssistantMessage,
+	AssistantRepo,
+	AssistantSession,
+	AssistantStatus,
 	AskMessage,
 	AskSession,
 	AskState,
@@ -1870,4 +1875,63 @@ export function toSwarmUnit(w: Wire.SwarmUnit): SwarmUnit {
 
 export function toSwarm(w: Wire.Swarm): Swarm {
 	return { at: w.at, units: list(w.units).map(toSwarmUnit) };
+}
+
+// --- the assistant -------------------------------------------------------------
+
+const assistantKind = (k: string): AssistantKind => (k === 'ticket' || k === 'skill' ? k : 'flow');
+
+export function toAssistantRepo(w: Wire.AssistantRepo): AssistantRepo {
+	return {
+		workshop: w.workshop,
+		name: w.name,
+		ok: w.ok,
+		head: w.head || undefined,
+		error: w.error || undefined,
+		at: w.at
+	};
+}
+
+export function toAssistantStatus(w: Wire.AssistantStatus): AssistantStatus {
+	const pages: AssistantStatus['pages'] = {};
+	for (const [k, v] of Object.entries(w.pages ?? {})) {
+		if (k === 'flow' || k === 'ticket' || k === 'skill')
+			pages[k] = { presets: v.presets ?? [], repos: v.repos };
+	}
+	return {
+		enabled: w.enabled,
+		reason: w.reason || undefined,
+		choice: { integration: w.choice.integration, model: w.choice.model },
+		integrations: (w.integrations ?? []).map((i) => ({ id: i.id, name: i.name, kind: i.kind })),
+		models: w.models ?? [],
+		pod: { state: w.pod.state, error: w.pod.error || undefined },
+		repos: (w.repos ?? []).map(toAssistantRepo),
+		pages
+	};
+}
+
+export function toAssistantSession(w: Wire.AssistantSession): AssistantSession {
+	return {
+		id: w.id,
+		kind: assistantKind(w.kind),
+		workshop: w.workshop || undefined,
+		subject: w.subject,
+		integration: w.integration || undefined,
+		model: w.model || undefined,
+		createdAt: w.created_at,
+		updatedAt: w.updated_at
+	};
+}
+
+export function toAssistantMessage(w: Wire.AssistantMessage): AssistantMessage {
+	return {
+		sessionId: w.session_id,
+		seq: w.seq,
+		role: w.role === 'assistant' ? 'assistant' : 'person',
+		text: w.text,
+		fill: w.fill ?? undefined,
+		error: w.error || undefined,
+		costUsd: w.cost_usd ?? 0,
+		at: w.at
+	};
 }

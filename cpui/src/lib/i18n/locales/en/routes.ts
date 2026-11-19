@@ -400,6 +400,7 @@ export default {
 	'page.account.kind.analytics': 'Analytics',
 	'page.account.kind.notice': 'Notices',
 	'page.account.kind.settings': 'Settings',
+	'page.account.kind.assistant': 'Assistant',
 	'page.account.revoke': 'Revoke',
 	'page.account.revoked': 'Token revoked',
 	'page.account.created': 'created {ago}',

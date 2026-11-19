@@ -56,14 +56,14 @@ const (
 	sockDir   = "/run/apo"
 	netDir    = "/run/apo-net"
 	shimDir   = "/opt/apothecary/bin"
-	shimBin   = shimDir + "/apothecary-shim"
+	shimBin   = assistantport.ShimBin
 	toolsDir  = "/opt/apothecary/tools"
 	gitBin    = "/usr/bin/git"
 	rgBin     = "/usr/bin/rg"
 	// loader is the image's link to its musl loader: execve opens it for
 	// execution, so a session's rules list it (the image makes the link).
 	loader    = "/opt/apothecary/ld"
-	toolsMusl = toolsDir + "/musl"
+	toolsMusl = assistantport.ToolsMusl
 	agentSock = "sidecar.sock"
 	// agentTokenDir holds the agent host's token in the agent container:
 	// outside every session's read rules.

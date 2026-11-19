@@ -127,6 +127,9 @@ type mcpTool struct {
 	// it is not an object.
 	bodyFields map[string]bool
 	wholeBody  string
+	// boundSession, set on an assistant session token's fill tool, is the
+	// session it fills: the model passes the page's fill alone.
+	boundSession string
 }
 
 // mcpCatalog is every declared tool of the full table, built once: the
@@ -553,6 +556,15 @@ func (s *Server) mcpTools(ctx context.Context, p auth.Principal) ([]*mcpTool, er
 		if !ok {
 			continue
 		}
+		if t.route.ID == fillRouteID {
+			// The fill tool is an assistant session's alone, bound to it
+			// and shaped as its page's fill; no other token lists it.
+			bound, ok := s.boundFill(ctx, p, t, rt)
+			if ok {
+				out = append(out, bound)
+			}
+			continue
+		}
 		d, err := s.Authz.Decide(ctx, p, t.route.Action, nil)
 		if err != nil {
 			return nil, err
@@ -567,9 +579,45 @@ func (s *Server) mcpTools(ctx context.Context, p auth.Principal) ([]*mcpTool, er
 	return out, nil
 }
 
+// fillRouteID is the assistant's fill route: a tool only for the session
+// whose token calls it.
+const fillRouteID = "fillAssistantSession"
+
+// boundFill is the fill tool as an assistant session's token sees it: its
+// page's fill as the input, its session bound. ok false for any other
+// principal.
+func (s *Server) boundFill(ctx context.Context, p auth.Principal, t *mcpTool, rt Route) (*mcpTool, bool) {
+	if s.Assistant == nil || p.Token == nil {
+		return nil, false
+	}
+	d, err := s.Authz.Decide(ctx, p, rt.Action, nil)
+	if err != nil || !d.Allowed() {
+		return nil, false
+	}
+	sid, schema, ok := s.Assistant.FillTool(ctx, p.Token.ID)
+	if !ok {
+		return nil, false
+	}
+	bound := *t
+	bound.route = rt
+	bound.boundSession = sid
+	bound.def.InputSchema = schema
+	bound.def.Annotations = map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+	return &bound, true
+}
+
 // callTool runs the tool's route as the caller: a request built from the
 // arguments, through the route's own guard.
 func (s *Server) callTool(ctx context.Context, outer *http.Request, t *mcpTool, args map[string]json.RawMessage) mcpCallResult {
+	if t.boundSession != "" {
+		// The model passed the page's fill; the session is the token's.
+		fill, err := json.Marshal(args)
+		if err != nil {
+			return mcpCallResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
+		}
+		id, _ := json.Marshal(t.boundSession)
+		args = map[string]json.RawMessage{"id": id, "fill": fill}
+	}
 	fail := func(format string, a ...any) mcpCallResult {
 		return mcpCallResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(format, a...)}}, IsError: true}
 	}
@@ -729,6 +777,10 @@ func (r *toolRecorder) Write(b []byte) (int, error) {
 	return r.body.Write(b)
 }
 
+// MCPActions are the actions the face's read tools need: what an MCP
+// client's grant holds, and what an assistant session's token reads with.
+func MCPActions() []authz.Action { return mcpActions() }
+
 // mcpActions is every action a declared tool needs: what a read-only grant
 // for an MCP client holds (the token form's preset).
 func mcpActions() []authz.Action {
@@ -738,6 +790,9 @@ func mcpActions() []authz.Action {
 	}
 	var out []authz.Action
 	for _, t := range all {
+		if t.route.ID == fillRouteID {
+			continue // an assistant session's, never a client's grant
+		}
 		if !slices.Contains(out, t.route.Action) {
 			out = append(out, t.route.Action)
 		}

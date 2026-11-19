@@ -86,6 +86,12 @@
 				>
 				<button
 					class="btn-sm"
+					class:btn-sel={ed.showAssistant}
+					aria-pressed={ed.showAssistant}
+					onclick={() => (ed.showAssistant = !ed.showAssistant)}>{t('assistant.open')}</button
+				>
+				<button
+					class="btn-sm"
 					class:btn-sel={ed.showVersions}
 					aria-pressed={ed.showVersions}
 					onclick={() => (ed.showVersions = !ed.showVersions)}

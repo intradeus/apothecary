@@ -362,3 +362,34 @@ func (readOnlyKind) Descriptor() kinds.Descriptor {
 func (readOnlyKind) New(kinds.Config) (trackerport.TicketSource, error) {
 	return fake.ReadOnlyTicketSource{Src: &fake.TicketSource{}}, nil
 }
+
+// The assistant runs on the caller's own harness integrations, never
+// another person's, and never on another port's.
+func TestPersonHarnesses(t *testing.T) {
+	r, svc, _, _, _ := setup(t)
+	ctx := context.Background()
+	mk := func(user, port, name string) string {
+		in, err := svc.CreateIntegration(ctx, confstore.Integration{UserID: user, Port: port, Kind: "fake", Name: name})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return in.ID
+	}
+	mine := mk("u1", confstore.PortHarness, "mine")
+	mk("u1", confstore.PortRepository, "my repo account")
+	theirs := mk("u2", confstore.PortHarness, "theirs")
+
+	got, err := r.PersonHarnesses(ctx, "u1")
+	if err != nil || len(got) != 1 || got[0].ID != mine {
+		t.Fatalf("u1's harnesses = %+v, %v", got, err)
+	}
+	if h, err := r.PersonHarness(ctx, "u1", mine, nil); err != nil || h == nil {
+		t.Errorf("open my own = %v, %v", h, err)
+	}
+	if _, err := r.PersonHarness(ctx, "u1", theirs, nil); !errors.Is(err, confstore.ErrNotFound) {
+		t.Errorf("open another person's = %v", err)
+	}
+	if _, err := r.PersonHarness(ctx, "u1", "nope", nil); err == nil {
+		t.Error("open one that does not exist: no error")
+	}
+}
