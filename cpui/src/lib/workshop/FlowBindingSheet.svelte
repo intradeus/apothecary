@@ -95,12 +95,13 @@
 	});
 
 	// The status parameters and the source's statuses they suggest — best
-	// effort: without them the field is plain text.
+	// effort: without them the field is plain text. Read through the
+	// workshop: its source is its owner's.
 	async function loadStatuses() {
 		try {
 			readsStatus = statusParams(flow.yaml, await api.system.actions());
 			if (!readsStatus.length) return;
-			const list = await api.integrations.statuses(project.ticketSourceId);
+			const list = await api.projects.ticketStatuses(project.id);
 			statusNames = [...list.statuses].sort((a, b) => a.position - b.position).map((x) => x.name);
 		} catch {
 			// Suggestions only.

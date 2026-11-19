@@ -476,6 +476,12 @@ import type {
 	ListWorkshopTicketsData,
 	ListWorkshopTicketsErrors,
 	ListWorkshopTicketsResponses,
+	ListWorkshopTicketStatusesData,
+	ListWorkshopTicketStatusesErrors,
+	ListWorkshopTicketStatusesResponses,
+	ListWorkshopTicketTypesData,
+	ListWorkshopTicketTypesErrors,
+	ListWorkshopTicketTypesResponses,
 	LoginData,
 	LoginErrors,
 	LoginResponses,
@@ -3855,6 +3861,68 @@ export const setProjectSecret = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * The statuses a workshop's tickets move through, in order
+ *
+ * Its ticket source's list, as listTrackerStatuses gives it, read by anyone who reads the workshop's tickets: the source is its owner's. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.
+ */
+export const listWorkshopTicketStatuses = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketStatusesData, ThrowOnError>
+): RequestResult<
+	ListWorkshopTicketStatusesResponses,
+	ListWorkshopTicketStatusesErrors,
+	ThrowOnError
+> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketStatusesResponses,
+		ListWorkshopTicketStatusesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/ticket-statuses',
+		...options
+	});
+
+/**
+ * The issue types of a workshop's tickets, in order
+ *
+ * Its ticket source's list, as listTrackerTypes gives it, read by anyone who reads the workshop's tickets: the source is its owner's.
+ */
+export const listWorkshopTicketTypes = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketTypesData, ThrowOnError>
+): RequestResult<ListWorkshopTicketTypesResponses, ListWorkshopTicketTypesErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketTypesResponses,
+		ListWorkshopTicketTypesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/ticket-types',
+		...options
 	});
 
 /**

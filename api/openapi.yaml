@@ -10868,6 +10868,108 @@ paths:
       tags:
         - projects
       x-apothecary-action: project:write
+  /api/projects/{id}/ticket-statuses:
+    get:
+      description: 'Its ticket source''s list, as listTrackerStatuses gives it, read by anyone who reads the workshop''s tickets: the source is its owner''s. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.'
+      operationId: listWorkshopTicketStatuses
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 1 = read the tracker now rather than the cached copy
+          in: query
+          name: refresh
+          schema:
+            enum:
+              - "1"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerStatusList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The statuses a workshop's tickets move through, in order
+      tags:
+        - tickets
+      x-apothecary-action: ticket:read
+  /api/projects/{id}/ticket-types:
+    get:
+      description: 'Its ticket source''s list, as listTrackerTypes gives it, read by anyone who reads the workshop''s tickets: the source is its owner''s.'
+      operationId: listWorkshopTicketTypes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 1 = read the tracker now rather than the cached copy
+          in: query
+          name: refresh
+          schema:
+            enum:
+              - "1"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerTypeList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The issue types of a workshop's tickets, in order
+      tags:
+        - tickets
+      x-apothecary-action: ticket:read
   /api/projects/{id}/tickets:
     get:
       description: Each row carries its local record's id, base branch and active run (in any workshop) when the issue has a record. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.

@@ -924,6 +924,15 @@ export const projects = {
 			await unwrap(gen.getWorkshopTicket({ path: { id, key }, query: refreshQuery(opts?.refresh) }))
 		),
 
+	/** The statuses of the workshop's ticket source: what its tickets move
+	 *  through, read by whoever reads its tickets (the source is its owner's). */
+	ticketStatuses: async (id: string): Promise<TrackerStatusList> =>
+		map.toTrackerStatusList(await unwrap(gen.listWorkshopTicketStatuses({ path: { id } }))),
+
+	/** The issue types of the workshop's ticket source, like ticketStatuses. */
+	ticketTypes: async (id: string): Promise<TrackerType[]> =>
+		many((await unwrap(gen.listWorkshopTicketTypes({ path: { id } }))).types, map.toTrackerType),
+
 	/** Branches of the project's repository, for the source-branch picker. */
 	branches: async (id: string): Promise<Branch[]> =>
 		many(await unwrap(gen.listProjectBranches({ path: { id } })), map.toBranch),

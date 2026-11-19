@@ -11,7 +11,8 @@ import FlowBindingSheet from './FlowBindingSheet.svelte';
 vi.mock('$lib/api', () => ({
 	api: {
 		flows: { binding: vi.fn(), bind: vi.fn(), unbind: vi.fn() },
-		integrations: { list: vi.fn(), models: vi.fn(), statuses: vi.fn() },
+		integrations: { list: vi.fn(), models: vi.fn() },
+		projects: { ticketStatuses: vi.fn() },
 		system: { actions: vi.fn() }
 	}
 }));
@@ -205,9 +206,9 @@ describe('FlowBindingSheet', () => {
 			yaml: 'name: builder\nmain:\n  - id: close\n    type: action\n    action: ticket_transition\n    with: { to: $done_status }\n'
 		});
 
-		it("suggests the source's statuses in order, shows it unbound and saves any text", async () => {
+		it("suggests the workshop source's statuses in order, shows it unbound and saves any text", async () => {
 			vi.mocked(api.system.actions).mockResolvedValue([transition]);
-			vi.mocked(api.integrations.statuses).mockResolvedValue({
+			vi.mocked(api.projects.ticketStatuses).mockResolvedValue({
 				statuses: [status('Done', 1), status('To Do', 0)],
 				readOnly: true
 			});
@@ -224,7 +225,7 @@ describe('FlowBindingSheet', () => {
 					)
 				).toEqual(['To Do', 'Done'])
 			);
-			expect(api.integrations.statuses).toHaveBeenCalledWith('src1');
+			expect(api.projects.ticketStatuses).toHaveBeenCalledWith('p1');
 			await userEvent.type(input, 'Shipped');
 			await userEvent.click(save());
 			expect(api.flows.bind).toHaveBeenCalledWith('p1', 'builder', { done_status: 'Shipped' });
@@ -235,15 +236,15 @@ describe('FlowBindingSheet', () => {
 			setup();
 			await ready();
 			await waitFor(() => expect(api.system.actions).toHaveBeenCalled());
-			expect(api.integrations.statuses).not.toHaveBeenCalled();
+			expect(api.projects.ticketStatuses).not.toHaveBeenCalled();
 		});
 
 		it('stays plain text when the statuses cannot be read', async () => {
 			vi.mocked(api.system.actions).mockResolvedValue([transition]);
-			vi.mocked(api.integrations.statuses).mockRejectedValue(new Error('rate limited'));
+			vi.mocked(api.projects.ticketStatuses).mockRejectedValue(new Error('rate limited'));
 			setup(reading());
 			await ready();
-			await waitFor(() => expect(api.integrations.statuses).toHaveBeenCalled());
+			await waitFor(() => expect(api.projects.ticketStatuses).toHaveBeenCalled());
 			expect(screen.getByLabelText(/^done_status/)).toBeInTheDocument();
 			expect(screen.queryByText('rate limited')).not.toBeInTheDocument();
 		});

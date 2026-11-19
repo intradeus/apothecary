@@ -90,7 +90,11 @@ policy matrix is the real guard.
   have. The workshop's ticket source is the owner's integration too;
   its readers get only its kind, name and http(s) address
   (`ProjectView.ticket_source`), enough for New ticket or "Open in", and
-  none of its configuration or credentials.
+  none of its configuration or credentials. Its status and type lists
+  are read through the workshop (`GET /api/projects/{id}/ticket-statuses`
+  and `ticket-types`, `ticket:read`), so a collaborator who may write
+  the tickets can pick their statuses and types; the integration's own
+  routes stay its owner's.
 - **API version**: `admin` became `role`, token creation needs a grant,
   and routes answer 403 by action: the documented API is 2.0.0.
 - **Tokens** (`api_tokens.actions`, `.project_ids`, migration 0012): NULL

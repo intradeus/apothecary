@@ -321,38 +321,57 @@ func (s *Server) ticketSourceOf(w http.ResponseWriter, r *http.Request) (confsto
 	return in, true
 }
 
-// listTrackerStatuses is the internal tracker's rows, or a remote tracker's
-// list read live (?refresh=1 now rather than the cached copy), read-only:
-// Done is its done category.
+// listTrackerStatuses is the integration's statuses (trackerStatuses).
 func (s *Server) listTrackerStatuses(w http.ResponseWriter, r *http.Request) {
 	in, ok := s.ticketSourceOf(w, r)
 	if !ok {
 		return
 	}
-	if in.Kind == confstore.KindInternal {
-		list, err := s.Conf.TrackerStatuses(r.Context(), in.ID)
-		if err != nil {
-			confErr(w, err)
-			return
-		}
-		writeJSON(w, http.StatusOK, statusList(list, false))
+	list, err := s.trackerStatuses(r.Context(), in, r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		workshop{source: in}.fail(w, err)
 		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// listWorkshopTicketStatuses is the statuses of the workshop's ticket
+// source: what its tickets move through, read with ticket:read on the
+// workshop rather than integration:read on the source, which is its owner's.
+func (s *Server) listWorkshopTicketStatuses(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.trackerStatuses(r.Context(), ws.source, r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// trackerStatuses is the internal tracker's rows, or a remote tracker's
+// list read live (refresh: now rather than the cached copy), read-only:
+// Done is its done category.
+func (s *Server) trackerStatuses(ctx context.Context, in confstore.Integration, refresh bool) (TrackerStatusList, error) {
+	if in.Kind == confstore.KindInternal {
+		list, err := s.Conf.TrackerStatuses(ctx, in.ID)
+		return statusList(list, false), err
 	}
 	if s.Live == nil {
-		liveErr(w, tickets.ErrNoSources)
-		return
+		return TrackerStatusList{}, tickets.ErrNoSources
 	}
-	remote, err := s.Live.Statuses(r.Context(), in.ID, r.URL.Query().Get("refresh") == "1")
+	remote, err := s.Live.Statuses(ctx, in.ID, refresh)
 	if err != nil {
-		liveErr(w, err)
-		return
+		return TrackerStatusList{}, err
 	}
 	list := make([]confstore.TrackerStatus, len(remote))
 	for i, st := range remote {
 		list[i] = confstore.TrackerStatus{ID: st.ID, IntegrationID: in.ID, RemoteID: st.ID, Name: st.Name,
 			Position: i, IsDone: st.Category == trackerport.CategoryDone}
 	}
-	writeJSON(w, http.StatusOK, statusList(list, true))
+	return statusList(list, true), nil
 }
 
 func (s *Server) putTrackerStatuses(w http.ResponseWriter, r *http.Request) {
@@ -375,29 +394,49 @@ func statusList(list []confstore.TrackerStatus, readOnly bool) TrackerStatusList
 	return TrackerStatusList{Statuses: list, ReadOnly: readOnly}
 }
 
-// listTrackerTypes is the source's type list as stored, a remote tracker's
-// read first (?refresh=1 now rather than the cached copy) so a new type
-// gets its row.
+// listTrackerTypes is the integration's types (trackerTypes).
 func (s *Server) listTrackerTypes(w http.ResponseWriter, r *http.Request) {
 	in, ok := s.ticketSourceOf(w, r)
 	if !ok {
 		return
 	}
-	var list []confstore.TrackerType
-	var err error
-	switch {
-	case in.Kind == confstore.KindInternal:
-		list, err = s.Conf.TrackerTypes(r.Context(), in.ID)
-	case s.Live == nil:
-		err = tickets.ErrNoSources
-	default:
-		list, err = s.Live.Types(r.Context(), in.ID, r.URL.Query().Get("refresh") == "1")
-	}
+	list, err := s.trackerTypes(r.Context(), in, r.URL.Query().Get("refresh") == "1")
 	if err != nil {
 		liveErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, typeList(list))
+	writeJSON(w, http.StatusOK, list)
+}
+
+// listWorkshopTicketTypes is the types of the workshop's ticket source, read
+// with ticket:read on the workshop like listWorkshopTicketStatuses.
+func (s *Server) listWorkshopTicketTypes(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.trackerTypes(r.Context(), ws.source, r.URL.Query().Get("refresh") == "1")
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, list)
+}
+
+// trackerTypes is the source's type list as stored, a remote tracker's read
+// first (refresh: now rather than the cached copy) so a new type gets its row.
+func (s *Server) trackerTypes(ctx context.Context, in confstore.Integration, refresh bool) (TrackerTypeList, error) {
+	var list []confstore.TrackerType
+	var err error
+	switch {
+	case in.Kind == confstore.KindInternal:
+		list, err = s.Conf.TrackerTypes(ctx, in.ID)
+	case s.Live == nil:
+		err = tickets.ErrNoSources
+	default:
+		list, err = s.Live.Types(ctx, in.ID, refresh)
+	}
+	return typeList(list), err
 }
 
 func (s *Server) putTrackerTypes(w http.ResponseWriter, r *http.Request) {

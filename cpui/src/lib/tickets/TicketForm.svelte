@@ -54,8 +54,10 @@
 	let attached = $state<Attachment[]>([]);
 
 	onMount(() => {
-		api.integrations
-			.types(project.ticketSourceId)
+		// Through the workshop: its source is its owner's, which a
+		// collaborator does not read.
+		api.projects
+			.ticketTypes(project.id)
 			.then((l) => (types = l))
 			.catch(() => {
 				/* the type stays unset: the change type alone still names the work */

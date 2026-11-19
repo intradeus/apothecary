@@ -165,6 +165,18 @@ describe('a list the engine answers null', () => {
 			'listTrackerStatuses',
 			{ statuses: null }
 		],
+		[
+			'a workshop’s ticket statuses',
+			() => projects.ticketStatuses('p').then((l) => l.statuses),
+			'listWorkshopTicketStatuses',
+			{ statuses: null }
+		],
+		[
+			'a workshop’s ticket types',
+			() => projects.ticketTypes('p'),
+			'listWorkshopTicketTypes',
+			{ types: null }
+		],
 		['uploads', () => files.upload([]), 'uploadAttachments', { attachments: null }],
 		['egress defaults', () => egress.defaults(), 'getEgressDefaults', { domains: null }]
 	])('reads %s nested in an object as none', async (_, call, name, body) => {
@@ -1739,6 +1751,15 @@ describe('trackers', () => {
 		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: undefined });
 		await integrations.statuses('i', true);
 		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: { refresh: '1' } });
+	});
+
+	it('reads a workshop’s ticket statuses and types through the workshop', async () => {
+		const st = reply('listWorkshopTicketStatuses', answer({ statuses: [], read_only: false }));
+		await expect(projects.ticketStatuses('p')).resolves.toEqual({ statuses: [], readOnly: false });
+		expect(st).toHaveBeenLastCalledWith({ path: { id: 'p' } });
+		const ty = reply('listWorkshopTicketTypes', answer({ types: [] }));
+		await expect(projects.ticketTypes('p')).resolves.toEqual([]);
+		expect(ty).toHaveBeenLastCalledWith({ path: { id: 'p' } });
 	});
 
 	it('saves the internal tracker’s statuses, replacements only when there are some', async () => {

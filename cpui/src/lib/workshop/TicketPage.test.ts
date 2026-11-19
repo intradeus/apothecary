@@ -14,7 +14,14 @@ import TicketPage from './TicketPage.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		projects: { ticket: vi.fn(), branches: vi.fn(), get: vi.fn(), mergeRequests: vi.fn() },
+		projects: {
+			ticket: vi.fn(),
+			branches: vi.fn(),
+			get: vi.fn(),
+			mergeRequests: vi.fn(),
+			ticketStatuses: vi.fn(),
+			ticketTypes: vi.fn()
+		},
 		tickets: {
 			attachments: vi.fn(),
 			startRun: vi.fn(),
@@ -28,7 +35,7 @@ vi.mock('$lib/api', () => ({
 		runs: { abort: vi.fn() },
 		files: { upload: vi.fn(), attachmentUrl: vi.fn(), limits: vi.fn() },
 		flows: { list: vi.fn(), get: vi.fn(), binding: vi.fn() },
-		integrations: { list: vi.fn(), models: vi.fn(), statuses: vi.fn(), types: vi.fn() },
+		integrations: { list: vi.fn(), models: vi.fn() },
 		skillsets: { list: vi.fn(), versions: vi.fn() }
 	},
 	busyRunOf: (e: unknown) =>
@@ -56,7 +63,7 @@ beforeEach(() => {
 	]);
 	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.tickets.comments).mockResolvedValue([]);
-	vi.mocked(api.integrations.statuses).mockResolvedValue({ statuses: [], readOnly: true });
+	vi.mocked(api.projects.ticketStatuses).mockResolvedValue({ statuses: [], readOnly: true });
 	vi.mocked(api.flows.list).mockResolvedValue([aFlow({ name: 'builder' })]);
 	vi.mocked(api.flows.get).mockResolvedValue(aFlow({ name: 'builder' }));
 	vi.mocked(api.flows.binding).mockResolvedValue({
@@ -69,7 +76,7 @@ beforeEach(() => {
 	vi.mocked(api.projects.get).mockResolvedValue(aWorkshop({ id: 'p1' }));
 	vi.mocked(api.projects.mergeRequests).mockResolvedValue([]);
 	vi.mocked(api.skillsets.list).mockResolvedValue([]);
-	vi.mocked(api.integrations.types).mockResolvedValue([]);
+	vi.mocked(api.projects.ticketTypes).mockResolvedValue([]);
 	vi.mocked(api.files.limits).mockRejectedValue(new Error('no policy'));
 });
 afterEach(() => {

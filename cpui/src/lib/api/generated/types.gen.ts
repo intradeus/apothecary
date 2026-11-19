@@ -7439,6 +7439,100 @@ export type SetProjectSecretResponses = {
 
 export type SetProjectSecretResponse = SetProjectSecretResponses[keyof SetProjectSecretResponses];
 
+export type ListWorkshopTicketStatusesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * 1 = read the tracker now rather than the cached copy
+		 */
+		refresh?: '1';
+	};
+	url: '/api/projects/{id}/ticket-statuses';
+};
+
+export type ListWorkshopTicketStatusesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListWorkshopTicketStatusesResponses = {
+	/**
+	 * OK
+	 */
+	200: TrackerStatusList;
+};
+
+export type ListWorkshopTicketStatusesResponse =
+	ListWorkshopTicketStatusesResponses[keyof ListWorkshopTicketStatusesResponses];
+
+export type ListWorkshopTicketTypesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * 1 = read the tracker now rather than the cached copy
+		 */
+		refresh?: '1';
+	};
+	url: '/api/projects/{id}/ticket-types';
+};
+
+export type ListWorkshopTicketTypesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListWorkshopTicketTypesResponses = {
+	/**
+	 * OK
+	 */
+	200: TrackerTypeList;
+};
+
+export type ListWorkshopTicketTypesResponse =
+	ListWorkshopTicketTypesResponses[keyof ListWorkshopTicketTypesResponses];
+
 export type ListWorkshopTicketsData = {
 	body?: never;
 	path: {

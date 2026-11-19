@@ -840,3 +840,39 @@ func TestSharedWorkshopShowsItsTicketSource(t *testing.T) {
 		}
 	}
 }
+
+// A shared operator moves a ticket through the statuses of the owner's
+// ticket source and reads its types through the workshop: the integration
+// itself stays the owner's (404 to them), and a stranger reads neither.
+func TestSharedOperatorMovesTicketsThroughTheOwnersStatuses(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	key := x.newTicket(t, "shared", "")
+	op := x.account(t, "op", auth.RoleMember)
+	x.share(t, testProject, "op", "operator")
+	stranger := x.account(t, "stranger", auth.RoleMember)
+	workshop := "/api/projects/" + testProject
+	source := decode[map[string]any](t, x.expect(t, "owner", nil, "GET", workshop, nil, http.StatusOK))["ticket_source_id"].(string)
+
+	for _, list := range []string{"/statuses", "/types"} {
+		x.expect(t, "operator", op, "GET", "/api/integrations/"+source+list, nil, http.StatusNotFound)
+	}
+	for _, list := range []string{"/ticket-statuses", "/ticket-types"} {
+		x.expect(t, "stranger", stranger, "GET", workshop+list, nil, http.StatusNotFound)
+	}
+
+	types := x.expect(t, "operator", op, "GET", workshop+"/ticket-types", nil, http.StatusOK)
+	if want := x.expect(t, "owner", nil, "GET", "/api/integrations/"+source+"/types", nil, http.StatusOK); string(types) != string(want) {
+		t.Errorf("types = %s, want the source's %s", types, want)
+	}
+	statuses := decode[TrackerStatusList](t, x.expect(t, "operator", op, "GET", workshop+"/ticket-statuses", nil, http.StatusOK))
+	current := decode[TicketDetail](t, x.expect(t, "operator", op, "GET", ticketPath(testProject, key), nil, http.StatusOK)).Status
+	i := slices.IndexFunc(statuses.Statuses, func(st confstore.TrackerStatus) bool { return st.Name != current })
+	if i < 0 {
+		t.Fatalf("statuses = %+v: none but %q to move to", statuses, current)
+	}
+	next := statuses.Statuses[i].Name
+	moved := decode[TicketDetail](t, x.expect(t, "operator", op, "POST", ticketPath(testProject, key)+"/status", TicketStatusRequest{Status: next}, http.StatusOK))
+	if moved.Status != next {
+		t.Errorf("moved to %q, want %q", moved.Status, next)
+	}
+}
