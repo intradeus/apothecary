@@ -371,6 +371,8 @@ export default {
 	'form.project.browse': 'Browse repositories',
 	'form.project.noRepoAccount':
 		'No repository integration (GitLab, GitHub) yet — add one under <a class="link" href="{href}">Integrations</a> first.',
+	'form.project.ownersRepoAccount':
+		'The workshop reaches its repositories through its owner’s account, kept as it is: only the owner changes it.',
 	'form.project.listFail': 'Couldn’t list repositories',
 	'form.project.filterRepos': 'Filter {count} repositories',
 	'form.project.close': 'Close',
@@ -437,6 +439,8 @@ export default {
 	'form.project.ticketSource.builtIn': 'Apothecary (built-in tracker)',
 	'form.project.ticketSource.help':
 		'Where this workshop’s tickets live, read live from the tracker. Several workshops may share one; switching hides the old source’s tickets here, their runs stay. Add a tracker under <a class="link" href="{href}">Integrations</a>.',
+	'form.project.ticketSource.owners':
+		'Its tickets come from its owner’s ticket source, kept as it is: only the owner changes it.',
 	'form.project.executionHead': 'Execution',
 	'form.project.executionSub': 'which coding agents may run in the workshop’s workspaces',
 	'form.project.harnesses': 'Harness integrations',

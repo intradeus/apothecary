@@ -109,6 +109,21 @@ describe('MembersTab', () => {
 		expect(screen.getByLabelText('Handle or email')).toHaveValue('');
 	});
 
+	it('re-roles a member shared with again, listing them once', async () => {
+		// The engine upserts: sharing with bo again changes bo's role.
+		vi.mocked(api.projects.addMember).mockResolvedValue(aMember({ role: 'operator' }));
+		render(MembersTab, { project: owned });
+		await waitFor(() => expect(rows()).toHaveLength(3));
+		await userEvent.type(screen.getByLabelText('Handle or email'), 'bo');
+		await choose('Role', 'Operator');
+		await userEvent.click(screen.getByRole('button', { name: /Add member/ }));
+		await waitFor(() =>
+			expect(screen.getByRole('combobox', { name: 'Role of bo' })).toHaveTextContent('Operator')
+		);
+		expect(rows()).toHaveLength(3);
+		expect(screen.getAllByRole('combobox', { name: 'Role of bo' })).toHaveLength(1);
+	});
+
 	it('shows the engine’s refusal beside the form', async () => {
 		vi.mocked(api.projects.addMember).mockRejectedValue(new Error('no such account'));
 		render(MembersTab, { project: owned });

@@ -77,6 +77,14 @@ describe('RepositorySection, the fields', () => {
 		expect(screen.getAllByRole('link')[0]).toHaveAttribute('href', '/system/integrations');
 		expect(browse()).toBeDisabled();
 	});
+
+	it('keeps a shared workshop’s account, its owner’s, offering none of the caller’s', () => {
+		const props = setup({ shared: true, repoAccountId: 'owners-gitlab' });
+		expect(screen.getByText(/through its owner’s account/)).toBeInTheDocument();
+		expect(screen.queryByRole('combobox', { name: 'Repository account' })).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Browse repositories' })).toBeNull();
+		expect(props.repoAccountId).toBe('owners-gitlab');
+	});
 });
 
 describe('RepositorySection, the branch format', () => {

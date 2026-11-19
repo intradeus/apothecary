@@ -79,7 +79,11 @@
 		busy = true;
 		try {
 			const m = await api.projects.addMember(project.id, login.trim(), role);
-			members = [...(members ?? []), m];
+			// Sharing with a member again changes its role: replace, never duplicate.
+			const list = members ?? [];
+			members = list.some((x) => x.userId === m.userId)
+				? list.map((x) => (x.userId === m.userId ? m : x))
+				: [...list, m];
 			toast(t('workshop.members.added', { handle: m.handle }));
 			login = '';
 			addError = '';

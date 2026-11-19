@@ -64,14 +64,14 @@
 	const init = untrack(() => $state.snapshot(existing) as Project | null);
 	const initFlows = untrack(() => flows);
 	const byPort = (port: string) => untrack(() => integrations).filter((i) => i.port === port);
-	const repoAccounts = byPort('repository');
-	// A workshop shared with the caller runs on its owner's harnesses: the
-	// caller's list holds none of them (they are the owner's to see), and the
-	// engine takes no one else's. They are kept as they are and none of the
-	// caller's own is offered.
+	// A workshop shared with the caller runs on its owner's integrations: its
+	// repository account, ticket source and harnesses. The caller's list holds
+	// none of them (they are the owner's to see), and the engine takes no one
+	// else's. They are kept as they are and none of the caller's own is offered.
 	const shared = !!init && init.access.role !== 'owner';
+	const repoAccounts = shared ? [] : byPort('repository');
 	const harnesses = shared ? [] : byPort('harness');
-	const ticketSources = byPort('ticketsource');
+	const ticketSources = shared ? [] : byPort('ticketsource');
 	const flowNames = initFlows.map((f) => f.name);
 	const ownFlows = initFlows.filter((f) => !f.builtin);
 	const templateFlows = initFlows.filter((f) => f.builtin);
@@ -391,6 +391,7 @@
 	<fieldset class="secs" disabled={readonly}>
 		<RepositorySection
 			{repoAccounts}
+			{shared}
 			bind:repoAccountId
 			bind:repoURL
 			bind:locator
@@ -409,7 +410,7 @@
 			bind:defaultFlow
 			bind:commandRows
 		>
-			<TicketSourceSection sources={ticketSources} bind:ticketSourceId />
+			<TicketSourceSection sources={ticketSources} {shared} bind:ticketSourceId />
 		</WorkshopSection>
 		<ExecutionSection {harnesses} {shared} bind:harnessIds />
 		<WorkspaceSection

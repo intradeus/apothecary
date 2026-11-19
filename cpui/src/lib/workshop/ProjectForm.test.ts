@@ -289,6 +289,46 @@ describe('ProjectForm, draft()', () => {
 		expect(screen.queryByText('Couldn’t save this setup')).toBeNull();
 	});
 
+	it('keeps a shared workshop’s repository account and ticket source, its owner’s, and offers none of the caller’s', async () => {
+		// Both ids are the owner's, absent from the caller's own integrations.
+		edit({
+			repoAccountId: 'owners-gitlab',
+			ticketSourceId: 'owners-jira',
+			harnessIds: ['owners-claude'],
+			ownerId: 'u2',
+			ownerHandle: 'ada',
+			access: {
+				role: 'maintainer',
+				actions: ['project:read', 'project:write', 'project:members', 'project:leave']
+			}
+		});
+		expect(
+			screen.getByText(
+				'The workshop reaches its repositories through its owner’s account, kept as it is: only the owner changes it.'
+			)
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				'Its tickets come from its owner’s ticket source, kept as it is: only the owner changes it.'
+			)
+		).toBeInTheDocument();
+		// No selector offers the caller's own accounts or sources, and the
+		// owner's account is not browsed.
+		expect(screen.queryByLabelText('Repository account')).toBeNull();
+		expect(screen.queryByLabelText('Ticket source')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Browse repositories' })).toBeNull();
+		expect(screen.queryByText(/No repository integration/)).toBeNull();
+
+		await retype('Workshop name', 'acme');
+		expect(await save()).toMatchObject({
+			name: 'acme',
+			repoAccountId: 'owners-gitlab',
+			ticketSourceId: 'owners-jira',
+			harnessIds: ['owners-claude']
+		});
+		expect(screen.queryByText('Couldn’t save this setup')).toBeNull();
+	});
+
 	it('survives a project with no workspace policy set', async () => {
 		edit({
 			workspace: {
