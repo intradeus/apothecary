@@ -213,7 +213,7 @@ is published on its own.
    that commit. Its job summary shows the version and the `CHANGELOG.md`
    section it adds.
 3. CI commits `CHANGELOG.md` as `chore(release): vX.Y.Z [skip ci]`, tags it
-   `vX.Y.Z`, pushes both to `main`, pushes the five images to
+   `vX.Y.Z`, pushes both to `main`, pushes the six images to
    `ghcr.io/intradeus/apothecary/<name>` as `:vX.Y.Z`, `:latest` and
    `:sha-…`, and the Helm chart to
    `oci://ghcr.io/intradeus/charts/apothecary` as `X.Y.Z`, pinned to those

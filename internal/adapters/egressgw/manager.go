@@ -391,6 +391,26 @@ func (m *Manager) SetRule(ctx context.Context, project, host string, allow bool)
 	return m.call(ctx, ctl, http.MethodPut, "/policy", f, nil)
 }
 
+// SetPolicy replaces the gateway's whole policy in one write: the assistant
+// pod's gateway widens its allow list to the repository hosts for the
+// length of a fetch, then narrows it back. An empty mode is allow.
+func (m *Manager) SetPolicy(ctx context.Context, project string, f policyfile.File) error {
+	pm := m.projectMu(project)
+	pm.Lock()
+	defer pm.Unlock()
+	ctl, ok, err := m.host.Control(ctx, project)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNoGateway
+	}
+	if f.Mode == "" {
+		f.Mode = policyfile.ModeAllow
+	}
+	return m.call(ctx, ctl, http.MethodPut, "/policy", f, nil)
+}
+
 // applyRule is SetRule's pure edit.
 func applyRule(f policyfile.File, host string, allow bool) policyfile.File {
 	if allow {

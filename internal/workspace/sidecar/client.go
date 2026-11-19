@@ -38,6 +38,27 @@ type Client struct {
 	stream *http.Client
 }
 
+// NewWithHeader is New, every request carrying header: an agent host that
+// takes a token (the assistant pod's).
+func NewWithHeader(d Dialer, name, value string) *Client {
+	c := New(d)
+	for _, hc := range []*http.Client{c.http, c.stream} {
+		hc.Transport = headerTransport{next: hc.Transport, name: name, value: value}
+	}
+	return c
+}
+
+type headerTransport struct {
+	next        http.RoundTripper
+	name, value string
+}
+
+func (t headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set(t.name, t.value)
+	return t.next.RoundTrip(r)
+}
+
 func New(d Dialer) *Client {
 	var tr http.RoundTripper = &http.Transport{
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
@@ -142,6 +163,18 @@ type StartRequest struct {
 	Argv []string          `json:"argv"`
 	Env  map[string]string `json:"env,omitempty"`
 	Cwd  string            `json:"cwd,omitempty"`
+	// Confine starts the agent under Landlock rules (shim confine): the
+	// assistant pod's sessions. Its environment is then Env alone.
+	Confine *Confine `json:"confine,omitempty"`
+}
+
+// Confine is a confined agent's rules: what it reads, writes, runs, and the
+// devices it opens. Absolute paths.
+type Confine struct {
+	Read    []string `json:"read,omitempty"`
+	Write   []string `json:"write,omitempty"`
+	Exec    []string `json:"exec,omitempty"`
+	Devices []string `json:"devices,omitempty"`
 }
 
 type StartResponse struct {

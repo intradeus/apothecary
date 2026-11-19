@@ -58,7 +58,10 @@ const (
 	labelProject = "apothecary.io/project"
 	labelRun     = "apothecary.io/run"
 	labelSandbox = "apothecary.io/sandbox"
-	labelWGFor   = "apothecary.io/wg-project"
+	// LabelGatewayPeer marks a pod, beside apothecary.io/project, as a peer
+	// its project's gateway admits that is not a sandbox: an assistant pod.
+	LabelGatewayPeer = "apothecary.io/gateway-peer"
+	labelWGFor       = "apothecary.io/wg-project"
 	// EngineAppLabel is the label the engine's pods carry (Helm chart).
 	EngineAppLabel = "app.kubernetes.io/name"
 	EngineAppValue = "apothecaryd"
@@ -270,7 +273,12 @@ func (h *K8sHost) networkPolicy(project string, labels map[string]string) kube.N
 			PodSelector: kube.LabelSelector{MatchLabels: map[string]string{labelGateway: key}},
 			PolicyTypes: []string{"Ingress", "Egress"},
 			Ingress: []kube.NetworkPolicyRule{
-				{From: []kube.NetworkPolicyPeer{{PodSelector: &kube.LabelSelector{MatchLabels: map[string]string{labelProject: key, labelSandbox: "true"}}}},
+				// The tunnel: the project's sandboxes, and any other pod that
+				// is this gateway's peer by label (a person's assistant pod).
+				{From: []kube.NetworkPolicyPeer{
+					{PodSelector: &kube.LabelSelector{MatchLabels: map[string]string{labelProject: key, labelSandbox: "true"}}},
+					{PodSelector: &kube.LabelSelector{MatchLabels: map[string]string{labelProject: key, LabelGatewayPeer: "true"}}},
+				},
 					Ports: []kube.NetworkPolicyPort{{Protocol: "UDP", Port: wgPort}}},
 				{From: []kube.NetworkPolicyPeer{h.enginePeer()},
 					Ports: []kube.NetworkPolicyPort{{Protocol: "TCP", Port: 9041}}},

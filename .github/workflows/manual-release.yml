@@ -201,7 +201,7 @@ jobs:
             echo "## Images"
             echo
             echo '```sh'
-            for name in apothecaryd sandbox shim tools egress-gw; do
+            for name in apothecaryd sandbox shim tools egress-gw assistant; do
               echo "docker pull ghcr.io/intradeus/apothecary/$name:$TAG"
             done
             echo '```'

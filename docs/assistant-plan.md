@@ -64,7 +64,8 @@ agents are the next item, not this one.
 8. **One confined process per session.** The shim launches each session's
    agent process under a Landlock rule set built for that session: read
    its repositories, write its own state folder, execute a short list.
-   No Landlock on the node means no session, never an unconfined one.
+   No Landlock on the node means no session, never an unconfined one
+   (ABI 6 at least: `docs/notes/2026-11-19-the-assistant-pod.md`).
 9. **A gateway per person.** Standing allow list: the model provider
    domains of the credentials behind the assistant harness. A repository
    host is reachable only during a fetch.
@@ -81,9 +82,10 @@ agents are the next item, not this one.
 13. **The platform is read through the MCP face**, under a token that
     holds read actions only. The face's tools are derived from the route
     table, so they have the one source the OpenAPI document has.
-14. **Codex is not offered as the assistant harness** in the first
-    version: it reads files through its shell tool (**verify**, phase 2).
-    omp serves the ChatGPT login, so no subscription is left out.
+14. **The assistant's harnesses are claude-code and opencode** in the
+    first version. Codex reads files through its shell tool; omp never
+    gives a session's MCP servers to its model, so it could not fill a page
+    (`docs/notes/2026-11-19-assistant-pod-experiments.md`).
 15. Unreleased: no compatibility layer.
 
 ## Shape

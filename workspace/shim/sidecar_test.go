@@ -23,6 +23,12 @@ import (
 // SHIM_FAKE_ACP=1: a scripted agent speaking the same wire protocol as
 // opencode acp / codex-acp, enough to exercise the host end to end.
 func TestMain(m *testing.M) {
+	// The probe a confine test runs, unless this process is the confine
+	// that is about to run it.
+	if op := os.Getenv(confineProbeEnv); op != "" && (len(os.Args) < 2 || os.Args[1] != "confine") {
+		confineProbe(op)
+		os.Exit(0)
+	}
 	if os.Getenv("SHIM_FAKE_ACP") == "1" {
 		fakeACPAgent()
 		os.Exit(0)
@@ -1237,5 +1243,112 @@ func TestRunSidecarSocketFailures(t *testing.T) {
 	r := shim(t, "", "sidecar", "--listen", filepath.Join(dir, "missing", "s.sock"), "--repo", dir, "--repos", dir)
 	if r.code != 1 || !strings.Contains(r.stderr, "sidecar: listen") {
 		t.Errorf("no socket = %+v", r)
+	}
+}
+
+// POST /fs/write lays a session's files down under the write root and
+// nowhere else: not outside it, not through a link a session planted.
+func TestSidecarWritesUnderItsRootOnly(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	s := &sidecar{writeRoot: root}
+	h := s.routes()
+	post := func(path string, data string) int {
+		body, _ := json.Marshal(writeReq{Path: path, Data: []byte(data), Mode: 0o600})
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/fs/write", bytes.NewReader(body)))
+		return rec.Code
+	}
+	if code := post(filepath.Join(root, "s1", ".claude", "settings.json"), "{}"); code != http.StatusNoContent {
+		t.Fatalf("a write under the root = %d", code)
+	}
+	if b, err := os.ReadFile(filepath.Join(root, "s1", ".claude", "settings.json")); err != nil || string(b) != "{}" {
+		t.Errorf("written = %q, %v", b, err)
+	}
+	if fi, _ := os.Stat(filepath.Join(root, "s1", ".claude", "settings.json")); fi.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", fi.Mode())
+	}
+	// A session links its home's folder at another place.
+	os.MkdirAll(filepath.Join(root, "s2"), 0o700)
+	os.Symlink(outside, filepath.Join(root, "s2", "link"))
+	os.Symlink(filepath.Join(outside, "f"), filepath.Join(root, "s2", "file-link"))
+	for name, path := range map[string]string{
+		"outside":             filepath.Join(outside, "x"),
+		"the root itself":     root,
+		"an unclean path":     root + "/s1/../../x",
+		"relative":            "s1/x",
+		"through a dir link":  filepath.Join(root, "s2", "link", "x"),
+		"through a file link": filepath.Join(root, "s2", "file-link"),
+		"a sibling root":      root + "-other/x",
+	} {
+		if code := post(path, "pwned"); code == http.StatusNoContent {
+			t.Errorf("%s: written", name)
+		}
+	}
+	if ents, _ := os.ReadDir(outside); len(ents) != 0 {
+		t.Errorf("something was written outside: %v", ents)
+	}
+	// A sidecar with no root takes no writes.
+	rec := httptest.NewRecorder()
+	(&sidecar{}).routes().ServeHTTP(rec, httptest.NewRequest("POST", "/fs/write", strings.NewReader(`{"path":"/tmp/x"}`)))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("no root = %d", rec.Code)
+	}
+}
+
+// POST /agent/stop names one process, or stops them all.
+func TestSidecarStopsOneAgentProcess(t *testing.T) {
+	s := &sidecar{log: newEventLog()}
+	s.agent = newAgentHost(s.log)
+	p, err := s.agent.start(startReq{Argv: []string{"sh", "-c", `read line; ` + initOK + `; exec cat >/dev/null`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := s.routes()
+	stop := func(body string) int {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest("POST", "/agent/stop", strings.NewReader(body)))
+		return rec.Code
+	}
+	if code := stop(`{"proc":"nope"}`); code != http.StatusNotFound {
+		t.Errorf("an unknown process = %d", code)
+	}
+	if code := stop(`{"proc":"` + p.id + `"}`); code != http.StatusNoContent || p.alive() {
+		t.Errorf("stop one = %d, alive %v", code, p.alive())
+	}
+	if code := stop(""); code != http.StatusNoContent {
+		t.Errorf("stop all = %d", code)
+	}
+}
+
+// The assistant pod's agent host answers only a request carrying its token,
+// and starts only confined processes.
+func TestSidecarTokenAndConfinedOnly(t *testing.T) {
+	s := &sidecar{log: newEventLog(), token: "t0k", confinedOnly: true}
+	s.agent = newAgentHost(s.log)
+	h := s.guarded()
+	do := func(method, path, token, body string) int {
+		req := httptest.NewRequest(method, path, strings.NewReader(body))
+		if token != "" {
+			req.Header.Set(agentHostTokenHeader, token)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+	for _, tok := range []string{"", "nope", "t0k0"} {
+		if code := do("GET", "/health", tok, ""); code != http.StatusUnauthorized {
+			t.Errorf("token %q = %d", tok, code)
+		}
+	}
+	if code := do("GET", "/health", "t0k", ""); code != http.StatusOK {
+		t.Errorf("the token = %d", code)
+	}
+	if code := do("POST", "/agent/start", "t0k", `{"argv":["/bin/true"]}`); code != http.StatusForbidden {
+		t.Errorf("an unconfined start = %d", code)
+	}
+	// No token configured: the sidecar a run's workspace runs, as before.
+	if (&sidecar{}).guarded() == nil {
+		t.Error("no handler")
 	}
 }

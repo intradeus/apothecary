@@ -51,7 +51,17 @@ type PodSpec struct {
 }
 
 type PodSecurityContext struct {
-	FSGroup *int64 `json:"fsGroup,omitempty"`
+	FSGroup        *int64          `json:"fsGroup,omitempty"`
+	RunAsNonRoot   *bool           `json:"runAsNonRoot,omitempty"`
+	RunAsUser      *int64          `json:"runAsUser,omitempty"`
+	RunAsGroup     *int64          `json:"runAsGroup,omitempty"`
+	SeccompProfile *SeccompProfile `json:"seccompProfile,omitempty"`
+}
+
+// SeccompProfile names a pod's or a container's seccomp profile:
+// RuntimeDefault is the container runtime's own.
+type SeccompProfile struct {
+	Type string `json:"type"`
 }
 
 type PodDNSConfig struct {
@@ -116,10 +126,14 @@ type VolumeMount struct {
 }
 
 type SecurityContext struct {
-	Privileged               *bool         `json:"privileged,omitempty"`
-	AllowPrivilegeEscalation *bool         `json:"allowPrivilegeEscalation,omitempty"`
-	Capabilities             *Capabilities `json:"capabilities,omitempty"`
-	RunAsUser                *int64        `json:"runAsUser,omitempty"`
+	Privileged               *bool           `json:"privileged,omitempty"`
+	AllowPrivilegeEscalation *bool           `json:"allowPrivilegeEscalation,omitempty"`
+	Capabilities             *Capabilities   `json:"capabilities,omitempty"`
+	RunAsUser                *int64          `json:"runAsUser,omitempty"`
+	RunAsGroup               *int64          `json:"runAsGroup,omitempty"`
+	RunAsNonRoot             *bool           `json:"runAsNonRoot,omitempty"`
+	ReadOnlyRootFilesystem   *bool           `json:"readOnlyRootFilesystem,omitempty"`
+	SeccompProfile           *SeccompProfile `json:"seccompProfile,omitempty"`
 }
 
 type Capabilities struct {

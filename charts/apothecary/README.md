@@ -57,10 +57,10 @@ Kubernetes: `>=1.29.0-0`
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| image.repository | string | `"ghcr.io/intradeus/apothecary"` | Prefix of the five release images: apothecaryd, sandbox, shim, tools, egress-gw (deploy/images.sh). The project browser is Microsoft's Playwright MCP image, pinned by the engine. |
+| image.repository | string | `"ghcr.io/intradeus/apothecary"` | Prefix of the six release images: apothecaryd, sandbox, shim, tools, egress-gw, assistant (deploy/images.sh). The project browser is Microsoft's Playwright MCP image, pinned by the engine. |
 | image.tag | string | `""` | Image tag. Empty: the chart's appVersion, so a chart version pins every image. |
 | image.pullPolicy | string | `""` | Pull policy. Empty: Always for a reused tag (latest, local), IfNotPresent for a release tag. |
-| image.overrides | object | `{"apothecaryd":"","browser":"","gateway":"","sandbox":"","shim":"","tools":""}` | Per-image overrides (full references), e.g. a mirror such as ECR. browser must be the same image as the engine's pin (its session command depends on the image's layout). |
+| image.overrides | object | `{"apothecaryd":"","assistant":"","browser":"","gateway":"","sandbox":"","shim":"","tools":""}` | Per-image overrides (full references), e.g. a mirror such as ECR. browser must be the same image as the engine's pin (its session command depends on the image's layout). |
 | imagePullSecrets | list | `[]` | Pull secrets for private registries or mirrors. |
 | masterKey | string | `""` | The master key that seals every stored secret (`apothecaryd keygen`). Prefer existingSecret in production. |
 | existingSecret | string | `""` | A Secret holding APOTHECARY_MASTER_KEY and APOTHECARY_POSTGRES_DSN; when set, the chart creates no Secret of its own. |

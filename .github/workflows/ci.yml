@@ -498,9 +498,12 @@ jobs:
         run: IMAGES=tools CACHE=gha-read PREFIX=apothecary deploy/images.sh "$(go run ./cmd/apothecaryd tools-hash)"
       - name: Load the images
         if: matrix.suite == 'k8s'
-        run: deploy/images.sh local
+        run: |
+          deploy/images.sh local
+          # The assistant suite's fake model: one small Go binary, no cache.
+          docker build -t "$PREFIX/live-model:local" internal/adapters/assistant/testdata/fakemodel
         env:
-          IMAGES: sandbox shim tools egress-gw
+          IMAGES: sandbox shim tools egress-gw assistant
           PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
           CACHE: gha-read
       # k3d and kubectl (pinned, as in the devcontainer), and the wireguard

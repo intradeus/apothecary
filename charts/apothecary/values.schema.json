@@ -21,6 +21,7 @@
             "shim": { "type": "string" },
             "tools": { "type": "string" },
             "gateway": { "type": "string" },
+            "assistant": { "type": "string" },
             "browser": { "type": "string" }
           }
         }

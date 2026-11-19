@@ -25,7 +25,7 @@ vars:
   K3D_HTTP_PORT: '8090'
   K3D_KUBECTL: kubectl --kubeconfig deploy/.k3d-kubeconfig
   # The images the sandbox suites run (sandbox:images).
-  SANDBOX_IMAGES: sandbox shim tools egress-gw
+  SANDBOX_IMAGES: sandbox shim tools egress-gw assistant
 
   # One version of each tool, here as in CI and the devcontainer
   # (internal/devtools/devcontainer holds every copy to its source): the
@@ -176,7 +176,7 @@ tasks:
       - '{{.K3D_KUBECTL}} {{.CLI_ARGS}}'
 
   k8s:test-live:
-    desc: Run the live Kubernetes tests (the provisioner, the project browser) against the k3d cluster
+    desc: Run the live Kubernetes tests (the provisioner, the project browser, the assistant pod) against the k3d cluster
     cmds:
       - task: k8s:ready
       - >-
@@ -185,7 +185,7 @@ tasks:
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY={{.PULL_POLICY | default "Always"}}
         APOTHECARY_LIVE_HOST_GATEWAY="$(deploy/self-container.sh ip k3d-{{.K3D_CLUSTER}}) $(docker network inspect k3d-{{.K3D_CLUSTER}} --format '{{"{{"}}range .IPAM.Config{{"}}"}}{{"{{"}}.Gateway{{"}}"}} {{"{{"}}end{{"}}"}}' 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9.]+$' || true)"
-        go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/
+        go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/ ./internal/adapters/assistant/
 
   k8s:down:
     desc: Delete the k3d cluster (its registry and everything in it)
@@ -704,9 +704,10 @@ tasks:
   # process, so its image is not among them.
   sandbox:images:
     deps: [pin:task]
-    desc: 'Build the four images the sandbox suites run (sandbox, shim, tools, egress-gw) as <k3d registry>/apothecary/<name>:local (needs docker) — CI: sandbox-images'
+    desc: 'Build the images the sandbox suites run (sandbox, shim, tools, egress-gw, assistant, and the assistant suite''s fake model) as <k3d registry>/apothecary/<name>:local (needs docker) — CI: sandbox-images'
     cmds:
       - IMAGES="{{.SANDBOX_IMAGES}}" PREFIX={{.K3D_REGISTRY}}/apothecary deploy/images.sh local
+      - docker build -t {{.K3D_REGISTRY}}/apothecary/live-model:local internal/adapters/assistant/testdata/fakemodel
 
   sandbox:test:
     desc: 'sandbox:images, then the harness and k8s suites side by side (needs docker, k3d; logs in build/checks/)'
@@ -763,7 +764,7 @@ tasks:
       - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
       # Straight into the node's image store: no registry push, no pull.
       - task: k8s:import
-        vars: {IMAGES: '{{.SANDBOX_IMAGES}}'}
+        vars: {IMAGES: '{{.SANDBOX_IMAGES}} live-model'}
       - task: k8s:test-live
         vars: {PULL_POLICY: IfNotPresent}
 
