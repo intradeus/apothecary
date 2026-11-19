@@ -467,8 +467,8 @@ func (s *Server) projectOwner(ctx context.Context, id string) (string, error) {
 }
 
 // ticketWorkshop is the workshop a ticket is reached through: the first of
-// its owner's workshops on its source that the caller reaches — its owner
-// through any (within a limited token's workshops), anyone else as a
+// its owner's workshops on its source that the caller reaches within a
+// limited token's workshops — its owner through any, anyone else as a
 // member. "" when none: the ticket is then its owner's alone (and, a
 // workshop's kind in no workshop, no limited token's).
 func (s *Server) ticketWorkshop(ctx context.Context, t confstore.Ticket) (string, error) {
@@ -481,11 +481,11 @@ func (s *Server) ticketWorkshop(ctx context.Context, t confstore.Ticket) (string
 		if pr.TicketSourceID != t.SourceID {
 			continue
 		}
-		if t.UserID == p.User.ID {
-			if p.Token == nil || p.Token.ProjectIDs == nil || slices.Contains(p.Token.ProjectIDs, pr.ID) {
-				return pr.ID, nil
-			}
+		if p.Token != nil && p.Token.ProjectIDs != nil && !slices.Contains(p.Token.ProjectIDs, pr.ID) {
 			continue
+		}
+		if t.UserID == p.User.ID {
+			return pr.ID, nil
 		}
 		if _, role, err := s.Conf.ProjectAccess(ctx, pr.ID, p.User.ID); err == nil && role != "" {
 			return pr.ID, nil

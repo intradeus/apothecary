@@ -472,6 +472,16 @@ func TestScopedTokenLifecycle(t *testing.T) {
 	x.expect(t, "token", tok, "GET", ticket, nil, 403)
 	x.expect(t, "token in Q", limitedTo(t, x, "prj-q"), "GET", ticket, nil, 200)
 	x.expect(t, "token elsewhere", limitedTo(t, x, "prj-elsewhere"), "GET", ticket, nil, 404)
+
+	// A member's token limited to the later of two workshops on the
+	// ticket's source reaches it there, whichever workshop came first.
+	x.share(t, "prj-q", "member", confstore.MemberViewer)
+	secret, _, err = x.srv.Auth.NewToken(ctx, "member", "in Q", nil,
+		auth.Grant{Actions: []string{"ticket:read"}, ProjectIDs: []string{"prj-q"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.expect(t, "member's token in Q", bearer(secret), "GET", ticket, nil, 200)
 }
 
 // What a list holds is exactly what its guard lets the caller read: for
