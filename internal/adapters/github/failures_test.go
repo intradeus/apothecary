@@ -1045,6 +1045,7 @@ func TestIssuesTest(t *testing.T) {
 func TestIssuesParseKey(t *testing.T) {
 	one := NewIssues(IssuesConfig{Repos: []string{" lu/greeter.git ", "  "}})
 	two := NewIssues(IssuesConfig{Repos: []string{"lu/a", "lu/b"}})
+	all := NewIssues(IssuesConfig{})
 	for _, tc := range []struct {
 		s       *Issues
 		key     string
@@ -1052,7 +1053,11 @@ func TestIssuesParseKey(t *testing.T) {
 		n       int
 		wantErr string
 	}{
-		{one, "lu/other#7", "lu/other", 7, ""},
+		// A key outside the source's repositories is not found: the
+		// source's token reads nothing else.
+		{one, "lu/other#7", "", 0, "is not a repository of this ticket source"},
+		{one, "LU/Greeter#7", "LU/Greeter", 7, ""},
+		{all, "anyone/any#7", "anyone/any", 7, ""},
 		{one, "#7", "lu/greeter", 7, ""},
 		{one, " 7 ", "lu/greeter", 7, ""},
 		{two, "lu/b#7", "lu/b", 7, ""},

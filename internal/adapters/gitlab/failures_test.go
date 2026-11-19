@@ -923,6 +923,8 @@ func TestIssuesTest(t *testing.T) {
 func TestIssuesParseKey(t *testing.T) {
 	one := NewIssues(IssuesConfig{Projects: []string{" /g/p.git ", "  "}})
 	two := NewIssues(IssuesConfig{Projects: []string{"g/a", "g/b"}})
+	grp := NewIssues(IssuesConfig{Groups: []string{"g/sub"}})
+	all := NewIssues(IssuesConfig{})
 	for _, tc := range []struct {
 		s       *Issues
 		key     string
@@ -930,7 +932,13 @@ func TestIssuesParseKey(t *testing.T) {
 		iid     int
 		wantErr string
 	}{
-		{one, "g/sub/p#7", "g/sub/p", 7, ""},
+		// A key outside the source's projects and groups is not found.
+		{one, "g/sub/p#7", "", 0, "is not a project of this ticket source"},
+		{two, "G/A#7", "G/A", 7, ""},
+		{grp, "g/sub/p#7", "g/sub/p", 7, ""},
+		{grp, "g/sub/deeper/p#7", "g/sub/deeper/p", 7, ""},
+		{grp, "g/subway#7", "", 0, "is not a project of this ticket source"},
+		{all, "anyone/any#7", "anyone/any", 7, ""},
 		{one, "#7", "g/p", 7, ""},
 		{one, " 7 ", "g/p", 7, ""},
 		{two, "#7", "", 0, "names no project"},

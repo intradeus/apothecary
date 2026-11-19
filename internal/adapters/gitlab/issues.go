@@ -82,8 +82,32 @@ func (s *Issues) parseKey(key string) (project string, iid int, err error) {
 		}
 		project = s.projects[0]
 	}
+	// A key names an issue of the source, never any project the token can
+	// read: a workshop's viewer reads the source with its owner's token.
+	if !s.inScope(project) {
+		return "", 0, fmt.Errorf("gitlab: %s is not a project of this ticket source: %w", project, trackerport.ErrTicketNotFound)
+	}
 	iid, _ = strconv.Atoi(m[2])
 	return project, iid, nil
+}
+
+// inScope reports a project the source covers: one listed, or one under a
+// listed group. A source that lists neither covers what its token sees.
+func (s *Issues) inScope(project string) bool {
+	if len(s.projects) == 0 && len(s.groups) == 0 {
+		return true
+	}
+	for _, p := range s.projects {
+		if strings.EqualFold(p, project) {
+			return true
+		}
+	}
+	for _, g := range s.groups {
+		if len(project) > len(g) && strings.EqualFold(project[:len(g)], g) && project[len(g)] == '/' {
+			return true
+		}
+	}
+	return false
 }
 
 func projectPath(project string) string { return "/projects/" + url.PathEscape(project) }

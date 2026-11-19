@@ -546,6 +546,9 @@ func (c *Client) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 	if key == "" {
 		return trackerport.SourceTicket{}, fmt.Errorf("jira: no issue key given")
 	}
+	if err := c.inScope(key); err != nil {
+		return trackerport.SourceTicket{}, err
+	}
 	var issue issueJSON
 	p := fmt.Sprintf("%s/issue/%s?fields=%s,attachment", c.apiBase(), url.PathEscape(key), issueFields)
 	if status, err := c.api(ctx, http.MethodGet, p, nil, &issue); err != nil {
@@ -556,6 +559,9 @@ func (c *Client) Fetch(ctx context.Context, key string) (trackerport.SourceTicke
 	}
 	if issue.Key == "" {
 		issue.Key = key
+	}
+	if err := c.inScope(issue.Key); err != nil {
+		return trackerport.SourceTicket{}, err
 	}
 	return c.toTicket(issue), nil
 }
