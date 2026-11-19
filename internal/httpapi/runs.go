@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/run"
@@ -181,7 +182,7 @@ func (s *Server) postRerun(w http.ResponseWriter, r *http.Request) {
 
 	newID, err := s.Runs.Rerun(r.Context(), r.PathValue("id"), runinput.Input{
 		Flow: body.Flow, Goal: body.Goal, SourceBranch: body.SourceBranch, AttachmentIDs: body.AttachmentIDs,
-		Params: body.Params, MR: body.MR, Skillsets: body.Skillsets,
+		Params: body.Params, MR: body.MR, Skillsets: body.Skillsets, Uploader: auth.UserID(r.Context()),
 	})
 	var busy runBusy
 	if errors.As(err, &busy) {

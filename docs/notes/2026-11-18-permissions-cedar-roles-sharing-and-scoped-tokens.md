@@ -42,18 +42,28 @@ policy matrix is the real guard.
   admin a view into anyone's work. `member` is today's user. `guest`
   creates no workshop, integration, credential, skill or channel (403); it
   has what is shared with it, and its own account, tokens and keys. The
-  last-admin rule carries over to the role. `apothecaryd user set-role`
-  replaces `set-admin`.
+  last-admin rule carries over to the role, and is now the store's: a
+  demotion or a disable that may take an enabled admin away locks every
+  enabled admin's row in the same transaction as its write, so of two at
+  once one is refused (`auth.ErrLastAdmin`). A profile edit, a role change
+  and a disable each write their own columns (`UpdateUserProfile`,
+  `SetUserRole`, `SetUserDisabled`; the whole-row `UpdateUser` is gone): an
+  edit in flight cannot write back the role or state it read.
+  `apothecaryd user set-role` replaces `set-admin`.
 - **Workshop roles** (`project_members`, migration 0011): viewer <
   operator < maintainer; the owner (`projects.user_id`) is implicit and
   above all three. A role covers the workshop and what lives in it: its
-  runs, their pings, snapshots and claimed uploads, its tickets, envchecks.
+  runs, their pings, snapshots and claimed uploads, its tickets and their
+  files, envchecks.
   viewer reads; operator also runs (start, abort, retry, archive, answer,
   ask, take over, egress allow) and writes tickets; maintainer also
   changes settings, flows, automations and secrets, shares (up to
   maintainer) and opens a shell. Only the owner deletes the workshop and
   adds, changes or removes a maintainer. Personal configuration is never
-  shared.
+  shared. A ticket or a run a collaborator writes or starts is still the
+  owner's; the files they attach are their own uploads, claimed as theirs
+  (never as the owner's on their behalf), and a ticket's files are the
+  ticket's to read.
 - **Tokens** (`api_tokens.actions`, `.project_ids`, migration 0012): NULL
   actions is a full token — every token minted before, and the CLI's
   sign-in. A scoped token holds a non-empty action list and, optionally,
@@ -69,7 +79,10 @@ policy matrix is the real guard.
   the token's workshops) is 404, as before; one it may read but not act on
   is 403 naming the action, as is a route its role or token does not hold.
 - **Where each check lives**: Cedar decides point requests in the guard
-  (`authz.Decide`, one resource) and the SSH door (`run:shell`). Lists stay
+  (`authz.Decide`, one resource), the SSH door and every request an
+  exposed app's cookie makes (`run:shell` for the account the cookie was
+  issued to, so a member removed, demoted or disabled loses the app on its
+  next request). Lists stay
   SQL: `authz.Visibility` asks the same policies, workshop by workshop,
   which workshops a principal may read a kind in, and every list filters
   on the caller's own rows plus those workshops (`run.Seen`, `ListPings`,
@@ -115,6 +128,10 @@ relation × action, with the 404/403 split), `TestAdminSeesNoOneElsesWork`,
 `TestEveryRouteDeclaresItsAccess`, `TestSharedWorkshop`,
 `TestMembersRoutes`, `TestGuestRole`, `TestScopedTokenLifecycle`,
 `TestListsEqualTheGuard`, and the existing guard walks unchanged in what
-they assert. Stores: `authtest` (role and grant round-trips), `conftest`
-(members), `TestListsSeeByWorkshop`, the three migration tests.
-`sshdoor`: `TestDoorSharedWorkshop`.
+they assert; `TestAppGrantFollowsTheMembership`,
+`TestOperatorsAttachTheirOwnUploads`. Stores: `authtest` (role and grant
+round-trips, each user write writing its own columns, the last enabled
+admin under two simultaneous demotions), `conftest` (members),
+`TestListsSeeByWorkshop`, the three migration tests; `auth`:
+`TestAProfileEditCannotUndoARoleChange`. `sshdoor`:
+`TestDoorSharedWorkshop`.

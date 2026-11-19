@@ -401,12 +401,17 @@ func (s *Server) ownerOf(ctx context.Context, sc Scope, id string) (owner, proje
 		if err != nil {
 			return "", "", err
 		}
-		// An upload claimed by a run lives in the run's workshop; one that
-		// is not (yet) is its uploader's alone.
+		// An upload claimed by a run lives in the run's workshop; one claimed
+		// by a ticket is the ticket's, whoever uploaded it (a collaborator
+		// writing the owner's ticket); one that is neither (yet) is its
+		// uploader's alone.
 		if a.RunID != "" {
 			if _, project, err := s.runOwner(ctx, a.RunID); err == nil {
 				return a.UserID, project, nil
 			}
+		}
+		if a.TicketID != "" {
+			return s.ownerOf(ctx, ScopeTicket, a.TicketID)
 		}
 		return a.UserID, "", nil
 	case ScopeSnapshot:

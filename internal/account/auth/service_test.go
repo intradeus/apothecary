@@ -300,12 +300,6 @@ func (f failDB) ListMethods(ctx context.Context, u string) ([]Method, error) {
 	}
 	return f.DB.ListMethods(ctx, u)
 }
-func (f failDB) ListUsers(ctx context.Context) ([]User, error) {
-	if f.list != nil {
-		return nil, f.list
-	}
-	return f.DB.ListUsers(ctx)
-}
 func (f failDB) PutMethod(ctx context.Context, m Method) error {
 	if f.put != nil {
 		return f.put
@@ -389,8 +383,9 @@ func TestStoreOutagesPropagate(t *testing.T) {
 	check("new session", err)
 	_, _, err = with(failDB{create: boom}).NewToken(ctx, u.ID, "t", nil, Grant{})
 	check("new token", err)
-	_, err = with(failDB{list: boom}).SetRole(ctx, mustAdmin(t, s), RoleMember)
-	check("last-admin check", err)
+	plain := user(t, s, "pl", false)
+	_, err = with(failDB{put: boom}).SetDisabled(ctx, plain.ID, true)
+	check("disable's sign-out", err)
 	check("set password method", with(failDB{method: boom}).SetPassword(ctx, u.ID, pw))
 	check("set password put", with(failDB{put: boom}).SetPassword(ctx, u.ID, pw))
 	check("change password", with(failDB{method: boom}).ChangePassword(ctx, u.ID, pw, pw))
@@ -738,8 +733,7 @@ func TestDisabledCredentialIsRefusedByName(t *testing.T) {
 	tok, _, _ := s.NewToken(ctx, u.ID, "t", nil, Grant{})
 	// Disabled at the store, as a race with the sign-out would find it.
 	now := time.Now()
-	u.DisabledAt = &now
-	if err := mem.UpdateUser(ctx, u); err != nil {
+	if _, err := mem.SetUserDisabled(ctx, u.ID, &now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.AuthenticateSession(ctx, raw); !errors.Is(err, ErrDisabled) {
@@ -816,6 +810,47 @@ func TestALoginCannotUndoAPasswordReset(t *testing.T) {
 	}
 	if m, err := mem.GetMethod(ctx, u.ID, KindPassword); err != nil || m.LastUsedAt == nil {
 		t.Errorf("the use went unrecorded: %+v, %v", m, err)
+	}
+}
+
+// demoteOnRead demotes and disables the account right after a profile edit
+// has read it: the moment a whole-row write would put the old role back.
+type demoteOnRead struct {
+	DB
+	demote func()
+}
+
+func (d *demoteOnRead) GetUser(ctx context.Context, id string) (User, error) {
+	u, err := d.DB.GetUser(ctx, id)
+	if d.demote != nil {
+		demote := d.demote
+		d.demote = nil
+		demote()
+	}
+	return u, err
+}
+
+// A profile edit in flight while an admin downgrades the account must not
+// write the old role, or the old enabled state, back.
+func TestAProfileEditCannotUndoARoleChange(t *testing.T) {
+	admin, mem, now := newService(t)
+	ctx := context.Background()
+	u := user(t, admin, "lu", false)
+	s := New(&demoteOnRead{DB: mem, demote: func() {
+		if _, err := admin.SetRole(ctx, u.ID, RoleGuest); err != nil {
+			t.Error(err)
+		}
+		if _, err := admin.SetDisabled(ctx, u.ID, true); err != nil {
+			t.Error(err)
+		}
+	}})
+	s.now = func() time.Time { return *now }
+	got, err := s.UpdateProfile(ctx, u.ID, Profile{Name: "Lucas"})
+	if err != nil || got.Name != "Lucas" || got.Role != RoleGuest || !got.Disabled() {
+		t.Errorf("the edit that raced = %+v, %v", got, err)
+	}
+	if stored, _ := mem.GetUser(ctx, u.ID); stored.Name != "Lucas" || stored.Role != RoleGuest || !stored.Disabled() {
+		t.Errorf("stored = %+v, want the new name, guest and disabled", stored)
 	}
 }
 
@@ -984,7 +1019,7 @@ func TestGetUserByLoginNormalises(t *testing.T) {
 func TestMemEdges(t *testing.T) {
 	ctx := context.Background()
 	m := NewMem()
-	if err := m.UpdateUser(ctx, User{ID: "nobody"}); !errors.Is(err, ErrNotFound) {
+	if _, err := m.UpdateUserProfile(ctx, "nobody", Profile{}, time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("update nobody = %v", err)
 	}
 	if err := m.CreateUser(ctx, User{ID: "a", Handle: "a", Email: "a@x"}); err != nil {
@@ -993,7 +1028,7 @@ func TestMemEdges(t *testing.T) {
 	if err := m.CreateUser(ctx, User{ID: "b", Handle: "b", Email: "b@x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.UpdateUser(ctx, User{ID: "b", Handle: "a", Email: "b@x"}); !errors.Is(err, ErrConflict) {
+	if _, err := m.UpdateUserProfile(ctx, "b", Profile{Handle: "a", Email: "b@x"}, time.Now()); !errors.Is(err, ErrConflict) {
 		t.Errorf("handle clash = %v", err)
 	}
 	if err := m.TouchUser(ctx, "nobody", time.Now()); err != nil {

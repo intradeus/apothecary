@@ -477,12 +477,7 @@ func TestDisabledTokenAndSessionAre403(t *testing.T) {
 	// Disabled at the store, the way a race with the sign-out would find it:
 	// the credential still resolves, the account says no.
 	now := time.Now()
-	u, err := x.users.GetUser(context.Background(), "bob")
-	if err != nil {
-		t.Fatal(err)
-	}
-	u.DisabledAt = &now
-	if err := x.users.UpdateUser(context.Background(), u); err != nil {
+	if _, err := x.users.SetUserDisabled(context.Background(), "bob", &now, now); err != nil {
 		t.Fatal(err)
 	}
 	for name, hdr := range map[string]map[string]string{"token": bob, "cookie": cookie} {

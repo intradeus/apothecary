@@ -82,6 +82,11 @@ type Input struct {
 	// "" reuses the original run's source branch.
 	SourceBranch  string
 	AttachmentIDs []string
+	// Uploader is the account whose uploads this attempt's files are (the
+	// Ticket's AttachmentIDs, or AttachmentIDs on a rerun): the person who
+	// starts the run, who need not own its workshop. The claim binds only
+	// their unclaimed uploads, never the run owner's on their behalf.
+	Uploader string
 	// Params override the project's parameter bindings for this attempt;
 	// By records who created the run on run_created ("" = a person,
 	// "automation" for an automation), and Automation which one (its id).

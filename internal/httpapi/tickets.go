@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/platform/filestore"
@@ -451,8 +452,9 @@ func notInternal(w http.ResponseWriter, ws workshop, what string) {
 		ws.project.Name, ws.source.Name, ws.source.Kind, what))
 }
 
-// createWorkshopTicket writes a ticket on the workshop's internal tracker
-// and claims its uploads for the ticket.
+// createWorkshopTicket writes a ticket on the workshop's internal tracker —
+// the workshop owner's, whoever writes it — and claims the caller's uploads
+// for the ticket.
 func (s *Server) createWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 	var body ticketBody
 	if !readJSON(w, r, &body) {
@@ -469,7 +471,7 @@ func (s *Server) createWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 	t, err := s.tickets().Create(r.Context(), confstore.Ticket{
 		UserID: ws.project.UserID, Title: body.Title, Goal: body.Goal, BaseBranch: body.BaseBranch,
 		ChangeType: trackerport.ChangeType(body.ChangeType), StatusID: body.StatusID, TypeID: body.TypeID, Labels: body.Labels,
-	}, body.AttachmentIDs)
+	}, auth.UserID(r.Context()), body.AttachmentIDs)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -510,7 +512,7 @@ func (s *Server) updateWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 			ws.fail(w, err)
 			return
 		}
-		if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{BaseBranch: body.BaseBranch}, nil); err != nil {
+		if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{BaseBranch: body.BaseBranch}, "", nil); err != nil {
 			confErr(w, err)
 			return
 		}
@@ -522,11 +524,12 @@ func (s *Server) updateWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 		ws.fail(w, err)
 		return
 	}
-	// The factory claims any newly-attached uploads.
+	// The factory claims any newly-attached uploads: the caller's, who need
+	// not own the ticket.
 	if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{
 		Title: body.Title, Goal: body.Goal, BaseBranch: body.BaseBranch,
 		ChangeType: trackerport.ChangeType(body.ChangeType), TypeID: body.TypeID,
-	}, body.AttachmentIDs); err != nil {
+	}, auth.UserID(ctx), body.AttachmentIDs); err != nil {
 		confErr(w, err)
 		return
 	}
@@ -596,7 +599,7 @@ func (s *Server) startWorkshopTicketRun(w http.ResponseWriter, r *http.Request) 
 		in.SourceID, in.SourceKind, in.SourceKey, in.SourceURL = t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL
 	}
 	runID, err := s.Runs.CreateRunWith(ctx, in, body.Flow, ws.project.ID,
-		runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets})
+		runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets, Uploader: auth.UserID(ctx)})
 	if err != nil {
 		runStartErr(w, err)
 		return

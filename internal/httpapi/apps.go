@@ -26,13 +26,17 @@ import (
 // never reaches it. Access is handed over once per app host:
 //
 //  1. no app cookie → redirect to the UI host's /api/apps/auth?to=<app URL>;
-//  2. there, the signed-in owner of the run gets a one-time code and is sent
-//     back to <app host>/__apothecary/auth?code=…&to=<path>;
+//  2. there, a signed-in account that holds run:shell on the run gets a
+//     one-time code and is sent back to
+//     <app host>/__apothecary/auth?code=…&to=<path>;
 //  3. the app host trades the code for its own host-only cookie and sends the
 //     browser on to the page it asked for.
 //
 // So an exposed app — code-server included, which runs with --auth none — is
-// reachable by its run's owner only, never by whoever guesses a hostname.
+// reachable only by an account that holds run:shell on its run, never by
+// whoever guesses a hostname. The cookie names that account, and every
+// request rechecks it: a member removed, demoted or disabled loses the app on
+// its next request, not when the cookie expires.
 type Apps struct {
 	Relay *portrelay.Manager
 	// PublicURL is the UI's own origin (where step 2 happens).
@@ -106,7 +110,7 @@ func (a *Apps) serveApp(s *Server, w http.ResponseWriter, r *http.Request) {
 		a.finish(w, r, run)
 		return
 	}
-	if !a.allowed(r, run) {
+	if !a.allowed(s, r, run) {
 		if a.PublicURL == "" {
 			http.Error(w, "apothecary: app hosts need APOTHECARY_PUBLIC_URL to sign in", http.StatusServiceUnavailable)
 			return
@@ -151,19 +155,28 @@ func noHTTPAnswer(run string, port int, err error) string {
 		"then connect to the local port it prints.\n"
 }
 
-// allowed: an app cookie granted for this host's run.
-func (a *Apps) allowed(r *http.Request, run string) bool {
+// allowed: an app cookie granted for this host's run, to an account that is
+// still enabled and still holds run:shell on the run.
+func (a *Apps) allowed(s *Server, r *http.Request, run string) bool {
 	c, err := r.Cookie(appCookie)
-	if err != nil {
+	if err != nil || s.Auth == nil {
 		return false
 	}
 	a.mu.Lock()
-	defer a.mu.Unlock()
 	g, ok := a.grants[c.Value]
-	return ok && g.run == run && strings.EqualFold(g.host, r.Host) && time.Now().Before(g.until)
+	a.mu.Unlock()
+	if !ok || g.run != run || !strings.EqualFold(g.host, r.Host) || !time.Now().Before(g.until) {
+		return false
+	}
+	u, err := s.Auth.GetUser(r.Context(), g.user)
+	if err != nil || u.Disabled() {
+		return false
+	}
+	return s.mayShell(r.Context(), auth.Principal{User: u}, run)
 }
 
-// authorize is step 2, on the UI host: the signed-in user must own the run.
+// authorize is step 2, on the UI host: the signed-in user must hold
+// run:shell on the run.
 func (a *Apps) authorize(s *Server) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		to, err := url.Parse(r.URL.Query().Get("to"))

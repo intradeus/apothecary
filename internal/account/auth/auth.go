@@ -30,6 +30,9 @@ var (
 	ErrDisabled = errors.New("account disabled")
 	// ErrSetupDone refuses a second instance setup (409).
 	ErrSetupDone = errors.New("setup already done")
+	// ErrLastAdmin refuses taking admin away from the last enabled admin
+	// (400): someone must be able to manage accounts. It is an ErrInvalid.
+	ErrLastAdmin error = invalidError{"this is the last admin: make someone else an admin first"}
 )
 
 // Role is an account's instance role.
@@ -157,7 +160,18 @@ type SSHKey struct {
 type DB interface {
 	CountUsers(ctx context.Context) (int, error)
 	CreateUser(ctx context.Context, u User) error
-	UpdateUser(ctx context.Context, u User) error
+	// UpdateUserProfile writes handle, email and name (and updated_at) and
+	// nothing else, so a profile read before a role change or a disable
+	// cannot write the old role or state back. It returns the stored row.
+	UpdateUserProfile(ctx context.Context, id string, p Profile, at time.Time) (User, error)
+	// SetUserRole writes the role alone. Taking admin from the last enabled
+	// admin is ErrLastAdmin, decided in the same transaction as the write
+	// and serialised with every other such change: of two demotions at
+	// once, one is refused.
+	SetUserRole(ctx context.Context, id string, role Role, at time.Time) (User, error)
+	// SetUserDisabled sets (non-nil) or clears disabled_at alone, refusing
+	// to disable the last enabled admin as SetUserRole does.
+	SetUserDisabled(ctx context.Context, id string, disabledAt *time.Time, at time.Time) (User, error)
 	GetUser(ctx context.Context, id string) (User, error)
 	// GetUserByLogin finds a user by handle or email (case-insensitive).
 	GetUserByLogin(ctx context.Context, login string) (User, error)

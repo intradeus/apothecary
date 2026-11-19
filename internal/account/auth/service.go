@@ -168,7 +168,9 @@ type Profile struct {
 	Name   string
 }
 
-// UpdateProfile changes a user's handle, email or name.
+// UpdateProfile changes a user's handle, email or name. It writes those
+// columns only: a role change or a disable that lands between its read and
+// its write stands.
 func (s *Service) UpdateProfile(ctx context.Context, userID string, p Profile) (User, error) {
 	u, err := s.db.GetUser(ctx, userID)
 	if err != nil {
@@ -186,72 +188,37 @@ func (s *Service) UpdateProfile(ctx context.Context, userID string, p Profile) (
 	if err := normalizeUser(&u); err != nil {
 		return User{}, err
 	}
-	u.UpdatedAt = s.now().UTC()
-	if err := s.db.UpdateUser(ctx, u); err != nil {
-		return User{}, err
-	}
-	return u, nil
+	return s.db.UpdateUserProfile(ctx, userID, Profile{Handle: u.Handle, Email: u.Email, Name: u.Name}, s.now().UTC())
 }
 
 // SetRole changes an account's instance role. The last admin cannot step
-// down: someone must be able to manage accounts.
+// down (ErrLastAdmin): someone must be able to manage accounts.
 func (s *Service) SetRole(ctx context.Context, userID string, role Role) (User, error) {
 	if !role.Valid() {
 		return User{}, invalidf("role must be admin, member or guest")
 	}
-	u, err := s.db.GetUser(ctx, userID)
-	if err != nil {
-		return User{}, err
-	}
-	if role != RoleAdmin && u.Role == RoleAdmin {
-		if err := s.checkNotLastAdmin(ctx, userID); err != nil {
-			return User{}, err
-		}
-	}
-	u.Role = role
-	u.UpdatedAt = s.now().UTC()
-	return u, s.db.UpdateUser(ctx, u)
+	return s.db.SetUserRole(ctx, userID, role, s.now().UTC())
 }
 
 // SetDisabled turns an account off (its sessions and tokens go with it) or
-// back on. The last admin cannot be disabled.
+// back on. The last admin cannot be disabled (ErrLastAdmin).
 func (s *Service) SetDisabled(ctx context.Context, userID string, disabled bool) (User, error) {
-	u, err := s.db.GetUser(ctx, userID)
-	if err != nil {
+	now := s.now().UTC()
+	var at *time.Time
+	if disabled {
+		at = &now
+	}
+	u, err := s.db.SetUserDisabled(ctx, userID, at, now)
+	if err != nil || !disabled {
+		return u, err
+	}
+	if err := s.db.DeleteSessionsOf(ctx, userID); err != nil {
 		return User{}, err
 	}
-	if disabled && u.Role == RoleAdmin {
-		if err := s.checkNotLastAdmin(ctx, userID); err != nil {
-			return User{}, err
-		}
+	if err := s.db.DeleteTokensOf(ctx, userID); err != nil {
+		return User{}, err
 	}
-	now := s.now().UTC()
-	if disabled {
-		u.DisabledAt = &now
-		if err := s.db.DeleteSessionsOf(ctx, userID); err != nil {
-			return User{}, err
-		}
-		if err := s.db.DeleteTokensOf(ctx, userID); err != nil {
-			return User{}, err
-		}
-	} else {
-		u.DisabledAt = nil
-	}
-	u.UpdatedAt = now
-	return u, s.db.UpdateUser(ctx, u)
-}
-
-func (s *Service) checkNotLastAdmin(ctx context.Context, userID string) error {
-	all, err := s.db.ListUsers(ctx)
-	if err != nil {
-		return err
-	}
-	for _, o := range all {
-		if o.ID != userID && o.Role == RoleAdmin && !o.Disabled() {
-			return nil
-		}
-	}
-	return invalidf("this is the last admin: make someone else an admin first")
+	return u, nil
 }
 
 func (s *Service) GetUser(ctx context.Context, id string) (User, error) { return s.db.GetUser(ctx, id) }

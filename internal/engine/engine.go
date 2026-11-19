@@ -961,8 +961,9 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	}); err != nil {
 		return "", err
 	}
+	// The files are the starter's uploads, whoever owns the run.
 	if e.attachments != nil && len(t.AttachmentIDs) > 0 {
-		if err := e.attachments.ClaimForRun(ctx, res.UserID, t.AttachmentIDs, runID, ""); err != nil {
+		if err := e.attachments.ClaimForRun(ctx, in.Uploader, t.AttachmentIDs, runID, ""); err != nil {
 			e.log.Warn("claim goal attachments", logs.RunID, runID, "err", err)
 		}
 	}
@@ -1143,7 +1144,7 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 	// The attempt runs with the original's parameter values — unless the
 	// flow changed, or the request says otherwise. Values the flow no
 	// longer declares drop.
-	next := runinput.Input{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets}
+	next := runinput.Input{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets, Uploader: in.Uploader}
 	// A run started on someone's merge request is rerun on it.
 	if next.MR == nil && v.Adopted != nil {
 		next.MR = &runinput.MR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}

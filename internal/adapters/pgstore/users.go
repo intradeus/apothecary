@@ -47,17 +47,65 @@ func (s *Store) CreateUser(ctx context.Context, u auth.User) error {
 	return userConflict(err, u)
 }
 
-func (s *Store) UpdateUser(ctx context.Context, u auth.User) error {
-	tag, err := s.pool.Exec(ctx, `
-		UPDATE users SET handle=$2, email=$3, name=$4, role=COALESCE(NULLIF($5,''),'member'), disabled_at=$6, updated_at=$7 WHERE id=$1`,
-		u.ID, u.Handle, u.Email, u.Name, string(u.Role), u.DisabledAt, u.UpdatedAt)
+func (s *Store) UpdateUserProfile(ctx context.Context, id string, p auth.Profile, at time.Time) (auth.User, error) {
+	u, err := scanUser(s.pool.QueryRow(ctx, `
+		UPDATE users SET handle=$2, email=$3, name=$4, updated_at=$5 WHERE id=$1 RETURNING `+userCols,
+		id, p.Handle, p.Email, p.Name, at))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.User{}, fmt.Errorf("user %s: %w", id, auth.ErrNotFound)
+	}
 	if err != nil {
-		return userConflict(err, u)
+		return auth.User{}, userConflict(err, auth.User{Handle: p.Handle, Email: p.Email})
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("user %s: %w", u.ID, auth.ErrNotFound)
+	return u, nil
+}
+
+func (s *Store) SetUserRole(ctx context.Context, id string, role auth.Role, at time.Time) (auth.User, error) {
+	return s.adminChange(ctx, id, role == auth.RoleAdmin,
+		`UPDATE users SET role=$2, updated_at=$3 WHERE id=$1 RETURNING `+userCols, id, string(role), at)
+}
+
+func (s *Store) SetUserDisabled(ctx context.Context, id string, disabledAt *time.Time, at time.Time) (auth.User, error) {
+	return s.adminChange(ctx, id, disabledAt == nil,
+		`UPDATE users SET disabled_at=$2, updated_at=$3 WHERE id=$1 RETURNING `+userCols, id, disabledAt, at)
+}
+
+// adminChange runs one user update (returning the row) in a transaction
+// with the last-admin check. A change that may take an enabled admin away
+// (keepsAdmin false) first locks every enabled admin's row: a concurrent one
+// waits, then re-reads those rows as committed — an admin the first just
+// demoted or disabled no longer counts — so of two demotions at once the
+// second sees itself alone and is refused.
+func (s *Store) adminChange(ctx context.Context, id string, keepsAdmin bool, update string, args ...any) (auth.User, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return auth.User{}, err
 	}
-	return nil
+	defer func() { _ = tx.Rollback(ctx) }()
+	if !keepsAdmin {
+		rows, err := tx.Query(ctx, `SELECT id FROM users WHERE role='admin' AND disabled_at IS NULL ORDER BY id FOR UPDATE`)
+		if err != nil {
+			return auth.User{}, err
+		}
+		admins, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return auth.User{}, err
+		}
+		if len(admins) == 1 && admins[0] == id {
+			return auth.User{}, auth.ErrLastAdmin
+		}
+	}
+	u, err := scanUser(tx.QueryRow(ctx, update, args...))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return auth.User{}, fmt.Errorf("user %s: %w", id, auth.ErrNotFound)
+	}
+	if err != nil {
+		return auth.User{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return auth.User{}, err
+	}
+	return u, nil
 }
 
 func (s *Store) GetUser(ctx context.Context, id string) (auth.User, error) {

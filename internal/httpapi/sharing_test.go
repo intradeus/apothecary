@@ -408,3 +408,79 @@ func TestListsEqualTheGuard(t *testing.T) {
 		}
 	}
 }
+
+// An operator writing tickets and starting runs on someone else's workshop
+// attaches their own uploads: the ticket and the run stay the owner's, the
+// files are the operator's — attached, and readable by the owner. An id of
+// the owner's the operator sends claims nothing.
+func TestOperatorsAttachTheirOwnUploads(t *testing.T) {
+	files := newTestFiles(t, 1<<20, []string{"text/*"})
+	x := newEnvWith(t, engine.Config{}, files.deps)
+	files.serve(x)
+	ctx := context.Background()
+	op := x.account(t, "op", auth.RoleMember)
+	x.share(t, testProject, "op", "operator")
+	upload := func(name string) string {
+		t.Helper()
+		body, ct := multipartBody(name, "text/plain", []byte(name))
+		req, err := http.NewRequest("POST", x.ts.URL+"/api/attachments", body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", ct)
+		req.Header.Set("Authorization", op["Authorization"])
+		res, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer res.Body.Close()
+		var up Uploaded
+		if err := json.NewDecoder(res.Body).Decode(&up); err != nil || res.StatusCode != http.StatusCreated || len(up.Attachments) != 1 {
+			t.Fatalf("upload %s = %d, %+v, %v", name, res.StatusCode, up, err)
+		}
+		return up.Attachments[0].ID
+	}
+	created, edited, goal := upload("created.txt"), upload("edited.txt"), upload("goal.txt")
+	owners, err := files.att.Save(ctx, testUser, "owners.txt", "text/plain", strings.NewReader("owner's"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	data := x.expect(t, "operator", op, "POST", "/api/projects/"+testProject+"/tickets",
+		map[string]any{"title": "T", "goal": "g", "attachment_ids": []string{created, owners.ID}}, http.StatusCreated)
+	tk := decode[TicketDetail](t, data)
+	if !slices.Equal(tk.AttachmentIDs, []string{created}) {
+		t.Errorf("created ticket's files = %v, want [%s]", tk.AttachmentIDs, created)
+	}
+	data = x.expect(t, "operator", op, "PUT", ticketPath(testProject, tk.TicketID),
+		map[string]any{"title": "T", "goal": "g", "attachment_ids": []string{created, edited}}, http.StatusOK)
+	got := decode[TicketDetail](t, data).AttachmentIDs
+	want := []string{created, edited}
+	slices.Sort(got)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("edited ticket's files = %v, want %v", got, want)
+	}
+	if rec, err := x.srv.Conf.GetTicket(ctx, tk.TicketID); err != nil || rec.UserID != testUser {
+		t.Errorf("ticket = %+v, %v, want the workshop owner's", rec, err)
+	}
+	// The owner reads the operator's file on their ticket.
+	x.expect(t, "owner", nil, "GET", "/api/attachments/"+edited, nil, http.StatusOK)
+
+	data = x.expect(t, "operator", op, "POST", ticketPath(testProject, tk.TicketID)+"/runs",
+		map[string]any{"flow": "loop", "attachment_ids": []string{goal, owners.ID}}, http.StatusCreated)
+	var started RunRef
+	if err := json.Unmarshal(data, &started); err != nil {
+		t.Fatal(err)
+	}
+	defer x.e.Wait(started.RunID)
+	if a, err := files.att.Get(ctx, goal); err != nil || a.RunID != started.RunID {
+		t.Errorf("run's file = %+v, %v, want claimed for %s", a, err, started.RunID)
+	}
+	if owner, _, err := x.srv.runOwner(ctx, started.RunID); err != nil || owner != testUser {
+		t.Errorf("run owner = %q, %v, want the workshop owner", owner, err)
+	}
+	if a, err := files.att.Get(ctx, owners.ID); err != nil || !a.Unclaimed() {
+		t.Errorf("the owner's upload, sent by the operator = %+v, %v, want unclaimed", a, err)
+	}
+}
