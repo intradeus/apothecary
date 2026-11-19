@@ -143,7 +143,7 @@
 	// What the caller's role in the run's workshop allows: answering is
 	// run:operate, the workspace's editor and door are run:shell.
 	const projectId = $derived(theRunId ? fleet.runById.get(theRunId)?.projectId : undefined);
-	const canAnswer = $derived(fleet.can(projectId, 'run:operate'));
+	const canAnswer = $derived(fleet.can(projectId, 'run:answer'));
 	const canShell = $derived(fleet.can(projectId, 'run:shell'));
 	const off = $derived(busy || uploading || !canAnswer);
 	const busyOn = (answer: string) => off && sending === answer;

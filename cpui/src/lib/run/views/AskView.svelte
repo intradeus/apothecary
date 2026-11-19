@@ -228,7 +228,7 @@
 				</div>
 			{/if}
 			<!-- Asking, a new session and the model are run:operate. -->
-			{#if enabled && rs.canOperate}
+			{#if enabled && rs.canAnswer}
 				<button
 					class="btn-ghost btn-sm"
 					onclick={newSession}
@@ -295,7 +295,7 @@
 				</div>
 			{/if}
 		</div>
-		{#if enabled && rs.canOperate}
+		{#if enabled && rs.canAnswer}
 			<AskComposer {rs} session={selected} {busy} onasked={asked} bind:error />
 		{/if}
 	{/if}

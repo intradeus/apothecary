@@ -721,3 +721,42 @@ func sha256sum(b []byte) []byte {
 	h := sha256.Sum256(b)
 	return h[:]
 }
+
+// 0014_split_token_actions: a token granted run:operate or project:write
+// keeps what it could do, through the actions split from them; a full
+// token and a token with neither are left as they were.
+func TestSplitTokenActionsMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 13))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO users (id, handle, email, name, created_at, updated_at) VALUES ('u1', 'lu', 'lu@example.test', 'Lu', now(), now());
+		INSERT INTO api_tokens (id, user_id, name, hash, prefix, created_at, actions) VALUES
+		  ('full', 'u1', 'full', 'h1', 'p', now(), NULL),
+		  ('runs', 'u1', 'runs', 'h2', 'p', now(), ARRAY['run:read', 'run:operate']),
+		  ('setup', 'u1', 'setup', 'h3', 'p', now(), ARRAY['project:read', 'project:write']),
+		  ('read', 'u1', 'read', 'h4', 'p', now(), ARRAY['ticket:read'])`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	toks, err := s.ListTokens(ctx, "u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]string{}
+	for _, tk := range toks {
+		got[tk.ID] = tk.Actions
+	}
+	for id, want := range map[string][]string{
+		"full":  nil,
+		"runs":  {"run:read", "run:operate", "run:answer", "run:egress"},
+		"setup": {"project:read", "project:write", "project:author", "project:secrets"},
+		"read":  {"ticket:read"},
+	} {
+		if !slices.Equal(got[id], want) {
+			t.Errorf("%s = %v, want %v", id, got[id], want)
+		}
+	}
+}

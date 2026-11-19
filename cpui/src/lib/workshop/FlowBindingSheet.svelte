@@ -39,8 +39,8 @@
 		onsaved: (binding: FlowBinding | null) => void;
 	} = $props();
 
-	/** Binding a flow's parameters needs project:write. */
-	const canWrite = $derived(projectCan(project, 'project:write'));
+	/** Binding a flow's parameters needs project:author. */
+	const canWrite = $derived(projectCan(project, 'project:author'));
 	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
 	let open = $state(true);

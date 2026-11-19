@@ -2846,14 +2846,17 @@ components:
           type: boolean
         kind:
           type: string
-        mcp:
-          type: boolean
+        purposes:
+          items:
+            type: string
+          nullable: true
+          type: array
       required:
         - action
         - doc
         - grantable
         - kind
-        - mcp
+        - purposes
       type: object
     PhaseInfo:
       properties:
@@ -3917,6 +3920,19 @@ components:
         - state
         - ticket_title
         - updated_at
+      type: object
+    RunWait:
+      properties:
+        changed:
+          type: boolean
+        run:
+          $ref: '#/components/schemas/RunView'
+        seen:
+          type: string
+      required:
+        - changed
+        - run
+        - seen
       type: object
     SSHKey:
       properties:
@@ -5046,6 +5062,28 @@ components:
         - id
         - name
         - prefix
+      type: object
+    TokenCall:
+      properties:
+        at:
+          format: date-time
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        route:
+          type: string
+        status:
+          type: integer
+        tool:
+          type: string
+      required:
+        - at
+        - method
+        - path
+        - route
+        - status
       type: object
     TokenCreated:
       properties:
@@ -7951,7 +7989,7 @@ paths:
       summary: Copy a compiled-in template into a project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/flows:
     get:
       operationId: listAllFlows
@@ -9138,6 +9176,53 @@ paths:
       tags:
         - auth
       x-apothecary-action: account:manage
+  /api/me/tokens/{id}/calls:
+    get:
+      description: The act itself names the token's person, as one made in a browser does; this names the token.
+      operationId: listMyTokenCalls
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TokenCall'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'What one of one''s tokens did, newest first: its writes and its MCP tool calls, refused or done (its last 200)'
+      tags:
+        - auth
+      x-apothecary-action: account:read
   /api/notices:
     get:
       operationId: listNotices
@@ -9466,7 +9551,7 @@ paths:
       summary: Answer a question
       tags:
         - pings
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/pings/{pid}/curation:
     get:
       description: 'Each shown file of a review type (review_threads, review_replies, mr_threads) from its raise-time snapshot: what the curation page lists item by item. A file not captured lists with the reason and can only be approved as written.'
@@ -9867,7 +9952,7 @@ paths:
       summary: Create an automation
       tags:
         - automations
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/automations/{aid}:
     delete:
       operationId: deleteAutomation
@@ -9915,7 +10000,7 @@ paths:
       summary: Delete an automation (the tickets it recorded and their runs stay)
       tags:
         - automations
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
     get:
       operationId: getAutomation
       parameters:
@@ -10019,7 +10104,7 @@ paths:
       summary: Replace an automation (its last poll, firing and error are kept)
       tags:
         - automations
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/branches:
     get:
       operationId: listProjectBranches
@@ -10549,7 +10634,7 @@ paths:
       summary: Create a flow in a project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}:
     delete:
       operationId: deleteFlow
@@ -10597,7 +10682,7 @@ paths:
       summary: Delete a project's flow (resets to the template, when there is one)
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
     get:
       description: Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.
       operationId: getFlow
@@ -10703,7 +10788,7 @@ paths:
       summary: Replace one of a project's flows
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}/binding:
     delete:
       operationId: deleteFlowBinding
@@ -10751,7 +10836,7 @@ paths:
       summary: Put the project back to the flow's declared defaults
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
     get:
       description: '404 when the project bound nothing: the flow runs on its declared defaults. A template is configurable without being copied.'
       operationId: getFlowBinding
@@ -10857,7 +10942,7 @@ paths:
       summary: Bind values to a flow's parameters for this project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}/copy:
     post:
       operationId: copyFlow
@@ -10915,7 +11000,7 @@ paths:
       summary: Copy a flow into another project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}/versions:
     get:
       operationId: listFlowVersions
@@ -11528,7 +11613,7 @@ paths:
       summary: The project's secrets, by name
       tags:
         - projects
-      x-apothecary-action: project:write
+      x-apothecary-action: project:secrets
   /api/projects/{id}/secrets/{name}:
     delete:
       description: A flow that reads it is refused at its next run's creation.
@@ -11577,7 +11662,7 @@ paths:
       summary: Remove one project secret
       tags:
         - projects
-      x-apothecary-action: project:write
+      x-apothecary-action: project:secrets
     put:
       description: Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.
       operationId: setProjectSecret
@@ -11635,7 +11720,7 @@ paths:
       summary: Set one project secret
       tags:
         - projects
-      x-apothecary-action: project:write
+      x-apothecary-action: project:secrets
   /api/projects/{id}/ticket-statuses:
     get:
       description: 'Its ticket source''s list, as listTrackerStatuses gives it, read by anyone who reads the workshop''s tickets: the source is its owner''s. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.'
@@ -12802,7 +12887,7 @@ paths:
       summary: Ask one of the run's read-only sessions a question
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/ask/model:
     put:
       description: 'Picks the model of the thread named by thread_id (none: the run''s latest, opened when the run has none); its live session is switched over at its next question. 404 for an unknown thread.'
@@ -12852,7 +12937,7 @@ paths:
       summary: Pick the model an Ask session answers with
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/ask/stream:
     get:
       description: 'Replays every thread''s messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, a thread''s state as it changes, threads as they open (thread frames). Every frame names its thread_id.'
@@ -12949,7 +13034,7 @@ paths:
       summary: Open a new Ask session in the run
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/auth-broker/{rest...}:
     delete:
       operationId: authBrokerDelete
@@ -13108,7 +13193,7 @@ paths:
       summary: Unblock a host for a live run and persist it to the project
       tags:
         - egress
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:egress
   /api/runs/{id}/egress-audit:
     get:
       operationId: getRunEgressAudit
@@ -13314,7 +13399,7 @@ paths:
       summary: Allow or force-block a host for a run
       tags:
         - egress
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:egress
   /api/runs/{id}/events:
     get:
       description: Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).
@@ -13543,7 +13628,7 @@ paths:
       summary: Hand the task back to the agent
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
     post:
       description: 'While held, the end of the agent''s turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. force (default true) stops the agent''s turn in flight so it waits on you at once — unless that turn is waiting on the agent''s own question; force false lets the turn finish first. The body is optional. 409 when no agent is running, or someone already holds it.'
       operationId: takeOverRun
@@ -13592,7 +13677,7 @@ paths:
       summary: Take over the running agent's session
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/journal:
     get:
       description: 'Every decision and note whole and every attempt''s record with its verdict, no logs: one file for the tool to write (run.md).'
@@ -13780,7 +13865,7 @@ paths:
       summary: Send a message to the agent you took over
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/mrs/status:
     get:
       operationId: getRunMRStatus
@@ -14733,6 +14818,60 @@ paths:
       summary: 'How to reach the run''s workspace over SSH: the command, the VS Code link, the door''s fingerprint'
       tags:
         - workspace
+      x-apothecary-action: run:read
+  /api/runs/{id}/wait:
+    get:
+      description: 'Answers when the run differs from seen (what an earlier answer returned; none: the run as it is now), or when timeout seconds pass (default 50, at most 55): changed says which. A run that has ended answers at once. Pass seen back to wait for the next change without missing one between calls.'
+      operationId: waitRun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: the seen an earlier answer returned
+          in: query
+          name: seen
+          schema:
+            type: string
+        - description: seconds to wait, 1 to 55 (default 50)
+          in: query
+          name: timeout
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunWait'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Wait for a run to change: its state, its open questions, its merge requests'
+      tags:
+        - runs
       x-apothecary-action: run:read
   /api/runs/{id}/workspace-log:
     get:

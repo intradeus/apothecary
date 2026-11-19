@@ -721,7 +721,8 @@ func (s *Server) ticketRoutes() []Route {
 			Summary: "Create a ticket on a workshop's internal tracker",
 			Doc:     "A workshop reading a remote tracker creates its tickets there (400).",
 			Handler: s.createWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite,
+			Tool: &Tool{Name: "create_ticket", Doc: "Create a ticket on a workshop's built-in tracker: title (one line), goal (what done looks like, in Markdown: the agent working the ticket reads it), change_type, and optionally type_id (list_ticket_types) and base_branch. A workshop reading a remote tracker refuses it: its tickets are made there.", Args: map[string]string{"id": argWorkshop}}},
 		{Method: "GET", Path: "/api/projects/{id}/ticket-statuses", ID: "listWorkshopTicketStatuses", Tag: tagTickets,
 			Summary: "The statuses a workshop's tickets move through, in order",
 			Doc: "Its ticket source's list, as listTrackerStatuses gives it, read by anyone who reads the workshop's tickets: the source is its owner's. " +
@@ -745,7 +746,8 @@ func (s *Server) ticketRoutes() []Route {
 			Summary: "Edit a ticket",
 			Doc: "An internal ticket takes title, goal, base_branch, change_type, type_id and attachment_ids. " +
 				"A remote issue takes base_branch only (the rest is its tracker's), its record made when it has none.",
-			Handler: s.updateWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
+			Handler: s.updateWorkshopTicket, Body: ticketBody{}, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite,
+			Tool: &Tool{Name: "update_ticket", Doc: "Edit a ticket. One of the built-in tracker takes title, goal, change_type, type_id and base_branch; a remote tracker's issue takes base_branch only.", Args: map[string]string{"id": argWorkshop, "key": argTicket}}},
 		{Method: "DELETE", Path: one, ID: "deleteWorkshopTicket", Tag: tagTickets,
 			Summary: "Delete an internal ticket",
 			Doc:     "A remote issue is its tracker's (400).",
@@ -758,7 +760,8 @@ func (s *Server) ticketRoutes() []Route {
 			Doc: "The issue's record is made first when it has none; an issue that has one starts from it even while its tracker cannot be read. " +
 				"A ticket has at most one active (non-terminal) run across workshops: while one is going the start is refused with 409, the error's run_id naming it.",
 			Handler: s.startWorkshopTicketRun, Body: StartRunRequest{}, Returns: RunRef{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.RunOperate},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.RunOperate,
+			Tool: &Tool{Name: "start_run", Doc: "Start a run on a ticket: the workshop's default flow unless flow names another of its flows. Answers the run's id; follow it with wait_run. A ticket with a run still going is refused (409, naming that run).", Args: map[string]string{"id": argWorkshop, "key": argTicket}}},
 		{Method: "POST", Path: one + "/status", ID: "setWorkshopTicketStatus", Tag: tagTickets,
 			Summary: "Move a ticket to a status of its tracker, by name",
 			Doc:     "A status the issue cannot reach is 400, naming those it can; the remote tracker failing 502.",

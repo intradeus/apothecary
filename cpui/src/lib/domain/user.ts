@@ -67,9 +67,27 @@ export interface Permission {
 	doc: string;
 	/** Whether a token may be limited to it (account:manage never is). */
 	grantable: boolean;
-	/** A tool of the engine's MCP server needs it: the read-only grant for an
-	 *  MCP client is these actions. */
-	mcp: boolean;
+	/** The token form's grants for an MCP client that hold it (MCP_PURPOSES):
+	 *  a purpose's grant is the actions naming it. */
+	purposes: string[];
+}
+
+/** What an MCP client's token is for, as the token form offers it: reading,
+ *  then filing tickets, then running them, then writing flows, skills and
+ *  dashboards. The engine says which actions each holds. */
+export const MCP_PURPOSES = ['read', 'tickets', 'runs', 'authoring'] as const;
+export type McpPurpose = (typeof MCP_PURPOSES)[number];
+
+/** One call a token made: a write through the API, or a tool of the MCP
+ *  server (tool), refused or done. */
+export interface TokenCall {
+	at: string;
+	method: string;
+	/** The route's id (createWorkshopTicket); path what was asked. */
+	route: string;
+	path: string;
+	tool?: string;
+	status: number;
 }
 
 /** A terminal sign-in waiting for its approval in the browser

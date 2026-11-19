@@ -426,7 +426,7 @@
 		<ServicesSection bind:rows={serviceList} issues={svcIssues} strict={svcStrict} />
 		<BrowserSection bind:enabled={browserEnabled} projectId={existing?.id} {savedAt} />
 		{#if existing}
-			<SecretsSection projectId={existing.id} canEdit={!readonly} />
+			<SecretsSection projectId={existing.id} canEdit={projectCan(existing, 'project:secrets')} />
 		{/if}
 
 		{@render after?.()}

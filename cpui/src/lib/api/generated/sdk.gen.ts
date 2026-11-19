@@ -428,6 +428,9 @@ import type {
 	ListMySshKeysData,
 	ListMySshKeysErrors,
 	ListMySshKeysResponses,
+	ListMyTokenCallsData,
+	ListMyTokenCallsErrors,
+	ListMyTokenCallsResponses,
 	ListMyTokensData,
 	ListMyTokensErrors,
 	ListMyTokensResponses,
@@ -721,7 +724,10 @@ import type {
 	UploadAttachmentsResponses,
 	ValidateFlowData,
 	ValidateFlowErrors,
-	ValidateFlowResponses
+	ValidateFlowResponses,
+	WaitRunData,
+	WaitRunErrors,
+	WaitRunResponses
 } from './types.gen';
 
 export type Options<
@@ -2889,6 +2895,31 @@ export const deleteMyToken = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/me/tokens/{id}',
+		...options
+	});
+
+/**
+ * What one of one's tokens did, newest first: its writes and its MCP tool calls, refused or done (its last 200)
+ *
+ * The act itself names the token's person, as one made in a browser does; this names the token.
+ */
+export const listMyTokenCalls = <ThrowOnError extends boolean = false>(
+	options: Options<ListMyTokenCallsData, ThrowOnError>
+): RequestResult<ListMyTokenCallsResponses, ListMyTokenCallsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListMyTokenCallsResponses, ListMyTokenCallsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/tokens/{id}/calls',
 		...options
 	});
 
@@ -5893,6 +5924,31 @@ export const getRunSsh = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/ssh',
+		...options
+	});
+
+/**
+ * Wait for a run to change: its state, its open questions, its merge requests
+ *
+ * Answers when the run differs from seen (what an earlier answer returned; none: the run as it is now), or when timeout seconds pass (default 50, at most 55): changed says which. A run that has ended answers at once. Pass seen back to wait for the next change without missing one between calls.
+ */
+export const waitRun = <ThrowOnError extends boolean = false>(
+	options: Options<WaitRunData, ThrowOnError>
+): RequestResult<WaitRunResponses, WaitRunErrors, ThrowOnError> =>
+	(options.client ?? client).get<WaitRunResponses, WaitRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/wait',
 		...options
 	});
 

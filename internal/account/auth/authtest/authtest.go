@@ -12,6 +12,7 @@ package authtest
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"slices"
 	"strings"
@@ -799,6 +800,56 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		list, err := db.ListTokens(ctx, "u1")
 		if err != nil || len(list) != 2 || list[0].IdleSeconds+list[1].IdleSeconds != 7*24*3600 {
 			t.Errorf("list = %+v, %v", list, err)
+		}
+	})
+
+	// What a token did: newest first, its last KeepTokenCalls only, gone
+	// with the token; an unknown token records nothing.
+	t.Run("a token's calls", func(t *testing.T) {
+		db := open(t)
+		seedUsers(t, db)
+		for _, k := range []auth.Token{token("t1", "u1", "h1"), token("t2", "u1", "h2")} {
+			if err := db.CreateToken(ctx, k); err != nil {
+				t.Fatal(err)
+			}
+		}
+		at := time.Date(2026, 11, 19, 10, 0, 0, 123456789, time.UTC)
+		for i := range auth.KeepTokenCalls + 3 {
+			c := auth.TokenCall{TokenID: "t1", At: at.Add(time.Duration(i) * time.Second), Method: "POST",
+				Route: "createWorkshopTicket", Path: fmt.Sprintf("/api/projects/p/tickets/%d", i), Status: 201}
+			if i%2 == 0 {
+				c.Tool = "create_ticket"
+			}
+			if err := db.RecordTokenCall(ctx, c); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.RecordTokenCall(ctx, auth.TokenCall{TokenID: "t2", At: at, Method: "PUT", Route: "updateFlow", Path: "/x", Status: 403}); err != nil {
+			t.Fatal(err)
+		}
+		calls, err := db.TokenCalls(ctx, "t1")
+		if err != nil || len(calls) != auth.KeepTokenCalls {
+			t.Fatalf("t1's calls = %d, %v", len(calls), err)
+		}
+		last := auth.KeepTokenCalls + 2
+		if c := calls[0]; c.Path != fmt.Sprintf("/api/projects/p/tickets/%d", last) || c.Tool != "create_ticket" || c.Status != 201 ||
+			c.Method != "POST" || c.Route != "createWorkshopTicket" || !c.At.Equal(at.Add(time.Duration(last)*time.Second).Truncate(time.Microsecond)) {
+			t.Errorf("newest = %+v", c)
+		}
+		if c := calls[len(calls)-1]; c.Path != "/api/projects/p/tickets/3" {
+			t.Errorf("oldest kept = %+v", c)
+		}
+		if err := db.RecordTokenCall(ctx, auth.TokenCall{TokenID: "nope", At: at, Method: "POST", Route: "r", Path: "/", Status: 200}); !errors.Is(err, auth.ErrNotFound) {
+			t.Errorf("an unknown token's call = %v", err)
+		}
+		if err := db.DeleteToken(ctx, "u1", "t1"); err != nil {
+			t.Fatal(err)
+		}
+		if calls, err := db.TokenCalls(ctx, "t1"); err != nil || len(calls) != 0 {
+			t.Errorf("a deleted token's calls = %d, %v", len(calls), err)
+		}
+		if calls, _ := db.TokenCalls(ctx, "t2"); len(calls) != 1 || calls[0].Tool != "" {
+			t.Errorf("t2's calls = %+v", calls)
 		}
 	})
 

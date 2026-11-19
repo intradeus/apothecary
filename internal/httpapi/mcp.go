@@ -46,6 +46,18 @@ type Tool struct {
 	// undocumented (every one must be here), and may override a query
 	// parameter's doc for a model.
 	Args map[string]string
+	// Destructive: the act cannot be taken back (aborting a run). A client
+	// may confirm it with its person first.
+	Destructive bool
+}
+
+// mcpToolKey marks a request the face made for a tool: its name.
+type mcpToolKey struct{}
+
+// mcpToolOf is the tool a request was made for, or "".
+func mcpToolOf(ctx context.Context) string {
+	name, _ := ctx.Value(mcpToolKey{}).(string)
+	return name
 }
 
 // mcpProtocols are the protocol revisions the face speaks, newest first.
@@ -254,9 +266,15 @@ func newMCPTool(rt Route) (*mcpTool, error) {
 	t.def = mcpToolDef{
 		Name: rt.Tool.Name, Title: rt.Summary, Description: rt.Tool.Doc, InputSchema: schema,
 		Annotations: map[string]any{
-			"readOnlyHint":  rt.Method == http.MethodGet || readRoute(rt),
+			"readOnlyHint":  readRoute(rt),
 			"openWorldHint": false,
 		},
+	}
+	if !readRoute(rt) {
+		t.def.Annotations["destructiveHint"] = rt.Tool.Destructive
+		t.def.Annotations["idempotentHint"] = rt.Method == http.MethodPut
+	} else if rt.Tool.Destructive {
+		return nil, errors.New("a read is never destructive")
 	}
 	if t.def.Description == "" {
 		return nil, errors.New("a tool needs a Doc")
@@ -672,7 +690,7 @@ func (s *Server) callTool(ctx context.Context, outer *http.Request, t *mcpTool, 
 	if len(q) > 0 {
 		target += "?" + q.Encode()
 	}
-	req, err := http.NewRequestWithContext(ctx, t.route.Method, target, rd)
+	req, err := http.NewRequestWithContext(context.WithValue(ctx, mcpToolKey{}, t.def.Name), t.route.Method, target, rd)
 	if err != nil {
 		return fail("building the request: %v", err)
 	}
@@ -779,25 +797,51 @@ func (r *toolRecorder) Write(b []byte) (int, error) {
 
 // MCPActions are the actions the face's read tools need: what an MCP
 // client's grant holds, and what an assistant session's token reads with.
-func MCPActions() []authz.Action { return mcpActions() }
+func MCPActions() []authz.Action { return mcpActions(true) }
 
-// mcpActions is every action a declared tool needs: what a read-only grant
-// for an MCP client holds (the token form's preset).
-func mcpActions() []authz.Action {
+// mcpActions is every action a declared tool needs, the read tools' only
+// when reads: what the read purpose grants, and an assistant session's
+// token holds. The fill is no client's.
+func mcpActions(reads bool) []authz.Action {
 	all, err := mcpCatalog()
 	if err != nil {
 		return nil
 	}
 	var out []authz.Action
 	for _, t := range all {
-		if t.route.ID == fillRouteID {
-			continue // an assistant session's, never a client's grant
+		if t.route.ID == fillRouteID || (reads && !readRoute(t.route)) {
+			continue
 		}
 		if !slices.Contains(out, t.route.Action) {
 			out = append(out, t.route.Action)
 		}
 	}
 	slices.Sort(out)
+	return out
+}
+
+// mcpPurposes are the grants the token form offers an MCP client, each the
+// read tools' actions and the writes of its purpose. Every write tool's
+// action is in one (TestMCPPurposesCoverTheTools); none holds an action a
+// tool never needs.
+var mcpPurposes = []struct {
+	Name   string
+	Writes []authz.Action
+}{
+	{"read", nil},
+	{"tickets", []authz.Action{authz.TicketWrite}},
+	{"runs", []authz.Action{authz.TicketWrite, authz.RunOperate}},
+	{"authoring", []authz.Action{authz.ProjectAuthor, authz.SkillWrite, authz.AnalyticsWrite}},
+}
+
+// purposesOf names the purposes whose grant holds a.
+func purposesOf(a authz.Action, reads []authz.Action) []string {
+	out := []string{}
+	for _, p := range mcpPurposes {
+		if slices.Contains(reads, a) || slices.Contains(p.Writes, a) {
+			out = append(out, p.Name)
+		}
+	}
 	return out
 }
 

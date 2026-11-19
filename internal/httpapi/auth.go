@@ -18,9 +18,11 @@ package httpapi
 // bearer header cannot be sent cross-site, so those are trusted as is.
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"slices"
@@ -116,6 +118,13 @@ func (s *Server) guard(rt Route) http.HandlerFunc {
 		if !ok {
 			return
 		}
+		// What a token did is on its record: its writes, and whatever it
+		// was refused (recordCall decides once it is answered).
+		if p.Token != nil {
+			cw := &callWriter{ResponseWriter: w}
+			w = cw
+			defer s.recordCall(r, rt, p.Token.ID, cw)
+		}
 		if s.Authz == nil {
 			writeErr(w, http.StatusServiceUnavailable, "authorization is not wired on this server")
 			return
@@ -155,6 +164,90 @@ func (s *Server) guard(rt Route) http.HandlerFunc {
 		}
 		rt.Handler(w, r.WithContext(ctx))
 	}
+}
+
+// writes reports a request that changes something: not a GET, and not a
+// route whose action only reads (validating a flow). Judged by the request,
+// not the route: an upgrade's route literal names no method.
+func writes(r *http.Request, rt Route) bool {
+	if r.Method == http.MethodGet {
+		return false
+	}
+	_, verb, _ := strings.Cut(string(rt.Action), ":")
+	return verb != "read"
+}
+
+// callWriter keeps the status a guarded handler answered, for the token's
+// record.
+type callWriter struct {
+	http.ResponseWriter
+	status int
+}
+
+func (c *callWriter) WriteHeader(code int) {
+	if c.status == 0 {
+		c.status = code
+	}
+	c.ResponseWriter.WriteHeader(code)
+}
+
+func (c *callWriter) Write(b []byte) (int, error) {
+	if c.status == 0 {
+		c.status = http.StatusOK
+	}
+	return c.ResponseWriter.Write(b)
+}
+
+func (c *callWriter) Flush() {
+	if f, ok := c.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (c *callWriter) Unwrap() http.ResponseWriter { return c.ResponseWriter }
+
+// Hijack hands the connection over (a tunnel): its status is 101.
+func (c *callWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := c.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, http.ErrNotSupported
+	}
+	if c.status == 0 {
+		c.status = http.StatusSwitchingProtocols
+	}
+	return h.Hijack()
+}
+
+// recordCall keeps a token's call, after it was answered: a write, or a
+// refusal. A read that was answered is not kept: an agent waiting on a run
+// reads for hours, and its record would lose the writes it is there for.
+func (s *Server) recordCall(r *http.Request, rt Route, tokenID string, cw *callWriter) {
+	if s.Auth == nil {
+		return
+	}
+	status := cw.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if !writes(r, rt) && status < http.StatusBadRequest {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	err := s.Auth.RecordTokenCall(ctx, auth.TokenCall{TokenID: tokenID, At: time.Now(), Method: rt.Method,
+		Route: rt.ID, Path: r.URL.Path, Tool: mcpToolOf(r.Context()), Status: status})
+	if err != nil && s.Log != nil {
+		s.Log.Warn("token call: not recorded", "token", tokenID, "route", rt.ID, "err", err)
+	}
+}
+
+func (s *Server) listMyTokenCalls(w http.ResponseWriter, r *http.Request) {
+	calls, err := s.Auth.TokenCalls(r.Context(), auth.UserID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		authErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, calls)
 }
 
 // refusal is a 403's message: the action that was missing.
@@ -848,11 +941,11 @@ func (s *Server) createMyToken(w http.ResponseWriter, r *http.Request) {
 // given, so the UI does not hard-code it.
 func (s *Server) listPermissions(w http.ResponseWriter, r *http.Request) {
 	all := authz.Actions()
-	tools := mcpActions()
+	reads := mcpActions(true)
 	out := make([]Permission, 0, len(all))
 	for _, a := range all {
 		out = append(out, Permission{Action: string(a.Action), Kind: string(a.Kind), Doc: a.Doc, Grantable: a.Grantable,
-			MCP: slices.Contains(tools, a.Action)})
+			Purposes: purposesOf(a.Action, reads)})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -1104,6 +1197,10 @@ func (s *Server) authRoutes() []Route {
 		{Method: "GET", Path: "/api/permissions", ID: "listPermissions", Tag: tagAuth,
 			Summary: "The actions a route or a limited token can name, and which a token may hold",
 			Handler: s.listPermissions, Returns: []Permission{}, Action: authz.AccountRead},
+		{Method: "GET", Path: "/api/me/tokens/{id}/calls", ID: "listMyTokenCalls", Tag: tagAuth,
+			Summary: "What one of one's tokens did, newest first: its writes and its MCP tool calls, refused or done (its last 200)",
+			Doc:     "The act itself names the token's person, as one made in a browser does; this names the token.",
+			Handler: s.listMyTokenCalls, Returns: []auth.TokenCall{}, Action: authz.AccountRead},
 		{Method: "DELETE", Path: "/api/me/tokens/{id}", ID: "deleteMyToken", Tag: tagAuth,
 			Summary: "Revoke a personal API token",
 			Handler: s.deleteMyToken, Status: http.StatusNoContent, Action: authz.AccountManage},

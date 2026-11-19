@@ -61,8 +61,8 @@
 	let summary = $state('');
 	let error = $state('');
 	let busy = $state(false);
-	// Answering is run:operate in the run's workshop.
-	const canAnswer = $derived(fleet.can(fleet.runById.get(ping.runId)?.projectId, 'run:operate'));
+	// Answering is run:answer in the run's workshop.
+	const canAnswer = $derived(fleet.can(fleet.runById.get(ping.runId)?.projectId, 'run:answer'));
 	const locked = $derived(busy || !canAnswer);
 	let files = $state<File[]>([]); // the review's own attachments
 	let showAll = $state(false);

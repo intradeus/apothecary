@@ -56,11 +56,15 @@ export const MEMBER_ROLES: readonly MemberRole[] = ['viewer', 'operator', 'maint
 export type ProjectAction =
 	| 'project:read'
 	| 'project:write'
+	| 'project:author'
+	| 'project:secrets'
 	| 'project:members'
 	| 'project:leave'
 	| 'project:delete'
 	| 'run:read'
 	| 'run:operate'
+	| 'run:answer'
+	| 'run:egress'
 	| 'run:shell'
 	| 'ticket:read'
 	| 'ticket:write';

@@ -105,10 +105,10 @@ export class FlowEditor {
 	get name() {
 		return this.#name();
 	}
-	/** Saving, cloning and deleting the flow need project:write in its
+	/** Saving, cloning and deleting the flow need project:author in its
 	 *  workshop; without it the editor is a viewer (nothing is saved). */
 	get canWrite() {
-		return fleet.can(this.projectId, 'project:write');
+		return fleet.can(this.projectId, 'project:author');
 	}
 
 	// The document itself is still validated on its own terms: agent, harness,

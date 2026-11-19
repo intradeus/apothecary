@@ -17,16 +17,17 @@ const perm = (action: string, over: Partial<Permission> = {}): Permission => ({
 	kind: action.split(':')[0],
 	doc: `Doc of ${action}.`,
 	grantable: true,
-	mcp: false,
+	purposes: [],
 	...over
 });
 const PERMS = [
 	perm('account:read'),
 	perm('account:manage'),
-	perm('run:read', { mcp: true }),
-	perm('run:operate'),
+	perm('run:read', { purposes: ['read', 'tickets', 'runs', 'authoring'] }),
+	perm('run:operate', { purposes: ['runs'] }),
 	perm('run:shell', { grantable: false }),
-	perm('ticket:read', { mcp: true }),
+	perm('ticket:read', { purposes: ['read', 'tickets', 'runs', 'authoring'] }),
+	perm('ticket:write', { purposes: ['tickets', 'runs'] }),
 	perm('widget:spin')
 ];
 const minted = { token: { id: 't1', name: 'ci', prefix: 'apo_x' } as Token, secret: 's3cret' };
@@ -92,7 +93,7 @@ describe('TokenGrantForm', () => {
 		const { oncreated } = setup();
 		await userEvent.type(nameField(), 'laptop agent');
 		await mcp();
-		expect(screen.getByText(/Read-only, for an agent you connect/)).toBeInTheDocument();
+		expect(screen.getByText(/It never answers a gate/)).toBeInTheDocument();
 		expect(submit()).toBeDisabled();
 		read.resolve(PERMS);
 
@@ -107,6 +108,32 @@ describe('TokenGrantForm', () => {
 			actions: ['run:read', 'ticket:read'],
 			projectIds: ['p1']
 		});
+	});
+
+	it('mints an MCP client token for a purpose: the reads and that purpose’s writes', async () => {
+		const { oncreated } = setup();
+		await userEvent.type(nameField(), 'runner');
+		await mcp();
+		await screen.findByText('run:read · ticket:read');
+		await userEvent.click(screen.getByRole('radio', { name: 'Runs' }));
+		expect(screen.getByText(/starts, pauses, resumes/)).toBeInTheDocument();
+		expect(
+			screen.getByText('run:read · run:operate · ticket:read · ticket:write')
+		).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('radio', { name: 'Tickets' }));
+		expect(screen.getByText('run:read · ticket:read · ticket:write')).toBeInTheDocument();
+		await userEvent.click(submit());
+		await waitFor(() => expect(oncreated).toHaveBeenCalledWith({ ...minted, mcp: true }));
+		expect(api.auth.createToken).toHaveBeenCalledWith('runner', {
+			full: false,
+			actions: ['run:read', 'ticket:read', 'ticket:write'],
+			projectIds: []
+		});
+		// A purpose whose writes the engine names none of holds the reads.
+		await userEvent.type(nameField(), 'author');
+		await mcp();
+		await userEvent.click(screen.getByRole('radio', { name: 'Authoring' }));
+		expect(screen.getByText('run:read · ticket:read')).toBeInTheDocument();
 	});
 
 	it('will not mint an MCP client token when the engine marks no action', async () => {

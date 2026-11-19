@@ -536,6 +536,24 @@ func (s *Service) DeleteToken(ctx context.Context, userID, id string) error {
 	return s.db.DeleteToken(ctx, userID, id)
 }
 
+// RecordTokenCall keeps a call a token made.
+func (s *Service) RecordTokenCall(ctx context.Context, c TokenCall) error {
+	return s.db.RecordTokenCall(ctx, c)
+}
+
+// TokenCalls are one of userID's tokens' recent calls, newest first;
+// another person's token is ErrNotFound.
+func (s *Service) TokenCalls(ctx context.Context, userID, tokenID string) ([]TokenCall, error) {
+	toks, err := s.db.ListTokens(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.ContainsFunc(toks, func(t Token) bool { return t.ID == tokenID }) {
+		return nil, fmt.Errorf("token %s: %w", tokenID, ErrNotFound)
+	}
+	return s.db.TokenCalls(ctx, tokenID)
+}
+
 // --- secrets ------------------------------------------------------------------
 
 func randomSecret(n int) (string, error) {

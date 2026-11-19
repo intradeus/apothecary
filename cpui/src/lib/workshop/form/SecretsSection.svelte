@@ -1,6 +1,6 @@
 <script lang="ts">
 	// 7 · Secrets, saved as they are set (only a workshop that exists has any).
-	// Even listing them needs project:write: without it, a notice instead.
+	// Even listing them needs project:secrets: without it, a notice instead.
 	import SecretsEditor from '$lib/workshop/SecretsEditor.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
 	import FormPane from './FormPane.svelte';

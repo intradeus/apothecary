@@ -16,6 +16,7 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
+	import TokenCalls from './TokenCalls.svelte';
 	import TokenGrantForm from './TokenGrantForm.svelte';
 	import { tokenLife } from './tokenLife';
 
@@ -24,6 +25,8 @@
 	let error = $state('');
 	let minted = $state<{ token: Token; secret: string; mcp: boolean } | null>(null);
 	let revoking = $state<string | null>(null);
+	/** The token whose calls are open. */
+	let open = $state<string | null>(null);
 
 	const load = async () => {
 		try {
@@ -158,12 +161,22 @@
 								: t('page.account.neverUsed')}{#if life.text}
 								{` · ${life.text}`}{/if}
 						</span>
-						<button
-							class="btn-danger btn-sm"
-							aria-busy={revoking === tk.id}
-							onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
-						>
+						<span class="row nowrap">
+							<button
+								class="btn-sm"
+								aria-expanded={open === tk.id}
+								title={t('page.account.callsTitle')}
+								onclick={() => (open = open === tk.id ? null : tk.id)}
+								>{t('page.account.calls')}</button
+							>
+							<button
+								class="btn-danger btn-sm"
+								aria-busy={revoking === tk.id}
+								onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
+							>
+						</span>
 					</div>
+					{#if open === tk.id}<TokenCalls tokenId={tk.id} />{/if}
 				{/each}
 			</div>
 		{:else}

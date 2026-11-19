@@ -34,6 +34,7 @@ import type {
 	Permission,
 	SshKey,
 	Token,
+	TokenCall,
 	TokenGrant,
 	User,
 	UserRole
@@ -1649,6 +1650,11 @@ export const auth = {
 		unwrapVoid(gen.changeMyPassword({ body: { current, password } })),
 
 	tokens: async (): Promise<Token[]> => many(await unwrap(gen.listMyTokens()), map.toToken),
+
+	/** What one of one's tokens did, newest first: its writes and its MCP
+	 *  tool calls, refused or done (its last 200). */
+	tokenCalls: async (id: string): Promise<TokenCall[]> =>
+		many(await unwrap(gen.listMyTokenCalls({ path: { id } })), map.toTokenCall),
 
 	/** Mint a token with what it may do; the secret is in the answer and
 	 *  nowhere else. A limited token with no workshop chosen reaches every

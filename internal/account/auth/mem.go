@@ -22,6 +22,7 @@ type Mem struct {
 	methods  map[string]Method
 	sessions map[string]Session
 	tokens   map[string]Token
+	calls    map[string][]TokenCall // by token, oldest first
 	sshKeys  map[string]SSHKey
 }
 
@@ -31,6 +32,7 @@ func NewMem() *Mem {
 		methods:  map[string]Method{},
 		sessions: map[string]Session{},
 		tokens:   map[string]Token{},
+		calls:    map[string][]TokenCall{},
 		sshKeys:  map[string]SSHKey{},
 	}
 }
@@ -502,6 +504,7 @@ func (m *Mem) DeleteToken(_ context.Context, userID, id string) error {
 		return fmt.Errorf("token %s: %w", id, ErrNotFound)
 	}
 	delete(m.tokens, id)
+	delete(m.calls, id)
 	return nil
 }
 
@@ -521,9 +524,36 @@ func (m *Mem) DeleteTokensOf(_ context.Context, userID string) error {
 	for id, t := range m.tokens {
 		if t.UserID == userID {
 			delete(m.tokens, id)
+			delete(m.calls, id)
 		}
 	}
 	return nil
+}
+
+func (m *Mem) RecordTokenCall(_ context.Context, c TokenCall) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.tokens[c.TokenID]; !ok {
+		return fmt.Errorf("token %s: %w", c.TokenID, ErrNotFound)
+	}
+	c.At = instant(c.At)
+	l := append(m.calls[c.TokenID], c)
+	if len(l) > KeepTokenCalls {
+		l = slices.Clone(l[len(l)-KeepTokenCalls:])
+	}
+	m.calls[c.TokenID] = l
+	return nil
+}
+
+func (m *Mem) TokenCalls(_ context.Context, tokenID string) ([]TokenCall, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.calls[tokenID]
+	out := make([]TokenCall, 0, len(l))
+	for i := len(l) - 1; i >= 0; i-- {
+		out = append(out, l[i])
+	}
+	return out, nil
 }
 
 var _ DB = (*Mem)(nil)

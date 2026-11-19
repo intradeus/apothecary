@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"apothecary/internal/account/authz"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 )
@@ -72,9 +73,15 @@ func (s *Server) automationTicket(w http.ResponseWriter, r *http.Request, body *
 	return true
 }
 
+// An automation starts runs with no person: writing one needs run:operate
+// beside project:author, or a token granted authoring alone would start runs.
+func (s *Server) automationRuns(w http.ResponseWriter, r *http.Request) bool {
+	return s.projectIn(w, r, authz.RunOperate, r.PathValue("id"))
+}
+
 func (s *Server) createAutomation(w http.ResponseWriter, r *http.Request) {
 	var body AutomationRequest
-	if !readJSON(w, r, &body) || !s.automationTicket(w, r, &body) {
+	if !s.automationRuns(w, r) || !readJSON(w, r, &body) || !s.automationTicket(w, r, &body) {
 		return
 	}
 	a, err := s.Conf.CreateAutomation(r.Context(), automationFrom(r.PathValue("id"), body))
@@ -113,7 +120,7 @@ func (s *Server) updateAutomation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body AutomationRequest
-	if !readJSON(w, r, &body) || !s.automationTicket(w, r, &body) {
+	if !s.automationRuns(w, r) || !readJSON(w, r, &body) || !s.automationTicket(w, r, &body) {
 		return
 	}
 	a, err := s.Conf.UpdateAutomation(r.Context(), r.PathValue("aid"), automationFrom(r.PathValue("id"), body))

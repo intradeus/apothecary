@@ -117,12 +117,16 @@ var relations = []string{"owner", "maintainer", "operator", "viewer", "none"}
 var workshopMatrix = map[Action][5]Outcome{
 	ProjectRead:    {A, A, A, A, H},
 	ProjectWrite:   {A, A, R, R, H},
+	ProjectAuthor:  {A, A, R, R, H},
+	ProjectSecrets: {A, A, R, R, H},
 	ProjectMembers: {A, A, R, R, H},
 	// Leaving is a member's: the owner deletes its workshop instead.
 	ProjectLeave:  {R, A, A, A, H},
 	ProjectDelete: {A, R, R, R, H},
 	RunRead:       {A, A, A, A, H},
 	RunOperate:    {A, A, A, R, H},
+	RunAnswer:     {A, A, A, R, H},
+	RunEgress:     {A, A, A, R, H},
 	RunShell:      {A, A, R, R, H},
 	TicketRead:    {A, A, A, A, H},
 	TicketWrite:   {A, A, A, R, H},
@@ -137,11 +141,15 @@ var instanceMatrix = map[Action][3]Outcome{
 	ProjectCreate:    {A, A, R},
 	ProjectRead:      {A, A, A},
 	ProjectWrite:     {A, A, A},
+	ProjectAuthor:    {A, A, A},
+	ProjectSecrets:   {A, A, A},
 	ProjectMembers:   {A, A, A},
 	ProjectLeave:     {R, R, R},
 	ProjectDelete:    {R, R, R},
 	RunRead:          {A, A, A},
 	RunOperate:       {A, A, A},
+	RunAnswer:        {A, A, A},
+	RunEgress:        {A, A, A},
 	RunShell:         {A, A, A},
 	TicketRead:       {A, A, A},
 	TicketWrite:      {A, A, A},
@@ -468,9 +476,9 @@ func TestAccess(t *testing.T) {
 		role ProjectRole
 		want []Action
 	}{
-		{"owner", RoleOwner, []Action{ProjectRead, ProjectWrite, ProjectMembers, ProjectDelete, RunRead, RunOperate, RunShell, TicketRead, TicketWrite}},
-		{"maintainer", RoleMaintainer, []Action{ProjectRead, ProjectWrite, ProjectMembers, ProjectLeave, RunRead, RunOperate, RunShell, TicketRead, TicketWrite}},
-		{"operator", RoleOperator, []Action{ProjectRead, ProjectLeave, RunRead, RunOperate, TicketRead, TicketWrite}},
+		{"owner", RoleOwner, []Action{ProjectRead, ProjectWrite, ProjectAuthor, ProjectSecrets, ProjectMembers, ProjectDelete, RunRead, RunOperate, RunAnswer, RunEgress, RunShell, TicketRead, TicketWrite}},
+		{"maintainer", RoleMaintainer, []Action{ProjectRead, ProjectWrite, ProjectAuthor, ProjectSecrets, ProjectMembers, ProjectLeave, RunRead, RunOperate, RunAnswer, RunEgress, RunShell, TicketRead, TicketWrite}},
+		{"operator", RoleOperator, []Action{ProjectRead, ProjectLeave, RunRead, RunOperate, RunAnswer, RunEgress, TicketRead, TicketWrite}},
 		{"viewer", RoleViewer, []Action{ProjectRead, ProjectLeave, RunRead, TicketRead}},
 		{"none", "", nil},
 	} {

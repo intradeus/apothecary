@@ -25,6 +25,7 @@ import type {
 	Permission,
 	SshKey,
 	Token,
+	TokenCall,
 	User,
 	UserRole
 } from '$lib/domain';
@@ -1410,7 +1411,24 @@ export function toToken(w: Wire.Token): Token {
 }
 
 export function toPermission(w: Wire.Permission): Permission {
-	return { action: w.action, kind: w.kind, doc: w.doc, grantable: w.grantable, mcp: w.mcp };
+	return {
+		action: w.action,
+		kind: w.kind,
+		doc: w.doc,
+		grantable: w.grantable,
+		purposes: w.purposes ?? []
+	};
+}
+
+export function toTokenCall(w: Wire.TokenCall): TokenCall {
+	return {
+		at: w.at,
+		method: w.method,
+		route: w.route,
+		path: w.path,
+		tool: w.tool || undefined,
+		status: w.status
+	};
 }
 
 export function toCliLogin(w: Wire.CliLoginInfo): CliLogin {

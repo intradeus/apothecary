@@ -59,12 +59,16 @@ action "account:manage" in [browse, manageself] appliesTo { principal: User, res
 action "project:create" in [personal] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "project:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "project:write" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "project:author" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "project:secrets" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "project:members" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "project:leave" in [viewer, manageself] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "project:delete" in [owned] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 
 action "run:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "run:operate" in [browse, owned, operator] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "run:answer" in [browse, owned, operator] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
+action "run:egress" in [browse, owned, operator] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 action "run:shell" in [browse, owned, maintainer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };
 
 action "ticket:read" in [browse, owned, viewer] appliesTo { principal: User, resource: [Instance, Resource], context: Context };

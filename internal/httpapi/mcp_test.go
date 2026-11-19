@@ -132,19 +132,20 @@ func TestMCPCatalog(t *testing.T) {
 			t.Errorf("%s names route %s, which the table does not have", name, tl.route.ID)
 			continue
 		}
-		// This face reads: a write is never a tool, but the assistant's
-		// fill, which stores nothing and is its session's token's alone.
+		// The assistant's fill stores nothing and is its session's token's
+		// alone.
 		if rt.ID == fillRouteID {
 			if rt.Action != authz.AssistantFill {
 				t.Errorf("fill needs %s", rt.Action)
 			}
 			continue
 		}
-		if !readRoute(rt) || tl.def.Annotations["readOnlyHint"] != true {
-			t.Errorf("%s is %s %s (%s): not a read", name, rt.Method, rt.Path, rt.Action)
+		// A read says so; a write is a POST or a PUT, never a deletion.
+		if readRoute(rt) != (tl.def.Annotations["readOnlyHint"] == true) {
+			t.Errorf("%s (%s %s) is marked read-only %v", name, rt.Method, rt.Path, tl.def.Annotations["readOnlyHint"])
 		}
-		if _, verb, _ := strings.Cut(string(rt.Action), ":"); verb != "read" {
-			t.Errorf("%s needs %s, not a read action", name, rt.Action)
+		if !readRoute(rt) && rt.Method != http.MethodPost && rt.Method != http.MethodPut {
+			t.Errorf("%s is %s %s: a write tool creates or replaces", name, rt.Method, rt.Path)
 		}
 		if rt.Auth != AccessUser || rt.Produces != "" || rt.Accepts != "" {
 			t.Errorf("%s: a tool is a user route answering JSON (auth %d, produces %q, accepts %q)", name, rt.Auth, rt.Produces, rt.Accepts)
@@ -180,10 +181,74 @@ func TestMCPCatalog(t *testing.T) {
 			}
 		}
 	}
-	for _, a := range mcpActions() {
+	for _, a := range mcpActions(true) {
 		if _, verb, _ := strings.Cut(string(a), ":"); verb != "read" {
-			t.Errorf("an MCP client's grant would hold %s", a)
+			t.Errorf("the read grant (and an assistant session's token) would hold %s", a)
 		}
+	}
+}
+
+// What is never a tool (docs/assistant-plan.md, phase 4): credentials,
+// secrets, tokens, members, the account, the shell, the terminal and the
+// tunnels, an egress rule, an answer to a gate, a take-over, a deletion.
+// An agent holding a token acts within it; these stay a person's.
+func TestMCPNeverATool(t *testing.T) {
+	never := []authz.Action{
+		authz.CredentialRead, authz.CredentialWrite, authz.IntegrationWrite,
+		authz.ProjectSecrets, authz.ProjectMembers, authz.ProjectLeave, authz.ProjectDelete, authz.ProjectWrite,
+		authz.AccountManage, authz.InstanceAdmin, authz.SettingsWrite, authz.ChannelWrite,
+		authz.RunShell, authz.RunEgress, authz.RunAnswer,
+		authz.AssistantWrite,
+	}
+	for _, rt := range (&Server{}).routes() {
+		if rt.Tool == nil {
+			continue
+		}
+		if slices.Contains(never, rt.Action) {
+			t.Errorf("%s (%s %s) is a tool, needing %s, which is never a tool's", rt.Tool.Name, rt.Method, rt.Path, rt.Action)
+		}
+		if rt.Method == http.MethodDelete {
+			t.Errorf("%s deletes (%s %s): a deletion is never a tool", rt.Tool.Name, rt.Method, rt.Path)
+		}
+		for _, word := range []string{"/tokens", "/auth", "/account", "/secrets", "/members", "/hold", "/answer", "/egress", "/terminal", "/tunnel", "/ssh", "/archive", "/credentials", "/integrations"} {
+			if strings.Contains(rt.Path, word) {
+				t.Errorf("%s (%s %s) reaches %s", rt.Tool.Name, rt.Method, rt.Path, word)
+			}
+		}
+	}
+}
+
+// Each purpose the token form offers is the read tools and its writes;
+// every write tool is some purpose's, and no purpose grants what no tool
+// needs.
+func TestMCPPurposesCoverTheTools(t *testing.T) {
+	writes := mcpActions(false)
+	reads := mcpActions(true)
+	covered := map[authz.Action]bool{}
+	for _, a := range reads {
+		covered[a] = true
+	}
+	for _, p := range mcpPurposes {
+		for _, a := range p.Writes {
+			if !slices.Contains(writes, a) {
+				t.Errorf("purpose %s grants %s, which no tool needs", p.Name, a)
+			}
+			covered[a] = true
+		}
+	}
+	for _, a := range writes {
+		if !covered[a] {
+			t.Errorf("no purpose grants %s, which a tool needs", a)
+		}
+	}
+	if got := purposesOf(authz.TicketRead, reads); !slices.Equal(got, []string{"read", "tickets", "runs", "authoring"}) {
+		t.Errorf("ticket:read is in %v", got)
+	}
+	if got := purposesOf(authz.RunOperate, reads); !slices.Equal(got, []string{"runs"}) {
+		t.Errorf("run:operate is in %v", got)
+	}
+	if got := purposesOf(authz.RunShell, reads); len(got) != 0 {
+		t.Errorf("run:shell is in %v", got)
 	}
 }
 
@@ -251,7 +316,7 @@ func TestMCPProtocol(t *testing.T) {
 	if _, r = x.mcpCall(t, nil, "resources/list", nil); r.Error == nil || r.Error.Code != rpcMethodNotFound {
 		t.Errorf("an unknown method = %+v", r.Error)
 	}
-	if _, r = x.mcpCall(t, nil, "tools/call", map[string]any{"name": "create_ticket"}); r.Error == nil || r.Error.Code != rpcInvalidParams {
+	if _, r = x.mcpCall(t, nil, "tools/call", map[string]any{"name": "delete_ticket"}); r.Error == nil || r.Error.Code != rpcInvalidParams {
 		t.Errorf("a tool that is not declared = %+v", r.Error)
 	}
 
@@ -357,10 +422,17 @@ func TestMCPListEqualsTheGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Every tool but fill, which only an assistant session's token lists.
+	// Every tool the server serves but fill, which only an assistant
+	// session's token lists.
+	served := 0
+	for _, tl := range all {
+		if tl.route.ID != fillRouteID && (tl.route.Enabled == nil || tl.route.Enabled(x.srv)) {
+			served++
+		}
+	}
 	full := x.mcpToolNames(t, nil)
-	if len(full) != len(all)-1 || slices.Contains(full, "fill") {
-		t.Errorf("a full token lists %d of %d tools: %v", len(full), len(all), full)
+	if len(full) != served || slices.Contains(full, "fill") {
+		t.Errorf("a full token lists %d of the %d served: %v", len(full), served, full)
 	}
 
 	ctx := context.Background()
@@ -558,23 +630,34 @@ func TestMCPCutsALargeAnswer(t *testing.T) {
 	}
 }
 
-// The token form's MCP grant is the actions the tools need, from the engine.
+// The token form's MCP grants, by purpose, are the actions the tools need,
+// from the engine.
 func TestPermissionsMarkTheMCPGrant(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	perms := decode[[]Permission](t, x.expect(t, "me", nil, "GET", "/api/permissions", nil, 200))
-	var marked []string
-	for _, p := range perms {
-		if p.MCP {
-			marked = append(marked, p.Action)
+	grant := func(purpose string) []string {
+		var out []string
+		for _, p := range perms {
+			if slices.Contains(p.Purposes, purpose) {
+				out = append(out, p.Action)
+			}
 		}
+		slices.Sort(out)
+		return out
 	}
 	var want []string
-	for _, a := range mcpActions() {
+	for _, a := range mcpActions(true) {
 		want = append(want, string(a))
 	}
-	slices.Sort(marked)
-	if !slices.Equal(marked, want) || !slices.Contains(marked, "ticket:read") || slices.Contains(marked, "run:operate") {
-		t.Errorf("mcp-marked actions = %v, want %v", marked, want)
+	if got := grant("read"); !slices.Equal(got, want) || !slices.Contains(got, "ticket:read") {
+		t.Errorf("read = %v, want %v", got, want)
+	}
+	runs := grant("runs")
+	if !slices.Contains(runs, "run:operate") || !slices.Contains(runs, "ticket:write") || slices.Contains(runs, "run:answer") || slices.Contains(runs, "project:author") {
+		t.Errorf("runs = %v", runs)
+	}
+	if a := grant("authoring"); !slices.Contains(a, "project:author") || slices.Contains(a, "run:operate") {
+		t.Errorf("authoring = %v", a)
 	}
 }
 

@@ -1260,7 +1260,7 @@ export type Permission = {
 	doc: string;
 	grantable: boolean;
 	kind: string;
-	mcp: boolean;
+	purposes: Array<string> | null;
 };
 
 export type PhaseInfo = {
@@ -1727,6 +1727,12 @@ export type RunView = {
 	ticket_url?: string;
 	updated_at: string;
 	user_id?: string;
+};
+
+export type RunWait = {
+	changed: boolean;
+	run: RunView;
+	seen: string;
 };
 
 export type SshKey = {
@@ -2199,6 +2205,15 @@ export type Token = {
 	name: string;
 	prefix: string;
 	project_ids?: Array<string>;
+};
+
+export type TokenCall = {
+	at: string;
+	method: string;
+	path: string;
+	route: string;
+	status: number;
+	tool?: string;
 };
 
 export type TokenCreated = {
@@ -5773,6 +5788,47 @@ export type DeleteMyTokenResponses = {
 };
 
 export type DeleteMyTokenResponse = DeleteMyTokenResponses[keyof DeleteMyTokenResponses];
+
+export type ListMyTokenCallsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/me/tokens/{id}/calls';
+};
+
+export type ListMyTokenCallsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListMyTokenCallsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<TokenCall> | null;
+};
+
+export type ListMyTokenCallsResponse = ListMyTokenCallsResponses[keyof ListMyTokenCallsResponses];
 
 export type ListNoticesData = {
 	body?: never;
@@ -10851,6 +10907,56 @@ export type GetRunSshResponses = {
 };
 
 export type GetRunSshResponse = GetRunSshResponses[keyof GetRunSshResponses];
+
+export type WaitRunData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * the seen an earlier answer returned
+		 */
+		seen?: string;
+		/**
+		 * seconds to wait, 1 to 55 (default 50)
+		 */
+		timeout?: number;
+	};
+	url: '/api/runs/{id}/wait';
+};
+
+export type WaitRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type WaitRunResponses = {
+	/**
+	 * OK
+	 */
+	200: RunWait;
+};
+
+export type WaitRunResponse = WaitRunResponses[keyof WaitRunResponses];
 
 export type GetWorkspaceLogData = {
 	body?: never;

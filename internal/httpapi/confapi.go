@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"sort"
+	"strings"
 	"time"
 
 	"apothecary/internal/account/auth"
@@ -606,6 +607,9 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	projectID := r.PathValue("id")
+	if !s.flowSecretsAllowed(w, r, projectID, body.YAML) {
+		return
+	}
 	if _, err := s.Conf.GetFlow(r.Context(), projectID, body.Name); err == nil {
 		writeErr(w, http.StatusConflict, "flow "+body.Name+" already exists in this project (PUT to update)")
 		return
@@ -621,6 +625,19 @@ func (s *Server) createFlow(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, describeFlow(row, false))
 }
 
+// flowSecretsAllowed: a flow that reads the workshop's secrets
+// (${secrets.<name>}) also needs project:secrets to save. A flow is code that
+// runs with what it reads, so writing one that reads a secret reads it: a
+// token granted project:author alone (the token form's Authoring) must not
+// reach the secrets it was never given. A person who writes flows holds
+// both.
+func (s *Server) flowSecretsAllowed(w http.ResponseWriter, r *http.Request, projectID, yaml string) bool {
+	if !strings.Contains(yaml, "${secrets.") {
+		return true
+	}
+	return s.projectIn(w, r, authz.ProjectSecrets, projectID)
+}
+
 // copyFlow clones a flow into another project — how a good flow spreads now
 // that flows are owned rather than shared. The source may be one of this
 // project's flows or a built-in template it has not adopted yet.
@@ -630,7 +647,11 @@ func (s *Server) copyFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The target is named in the body: the guard covered the source only.
-	if !s.projectIn(w, r, authz.ProjectWrite, body.ToProjectID) {
+	if !s.projectIn(w, r, authz.ProjectAuthor, body.ToProjectID) {
+		return
+	}
+	if src, err := s.Conf.GetFlow(r.Context(), r.PathValue("id"), r.PathValue("name")); err == nil &&
+		!s.flowSecretsAllowed(w, r, body.ToProjectID, src.YAML) {
 		return
 	}
 	row, err := s.Conf.CopyFlow(r.Context(), r.PathValue("id"), r.PathValue("name"),
@@ -652,7 +673,7 @@ func (s *Server) copyFlowTemplate(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !s.projectIn(w, r, authz.ProjectWrite, body.ToProjectID) {
+	if !s.projectIn(w, r, authz.ProjectAuthor, body.ToProjectID) {
 		return
 	}
 	row, err := s.Conf.CopyTemplate(r.Context(), r.PathValue("name"), body.ToProjectID, body.Name)
@@ -683,7 +704,7 @@ func (s *Server) getFlow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) putFlow(w http.ResponseWriter, r *http.Request) {
 	var body UpdateFlowRequest
-	if !readJSON(w, r, &body) {
+	if !readJSON(w, r, &body) || !s.flowSecretsAllowed(w, r, r.PathValue("id"), body.YAML) {
 		return
 	}
 	row, err := s.Conf.SaveFlow(r.Context(), r.PathValue("id"), r.PathValue("name"), body.YAML, body.Layout)
@@ -1039,15 +1060,15 @@ func (s *Server) projectRoutes() []Route {
 		{Method: "GET", Path: "/api/projects/{id}/secrets", ID: "listProjectSecrets", Tag: tagProjects,
 			Summary: "The project's secrets, by name",
 			Doc:     "What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.",
-			Handler: s.listProjectSecrets, Returns: []confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.listProjectSecrets, Returns: []confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectSecrets},
 		{Method: "PUT", Path: "/api/projects/{id}/secrets/{name}", ID: "setProjectSecret", Tag: tagProjects,
 			Summary: "Set one project secret",
 			Doc:     "Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.",
-			Body:    ProjectSecretRequest{}, Handler: s.putProjectSecret, Returns: confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Body:    ProjectSecretRequest{}, Handler: s.putProjectSecret, Returns: confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectSecrets},
 		{Method: "DELETE", Path: "/api/projects/{id}/secrets/{name}", ID: "deleteProjectSecret", Tag: tagProjects,
 			Summary: "Remove one project secret",
 			Doc:     "A flow that reads it is refused at its next run's creation.",
-			Handler: s.deleteProjectSecret, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.deleteProjectSecret, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectSecrets},
 		{Method: "GET", Path: "/api/projects/{id}/browser", ID: "getProjectBrowser", Tag: tagProjects,
 			Summary: "The project's browser: its toggle and its container",
 			Doc:     "One container per project, a Chromium per agent session (the builtin browser MCP server). The toggle is the project's workspace.browser.enabled; this says whether the container runs, with what image, and how many sessions use it.",
@@ -1083,7 +1104,7 @@ func (s *Server) flowRoutes() []Route {
 			Summary: "Copy a compiled-in template into a project",
 			Doc:     "A template belongs to no project, so it is copied from here rather than from under one. Copying it under its own name adopts it: the project gets its own editable document, which shadows the template from then on.",
 			Handler: s.copyFlowTemplate, Body: CopyFlowRequest{}, Returns: flowResp{},
-			Status: http.StatusCreated, Enabled: haveConf, Action: authz.ProjectWrite},
+			Status: http.StatusCreated, Enabled: haveConf, Action: authz.ProjectAuthor},
 		{Method: "GET", Path: "/api/flows/schema", ID: "getFlowSchema", Tag: tagFlows,
 			Summary: "The JSON Schema of a flow document as it is written",
 			Doc:     "The YAML with its shorthand, for an editor to validate, complete and document as a person types; its lists (stage types, signals, actions and their inputs) come from the registries. The parser stays the authority: validate a document for the rules a schema cannot say.",
@@ -1106,7 +1127,8 @@ func (s *Server) flowRoutes() []Route {
 		{Method: "POST", Path: "/api/projects/{id}/flows", ID: "createFlow", Tag: tagFlows,
 			Summary: "Create a flow in a project",
 			Handler: s.createFlow, Body: CreateFlowRequest{}, Returns: flowResp{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor,
+			Tool: &Tool{Name: "create_flow", Doc: "Save a new flow in a workshop from its YAML document (get_flow_schema gives the language; validate_flow checks a document first).", Args: map[string]string{"id": argWorkshop}}},
 		{Method: "GET", Path: "/api/projects/{id}/flows/{name}", ID: "getFlow", Tag: tagFlows,
 			Summary: "One of a project's flows",
 			Doc:     "Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.",
@@ -1115,14 +1137,15 @@ func (s *Server) flowRoutes() []Route {
 		{Method: "PUT", Path: "/api/projects/{id}/flows/{name}", ID: "updateFlow", Tag: tagFlows,
 			Summary: "Replace one of a project's flows",
 			Doc:     "Saving a built-in template's name for the first time creates this project's own copy of it.",
-			Handler: s.putFlow, Body: UpdateFlowRequest{}, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.putFlow, Body: UpdateFlowRequest{}, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor,
+			Tool: &Tool{Name: "update_flow", Doc: "Replace a workshop's flow with a new version of its YAML document. New runs start on it; runs going keep the version they started on.", Args: map[string]string{"id": argWorkshop, "name": argFlow}}},
 		{Method: "DELETE", Path: "/api/projects/{id}/flows/{name}", ID: "deleteFlow", Tag: tagFlows,
 			Summary: "Delete a project's flow (resets to the template, when there is one)",
-			Handler: s.deleteFlow, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.deleteFlow, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor},
 		{Method: "POST", Path: "/api/projects/{id}/flows/{name}/copy", ID: "copyFlow", Tag: tagFlows,
 			Summary: "Copy a flow into another project",
 			Handler: s.copyFlow, Body: CopyFlowRequest{}, Returns: flowResp{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor},
 		{Method: "GET", Path: "/api/projects/{id}/automations", ID: "listAutomations", Tag: tagAutomations,
 			Summary: "The project's automations: how runs begin without a person",
 			Handler: s.listAutomations, Returns: []confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead,
@@ -1131,16 +1154,18 @@ func (s *Server) flowRoutes() []Route {
 			Summary: "Create an automation",
 			Doc:     "Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise — or nothing for a cron automation, which then takes no ticket_id: each slot starts a run of its own, skipped while the previous one is still going), the params are ones it accepts.",
 			Handler: s.createAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor,
+			Tool: &Tool{Name: "create_automation", Doc: "Add an automation to a workshop: a schedule, or a tracker query polled for new tickets, that starts runs without a person.", Args: map[string]string{"id": argWorkshop}}},
 		{Method: "GET", Path: "/api/projects/{id}/automations/{aid}", ID: "getAutomation", Tag: tagAutomations,
 			Summary: "One automation, with what the watcher last did with it",
 			Handler: s.getAutomation, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/projects/{id}/automations/{aid}", ID: "updateAutomation", Tag: tagAutomations,
 			Summary: "Replace an automation (its last poll, firing and error are kept)",
-			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor,
+			Tool: &Tool{Name: "update_automation", Doc: "Replace one of a workshop's automations (enabling or disabling it too).", Args: map[string]string{"id": argWorkshop, "aid": "The automation's id, from list_automations."}}},
 		{Method: "DELETE", Path: "/api/projects/{id}/automations/{aid}", ID: "deleteAutomation", Tag: tagAutomations,
 			Summary: "Delete an automation (the tickets it recorded and their runs stay)",
-			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor},
 		{Method: "GET", Path: "/api/projects/{id}/flow-bindings", ID: "listFlowBindings", Tag: tagFlows,
 			Summary: "The project's parameter bindings, one per configured flow",
 			Handler: s.listFlowBindings, Returns: []confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead,
@@ -1152,10 +1177,10 @@ func (s *Server) flowRoutes() []Route {
 		{Method: "PUT", Path: "/api/projects/{id}/flows/{name}/binding", ID: "putFlowBinding", Tag: tagFlows,
 			Summary: "Bind values to a flow's parameters for this project",
 			Doc:     "Replaces the binding. Every key must be a parameter the flow declares (the engine-known names included) and every value one it accepts — checked the way a run checks them; an empty value unbinds. A binding left with no values is removed. The document itself is untouched.",
-			Handler: s.putFlowBinding, Body: FlowBindingRequest{}, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.putFlowBinding, Body: FlowBindingRequest{}, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor},
 		{Method: "DELETE", Path: "/api/projects/{id}/flows/{name}/binding", ID: "deleteFlowBinding", Tag: tagFlows,
 			Summary: "Put the project back to the flow's declared defaults",
-			Handler: s.deleteFlowBinding, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
+			Handler: s.deleteFlowBinding, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectAuthor},
 		{Method: "GET", Path: "/api/projects/{id}/flows/{name}/versions", ID: "listFlowVersions", Tag: tagFlows,
 			Summary: "A flow's version history within its project",
 			Handler: s.listFlowVersions, Returns: []confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead,

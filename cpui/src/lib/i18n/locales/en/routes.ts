@@ -374,7 +374,23 @@ export default {
 	'page.account.accessLimited': 'Limited',
 	'page.account.accessMcp': 'MCP client',
 	'page.account.accessMcpHelp':
-		'Read-only, for an agent you connect to this instance’s MCP server: it reads workshops, tickets, flows, skills and runs, checks a flow, and changes nothing.',
+		'For an agent you connect to this instance’s MCP server, holding what its purpose needs. It never answers a gate, takes a run over, opens a shell, changes egress, secrets or members, or deletes anything.',
+	'page.account.purpose': 'For',
+	'page.account.purpose.read': 'Reading',
+	'page.account.purpose.tickets': 'Tickets',
+	'page.account.purpose.runs': 'Runs',
+	'page.account.purpose.authoring': 'Authoring',
+	'page.account.purposeHelp.read':
+		'Reads workshops, tickets, flows, skills, runs and dashboards, checks a flow, and changes nothing.',
+	'page.account.purposeHelp.tickets': 'Reads, and files and edits tickets.',
+	'page.account.purposeHelp.runs':
+		'Reads, files tickets, and starts, pauses, resumes, retries and aborts runs, waiting on them.',
+	'page.account.purposeHelp.authoring':
+		'Reads, and writes flows (not one reading the workshop’s secrets), skills, skillsets, dashboards and scorecards. Skills and dashboards are yours, used in every workshop, whatever workshops the token is limited to.',
+	'page.account.calls': 'Calls',
+	'page.account.callsTitle': 'What this token did: its writes and its MCP tool calls, newest first',
+	'page.account.noCalls': 'No calls yet',
+	'page.account.callsFailed': 'Couldn’t load what this token did',
 	'page.account.mcpConnect':
 		'Connect your MCP client to {url} with this token as a bearer header. Most clients take this configuration:',
 	'page.account.accessFullHelp':

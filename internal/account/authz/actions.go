@@ -38,12 +38,16 @@ const (
 	ProjectCreate  Action = "project:create"
 	ProjectRead    Action = "project:read"
 	ProjectWrite   Action = "project:write"
+	ProjectAuthor  Action = "project:author"
+	ProjectSecrets Action = "project:secrets"
 	ProjectMembers Action = "project:members"
 	ProjectLeave   Action = "project:leave"
 	ProjectDelete  Action = "project:delete"
 
 	RunRead    Action = "run:read"
 	RunOperate Action = "run:operate"
+	RunAnswer  Action = "run:answer"
+	RunEgress  Action = "run:egress"
 	RunShell   Action = "run:shell"
 
 	TicketRead  Action = "ticket:read"
@@ -106,13 +110,17 @@ var vocabulary = []Spec{
 
 	{ProjectCreate, KindProject, true, "Create workshops", []string{p}},
 	{ProjectRead, KindProject, true, "See workshops: settings, flows, automations, members", []string{b, own, groupViewer}},
-	{ProjectWrite, KindProject, true, "Change a workshop's settings, flows, automations and secrets", []string{b, own, groupMaintainer}},
+	{ProjectWrite, KindProject, true, "Change a workshop's settings: its repositories, workspace and checks", []string{b, own, groupMaintainer}},
+	{ProjectAuthor, KindProject, true, "Write a workshop's flows, their parameter bindings and its automations", []string{b, own, groupMaintainer}},
+	{ProjectSecrets, KindProject, true, "See the names of a workshop's secrets; set and remove them", []string{b, own, groupMaintainer}},
 	{ProjectMembers, KindProject, true, "Share a workshop: add, change and remove members", []string{b, own, groupMaintainer}},
 	{ProjectLeave, KindProject, false, "Leave a workshop shared with one", []string{groupViewer, groupManageSelf}},
 	{ProjectDelete, KindProject, true, "Delete a workshop", []string{own}},
 
 	{RunRead, KindRun, true, "See runs: logs, checkout files, pings", []string{b, own, groupViewer}},
-	{RunOperate, KindRun, true, "Start, abort, retry and archive runs; answer pings; ask and take over", []string{b, own, groupOperator}},
+	{RunOperate, KindRun, true, "Start, pause, resume, retry, abort and archive runs; start a phase; rebuild a workspace; its services", []string{b, own, groupOperator}},
+	{RunAnswer, KindRun, true, "Answer a run's gates and questions; take it over and talk to its agent; ask about it", []string{b, own, groupOperator}},
+	{RunEgress, KindRun, true, "Allow or deny a host a run's workspace may reach", []string{b, own, groupOperator}},
 	{RunShell, KindRun, true, "Open a run's terminal, editor, ports, SSH and files outside its checkouts", []string{b, own, groupMaintainer}},
 
 	{TicketRead, KindTicket, true, "See tickets", []string{b, own, groupViewer}},

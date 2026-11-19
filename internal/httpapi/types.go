@@ -737,9 +737,10 @@ type Permission struct {
 	Kind      string `json:"kind"`
 	Doc       string `json:"doc"`
 	Grantable bool   `json:"grantable"`
-	// MCP: a tool of the engine's MCP face needs it. The token form's
-	// grant for an MCP client is these actions.
-	MCP bool `json:"mcp"`
+	// Purposes are the token form's grants for an MCP client that hold
+	// it: read (every read tool), tickets, runs, authoring. A grant for a
+	// purpose is the actions naming it.
+	Purposes []string `json:"purposes"`
 }
 
 // ProjectAccess is what the caller may do in a workshop: its role there

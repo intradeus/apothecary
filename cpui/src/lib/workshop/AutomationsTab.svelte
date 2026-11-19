@@ -35,8 +35,8 @@
 	let { project, integrations }: { project: Project; integrations: Integration[] | null } =
 		$props();
 
-	/** Creating, editing (enabling too) and deleting need project:write. */
-	const canWrite = $derived(projectCan(project, 'project:write'));
+	/** Creating, editing (enabling too) and deleting need project:author. */
+	const canWrite = $derived(projectCan(project, 'project:author'));
 	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
 	let rows = $state<Automation[] | null>(null);

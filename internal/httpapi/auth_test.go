@@ -56,8 +56,9 @@ func TestEveryRouteDeclaresItsAccess(t *testing.T) {
 	// the token belongs to the caller by construction (DeleteToken takes
 	// the user id), the user routes are the admin's.
 	inHandler := map[string]bool{
-		"DELETE /api/me/tokens/{id}":   true,
-		"DELETE /api/me/ssh-keys/{id}": true,
+		"DELETE /api/me/tokens/{id}":    true,
+		"DELETE /api/me/ssh-keys/{id}":  true,
+		"GET /api/me/tokens/{id}/calls": true,
 	}
 	for _, rt := range (&Server{}).routes() {
 		where := rt.Method + " " + rt.Path

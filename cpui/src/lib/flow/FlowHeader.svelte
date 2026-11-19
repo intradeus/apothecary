@@ -20,7 +20,7 @@
 	const project = $derived(fleet.projectById.get(ed.projectId));
 	const workshopName = $derived(project?.name ?? '…');
 
-	/** Clone, delete and save need project:write in the flow's workshop. */
+	/** Clone, delete and save need project:author in the flow's workshop. */
 	const canWrite = $derived(ed.canWrite);
 	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 

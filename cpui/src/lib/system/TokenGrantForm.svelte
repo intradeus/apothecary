@@ -31,13 +31,20 @@
 	// Mints a personal token: its name, and what it may do. Full access is
 	// the account itself; a limited token holds only the actions ticked
 	// (what the engine says a token may hold, never account:manage), in the
-	// workshops ticked (none = every one). An MCP client's token holds the
-	// read actions the engine's MCP tools need, as the engine marks them.
+	// workshops ticked (none = every one). An MCP client's token holds what
+	// its purpose needs (reading; filing tickets; running them; authoring
+	// flows, skills and dashboards), as the engine marks it.
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
-	import type { Permission, Token, TokenGrant } from '$lib/domain';
+	import {
+		MCP_PURPOSES,
+		type McpPurpose,
+		type Permission,
+		type Token,
+		type TokenGrant
+	} from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import CheckboxGroup from '$lib/ui/CheckboxGroup.svelte';
@@ -63,8 +70,11 @@
 	/** What a token may hold, by kind in the catalogue's order; null until
 	 *  read. */
 	let groups = $state<{ kind: string; list: Permission[] }[] | null>(null);
-	/** The actions the engine's MCP tools need; null until read. */
-	let mcpActions = $state<string[] | null>(null);
+	/** What an MCP client's token is for, and each purpose's actions as the
+	 *  engine marks them; null until read. */
+	let purpose = $state<McpPurpose>('read');
+	let byPurpose = $state<Record<string, string[]> | null>(null);
+	const mcpActions = $derived(byPurpose ? (byPurpose[purpose] ?? []) : null);
 	let permsError = $state('');
 
 	const workshops = $derived(fleet.projects.map((p) => ({ value: p.id, label: p.name })));
@@ -85,14 +95,14 @@
 		permsError = '';
 		try {
 			const by = new Map<string, Permission[]>();
-			const tools: string[] = [];
+			const tools: Record<string, string[]> = {};
 			for (const p of await api.auth.permissions()) {
 				if (!p.grantable || p.action === 'account:manage') continue;
 				by.set(p.kind, [...(by.get(p.kind) ?? []), p]);
-				if (p.mcp) tools.push(p.action);
+				for (const u of p.purposes) tools[u] = [...(tools[u] ?? []), p.action];
 			}
 			groups = [...by].map(([kind, list]) => ({ kind, list }));
-			mcpActions = tools;
+			byPurpose = tools;
 		} catch (err) {
 			permsError = errorMessage(err);
 		}
@@ -115,6 +125,7 @@
 			const mcp = mode === 'mcp';
 			name = '';
 			mode = 'full';
+			purpose = 'read';
 			actions = [];
 			projectIds = [];
 			await oncreated({ ...minted, mcp });
@@ -172,7 +183,18 @@
 		{:else if !mcpActions}
 			<Skeleton lines={1} />
 		{:else}
-			<div class="help mono">{mcpActions.join(' · ')}</div>
+			<div class="field">
+				<span class="field-label">{t('page.account.purpose')}</span>
+				<Segmented
+					size="sm"
+					glass={false}
+					label={t('page.account.purpose')}
+					bind:value={purpose}
+					options={MCP_PURPOSES.map((p) => ({ value: p, label: t(`page.account.purpose.${p}`) }))}
+				/>
+				<div class="help">{t(`page.account.purposeHelp.${purpose}`)}</div>
+				<div class="help mono">{mcpActions.join(' · ')}</div>
+			</div>
 			{@render workshopPicker()}
 		{/if}
 	{:else if mode === 'limited'}
