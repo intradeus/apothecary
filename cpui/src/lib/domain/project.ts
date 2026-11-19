@@ -20,6 +20,9 @@ export interface Project {
 	 *  remote tracker or the owner's internal one. Several workshops may
 	 *  share one. '' on a draft = the owner's internal tracker. */
 	ticketSourceId: string;
+	/** That source as anyone the workshop is shared with may know it (the
+	 *  integration itself is its owner's); undefined when it is gone. */
+	ticketSource?: TicketSource;
 	/** The account that owns the workshop. */
 	ownerId: string;
 	/** The owner's handle, set only when the caller is not the owner: the
@@ -29,6 +32,15 @@ export interface Project {
 	access: ProjectAccess;
 	createdAt: string;
 	updatedAt: string;
+}
+
+/** A workshop's ticket source: its kind (internal: tickets are written
+ *  here), its name, and home, where a remote tracker's issues are browsed
+ *  ('' when there is no telling). */
+export interface TicketSource {
+	kind: string;
+	name: string;
+	home: string;
 }
 
 /** A caller's standing in a workshop: viewer < operator < maintainer, and
@@ -141,7 +153,7 @@ export interface EditorPrefs {
  *  and timestamps the engine owns. */
 export type ProjectDraft = Omit<
 	Project,
-	'id' | 'createdAt' | 'updatedAt' | 'ownerId' | 'ownerHandle' | 'access'
+	'id' | 'createdAt' | 'updatedAt' | 'ownerId' | 'ownerHandle' | 'access' | 'ticketSource'
 >;
 
 /** One branch a run can fork off from; isDefault marks the repo's default so

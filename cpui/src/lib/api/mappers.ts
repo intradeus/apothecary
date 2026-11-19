@@ -910,6 +910,11 @@ export function toProject(w: Wire.ProjectView): Project {
 		workspace: toWorkspacePolicy(w.workspace),
 		defaultFlow: w.default_flow ?? '',
 		ticketSourceId: w.ticket_source_id ?? '',
+		ticketSource: w.ticket_source && {
+			kind: w.ticket_source.kind,
+			name: w.ticket_source.name,
+			home: w.ticket_source.home ?? ''
+		},
 		ownerId: w.user_id ?? '',
 		ownerHandle: w.owner_handle || undefined,
 		access: { role: asProjectRole(w.access?.role ?? ''), actions: list(w.access?.actions) },

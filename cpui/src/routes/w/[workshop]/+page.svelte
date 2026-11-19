@@ -176,9 +176,9 @@
 			{#if tab === 'overview'}
 				<OverviewTab {project} {integrations} {flows} {runs} />
 			{:else if tab === 'runs'}
-				<RunsTab {project} {runs} {integrations} />
+				<RunsTab {project} {runs} />
 			{:else if tab === 'tickets'}
-				<TicketsTab {project} {integrations} />
+				<TicketsTab {project} />
 			{:else if tab === 'mrs'}
 				<MergeRequestsTab {project} {flows} />
 			{:else if tab === 'flows'}

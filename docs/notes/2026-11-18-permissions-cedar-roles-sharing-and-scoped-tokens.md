@@ -72,7 +72,18 @@ policy matrix is the real guard.
   shared. A ticket or a run a collaborator writes or starts is still the
   owner's; the files they attach are their own uploads, claimed as theirs
   (never as the owner's on their behalf), and a ticket's files are the
-  ticket's to read.
+  ticket's to read. The skillsets a start names are its starter's
+  (`runinput.Input.Starter`; an automation's are the owner's): anyone
+  else's is "not found". A rerun that names none carries the original's
+  over: the starter's re-pinned to their latest version, anyone else's at
+  exactly the version the original installed (`RepinSkillsets`), so a
+  rerun never reaches a version of someone's set they did not already
+  have. The workshop's ticket source is the owner's integration too;
+  its readers get only its kind, name and http(s) address
+  (`ProjectView.ticket_source`), enough for New ticket or "Open in", and
+  none of its configuration or credentials.
+- **API version**: `admin` became `role`, token creation needs a grant,
+  and routes answer 403 by action: the documented API is 2.0.0.
 - **Tokens** (`api_tokens.actions`, `.project_ids`, migration 0012): NULL
   actions is a full token — every token minted before, and the CLI's
   sign-in. A scoped token holds a non-empty action list and, optionally,
@@ -153,5 +164,10 @@ its own columns, the last enabled admin under two simultaneous
 demotions), `conftest` (members, a write from a stale role, two writes
 racing from the same role), `TestListsSeeByWorkshop`, the three migration
 tests; `auth`: `TestAProfileEditCannotUndoARoleChange`. `sshdoor`:
-`TestDoorSharedWorkshop`. cpui: `ProjectForm.test.ts` (a shared
-workshop's harnesses kept through an edit).
+`TestDoorSharedWorkshop`. Skillsets: `TestOperatorsInstallTheirOwnSkillsets`
+(httpapi), `TestSkillsetsAreTheStarters` (engine), `TestRepinSkillsets`
+(skillstore). Ticket source: `TestSharedWorkshopShowsItsTicketSource`,
+`TestTrackerHome`, `TestTicketSourceView`. cpui: `ProjectForm.test.ts` (a
+shared workshop's harnesses kept through an edit), `NewTicketLink.test.ts`
+and `TicketsTab.test.ts` (an operator and a viewer on a shared workshop's
+internal and remote sources).

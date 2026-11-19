@@ -19,6 +19,8 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/run/event"
+	"apothecary/internal/skills"
+	"apothecary/internal/skills/skillstore"
 	"apothecary/internal/workspace/sidecar"
 )
 
@@ -645,5 +647,109 @@ func TestOperatorsAttachTheirOwnUploads(t *testing.T) {
 	}
 	if a, err := files.att.Get(ctx, owners.ID); err != nil || !a.Unclaimed() {
 		t.Errorf("the owner's upload, sent by the operator = %+v, %v, want unclaimed", a, err)
+	}
+}
+
+// An operator on someone else's workshop installs their own skillsets,
+// never the owner's — not by naming one, and not by rerunning the owner's
+// run: its sets stay at the version the owner's run installed.
+func TestOperatorsInstallTheirOwnSkillsets(t *testing.T) {
+	skl := newTestSkills(t, nil)
+	x := newEnvWith(t, engine.Config{}, skl.deps)
+	skl.serve(t, x)
+	op := x.account(t, "op", auth.RoleMember)
+	x.share(t, testProject, "op", "operator")
+	setOf := func(who string, hdr map[string]string) skillstore.Skillset {
+		t.Helper()
+		skill := decode[skillstore.Skill](t, x.expect(t, who, hdr, "POST", "/api/skills", skillBody(who, "d"), http.StatusCreated)).ID
+		data := x.expect(t, who, hdr, "POST", "/api/skillsets", SkillsetRequest{Name: who, SkillIDs: []string{skill}}, http.StatusCreated)
+		return decode[skillstore.Skillset](t, data)
+	}
+	owners, ops := setOf("owner", nil), setOf("operator", op)
+	runs := ticketPath(testProject, x.newTicket(t, "T", "")) + "/runs"
+	start := func(who string, hdr map[string]string, path string, body any) string {
+		t.Helper()
+		id := decode[RunRef](t, x.expect(t, who, hdr, "POST", path, body, http.StatusCreated)).RunID
+		x.e.Wait(id)
+		return id
+	}
+	pins := func(runID string) []event.SkillsetPin {
+		t.Helper()
+		return decode[RunDetail](t, x.expect(t, "owner", nil, "GET", "/api/runs/"+runID, nil, http.StatusOK)).Run.Skillsets
+	}
+	with := func(sets ...string) map[string]any {
+		refs := []skills.Ref{}
+		for _, id := range sets {
+			refs = append(refs, skills.Ref{ID: id})
+		}
+		return map[string]any{"flow": "loop", "skillsets": refs}
+	}
+
+	x.expect(t, "operator", op, "POST", runs, with(owners.ID), http.StatusBadRequest)
+	if p := pins(start("operator", op, runs, with(ops.ID))); len(p) != 1 || p[0].ID != ops.ID {
+		t.Errorf("operator's run pins = %+v, want their own set", p)
+	}
+	theirs := start("owner", nil, runs, with(owners.ID))
+	// The owner's set moves on to v2.
+	more := decode[skillstore.Skill](t, x.expect(t, "owner", nil, "POST", "/api/skills", skillBody("more", "d"), http.StatusCreated)).ID
+	x.expect(t, "owner", nil, "PUT", "/api/skillsets/"+owners.ID, SkillsetRequest{Name: "owner", SkillIDs: append(owners.SkillIDs, more)}, http.StatusOK)
+
+	rerun := "/api/runs/" + theirs + "/rerun"
+	if data := x.expect(t, "operator", op, "POST", rerun, map[string]any{"skillsets": []skills.Ref{{ID: owners.ID}}}, http.StatusNotFound); !strings.Contains(string(data), "skillset "+owners.ID) {
+		t.Errorf("operator's rerun naming the owner's set = %s", data)
+	}
+	if p := pins(start("operator", op, rerun, nil)); len(p) != 1 || p[0].ID != owners.ID || p[0].Seq != 1 {
+		t.Errorf("operator's rerun of the owner's run = %+v, want the owner's set still at v1", p)
+	}
+	if p := pins(start("owner", nil, rerun, nil)); len(p) != 1 || p[0].ID != owners.ID || p[0].Seq != 2 {
+		t.Errorf("owner's rerun = %+v, want their set at v2", p)
+	}
+}
+
+// Whoever a workshop is shared with learns where its tickets are written —
+// its owner's ticket source's kind, name and address — and nothing of that
+// integration's configuration or credentials, which stay its owner's.
+func TestSharedWorkshopShowsItsTicketSource(t *testing.T) {
+	x := newConfEnv(t)
+	ctx := context.Background()
+	project := x.makeProject(t, "mine", nil)
+	op := x.account(t, "op", auth.RoleMember)
+	x.share(t, project, "op", "operator")
+	source := func(data []byte) *TicketSourceView {
+		t.Helper()
+		return decode[ProjectView](t, data).TicketSource
+	}
+	path := "/api/projects/" + project
+	if src := source(x.expect(t, "operator", op, "GET", path, nil, http.StatusOK)); src == nil || src.Kind != confstore.KindInternal || src.Home != "" {
+		t.Errorf("internal source = %+v", src)
+	}
+
+	// A remote tracker kind the test registry lacks, planted as the owner's.
+	valid := x.conf.KindValid
+	x.conf.KindValid = nil
+	gh, err := x.conf.CreateIntegration(ctx, confstore.Integration{UserID: testUser, Port: confstore.PortTicketSource, Kind: "github", Name: "Issues",
+		Config: map[string]any{"repos": "acme/app", "labels": "planted-config"}, Secrets: map[string]string{"token": "ghp-PLANTED"}})
+	x.conf.KindValid = valid
+	if err != nil {
+		t.Fatal(err)
+	}
+	full := decode[map[string]any](t, x.expect(t, "owner", nil, "GET", path, nil, http.StatusOK))
+	full["ticket_source_id"] = gh.ID
+	x.expect(t, "owner", nil, "PUT", path, full, http.StatusOK)
+
+	for _, data := range [][]byte{
+		x.expect(t, "operator", op, "GET", path, nil, http.StatusOK),
+		x.expect(t, "operator", op, "GET", "/api/projects", nil, http.StatusOK),
+	} {
+		if strings.Contains(string(data), "PLANTED") || strings.Contains(string(data), "planted-config") {
+			t.Errorf("the owner's integration leaked: %s", data)
+		}
+	}
+	want := TicketSourceView{Kind: "github", Name: "Issues", Home: "https://github.com/acme/app/issues"}
+	if src := source(x.expect(t, "operator", op, "GET", path, nil, http.StatusOK)); src == nil || *src != want {
+		t.Errorf("remote source = %+v, want %+v", src, want)
+	}
+	if rows := decode[[]ProjectView](t, x.expect(t, "operator", op, "GET", "/api/projects", nil, http.StatusOK)); len(rows) != 1 || rows[0].TicketSource == nil || *rows[0].TicketSource != want {
+		t.Errorf("listed = %+v", rows)
 	}
 }

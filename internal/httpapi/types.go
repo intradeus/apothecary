@@ -67,8 +67,9 @@ type RerunRequest struct {
 	// MR moves the rerun to another merge request ("" = the one the
 	// original was started on, if it was).
 	MR *runinput.MR `json:"mr,omitempty"`
-	// Skillsets replace the original's (absent = the original's at their
-	// latest version; an empty list = none).
+	// Skillsets are the caller's and replace the original's (absent = the
+	// original's: the caller's at their latest version, anyone else's at the
+	// version the original installed; an empty list = none).
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
@@ -747,13 +748,28 @@ type ProjectAccess struct {
 }
 
 // ProjectView is a workshop as its reader sees it: the project, whose it
-// is, and the reader's access.
+// is, where its tickets come from, and the reader's access.
 type ProjectView struct {
 	confstore.Project
 	// OwnerHandle is the owner's handle, for a workshop shared with the
 	// reader ("shared by @handle").
-	OwnerHandle string        `json:"owner_handle,omitempty"`
-	Access      ProjectAccess `json:"access"`
+	OwnerHandle string `json:"owner_handle,omitempty"`
+	// TicketSource is the workshop's ticket source as anyone it is shared
+	// with may know it; absent when the integration is gone.
+	TicketSource *TicketSourceView `json:"ticket_source,omitempty"`
+	Access       ProjectAccess     `json:"access"`
+}
+
+// TicketSourceView is a ticket-source integration as a workshop's readers
+// see it — the owner's integration, of which they get no configuration
+// and no credential: its kind (internal: tickets are written here), its
+// name, and where a remote tracker's issues are browsed.
+type TicketSourceView struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	// Home is the tracker's http(s) address for an "open in" link; "" on
+	// the internal tracker or when its configuration names no one place.
+	Home string `json:"home,omitempty"`
 }
 
 // Member is one account a workshop is shared with, as its list shows it.

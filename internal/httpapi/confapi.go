@@ -353,9 +353,9 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := make([]ProjectView, 0, len(rows))
-	handles := map[string]string{}
+	seen := newProjectLookups()
 	for _, p := range rows {
-		pv, err := s.projectView(r.Context(), p, handles)
+		pv, err := s.projectView(r.Context(), p, seen)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
@@ -365,9 +365,9 @@ func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// projectView is a workshop as the caller sees it. handles caches owners'
-// handles across a list.
-func (s *Server) projectView(ctx context.Context, p confstore.Project, handles map[string]string) (ProjectView, error) {
+// projectView is a workshop as the caller sees it. seen caches owners'
+// handles and ticket sources across a list.
+func (s *Server) projectView(ctx context.Context, p confstore.Project, seen projectLookups) (ProjectView, error) {
 	pr, _ := auth.PrincipalFrom(ctx)
 	role, acts, err := s.Authz.Access(ctx, pr, p.ID)
 	if err != nil {
@@ -378,21 +378,24 @@ func (s *Server) projectView(ctx context.Context, p confstore.Project, handles m
 		out.Access.Actions = append(out.Access.Actions, string(a))
 	}
 	if p.UserID != pr.User.ID {
-		h, ok := handles[p.UserID]
+		h, ok := seen.handles[p.UserID]
 		if !ok {
 			if u, err := s.Auth.GetUser(ctx, p.UserID); err == nil {
 				h = u.Handle
 			}
-			handles[p.UserID] = h
+			seen.handles[p.UserID] = h
 		}
 		out.OwnerHandle = h
+	}
+	if out.TicketSource, err = s.ticketSourceView(ctx, p.TicketSourceID, seen); err != nil {
+		return ProjectView{}, err
 	}
 	return out, nil
 }
 
 // writeProject answers with a workshop as the caller sees it.
 func (s *Server) writeProject(w http.ResponseWriter, r *http.Request, status int, p confstore.Project) {
-	pv, err := s.projectView(r.Context(), p, map[string]string{})
+	pv, err := s.projectView(r.Context(), p, newProjectLookups())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return

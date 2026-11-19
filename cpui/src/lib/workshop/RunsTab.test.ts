@@ -3,9 +3,9 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
-import type { Run } from '$lib/domain';
+import type { Project, Run } from '$lib/domain';
 import { aRun, aViewerProject } from '$test/fixtures';
-import { anIntegration, aWorkshop, choose } from '$test/fixtures/app.svelte';
+import { aWorkshop, choose } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import RunsTab from './RunsTab.svelte';
 
@@ -18,10 +18,9 @@ vi.mock('$lib/api', () => ({
 	}
 }));
 
-const project = aWorkshop({ id: 'p1', ticketSourceId: 'src' });
-const internal = [anIntegration({ id: 'src', kind: 'internal', port: 'ticketsource' })];
-const setup = (runs: Run[] = [], integrations = internal) =>
-	render(WithHeader, { props: { page: RunsTab, props: { project, runs, integrations } } });
+const project = aWorkshop({ id: 'p1' });
+const setup = (runs: Run[] = [], p: Project = project) =>
+	render(WithHeader, { props: { page: RunsTab, props: { project: p, runs } } });
 const live = aRun({ id: '01LIVERUNABCD', title: 'Live one', branch: 'feat/live' });
 const done = aRun({ id: '01DONERUNWXYZ', title: 'Done one', state: 'completed' });
 const finishedTab = () => screen.getByRole('radio', { name: /Finished/ });
@@ -36,12 +35,7 @@ beforeEach(() => {
 
 describe('RunsTab', () => {
 	it('holds New run where the role may not start one (run:operate)', () => {
-		render(WithHeader, {
-			props: {
-				page: RunsTab,
-				props: { project: aViewerProject({ id: 'p1' }), runs: [], integrations: internal }
-			}
-		});
+		setup([], aViewerProject({ id: 'p1' }));
 		const btn = screen.getByRole('button', { name: /New run/ });
 		expect(btn).toBeDisabled();
 		expect(btn).toHaveAttribute('title', 'Your role in this workshop does not allow this');
@@ -109,7 +103,7 @@ describe('RunsTab', () => {
 	});
 
 	it('offers no New ticket on a remote source', () => {
-		setup([], [anIntegration({ id: 'src', kind: 'jira', port: 'ticketsource' })]);
+		setup([], aWorkshop({ id: 'p1', ticketSource: { kind: 'jira', name: 'Jira', home: '' } }));
 		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
 	});
 

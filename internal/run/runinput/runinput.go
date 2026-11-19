@@ -82,11 +82,12 @@ type Input struct {
 	// "" reuses the original run's source branch.
 	SourceBranch  string
 	AttachmentIDs []string
-	// Uploader is the account whose uploads this attempt's files are (the
-	// Ticket's AttachmentIDs, or AttachmentIDs on a rerun): the person who
-	// starts the run, who need not own its workshop. The claim binds only
-	// their unclaimed uploads, never the run owner's on their behalf.
-	Uploader string
+	// Starter is the account starting this attempt, who need not own its
+	// workshop: the files are their uploads (the Ticket's AttachmentIDs, or
+	// AttachmentIDs on a rerun) — the claim binds only their unclaimed
+	// uploads, never the run owner's on their behalf — and the Skillsets
+	// their own. "" (an automation) names the workshop's owner's skillsets.
+	Starter string
 	// Params override the project's parameter bindings for this attempt;
 	// By records who created the run on run_created ("" = a person,
 	// "automation" for an automation), and Automation which one (its id).
@@ -97,9 +98,10 @@ type Input struct {
 	// operates_on: merge_request: Repo is the checkout it belongs to ("" =
 	// the primary), IID its number.
 	MR *MR
-	// Skillsets are the skillsets to install into the workspace, each at a
-	// version (0 = latest). On a rerun, nil means the original run's,
-	// re-pinned to their latest; an empty non-nil list means none.
+	// Skillsets are the starter's skillsets to install into the workspace,
+	// each at a version (0 = latest). On a rerun, nil means the original
+	// run's: the starter's re-pinned to their latest, anyone else's at the
+	// version the original installed; an empty non-nil list means none.
 	Skillsets []skills.Ref
 }
 

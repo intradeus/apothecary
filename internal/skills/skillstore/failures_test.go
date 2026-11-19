@@ -449,6 +449,34 @@ func TestResolveSkillsets(t *testing.T) {
 	wantErr(t, "set read", err, errDB)
 }
 
+// A rerun's pins: the starter's move to their head, anyone else's stay
+// exactly as the original installed them.
+func TestRepinSkillsets(t *testing.T) {
+	ctx := context.Background()
+	s, db := newBroken(t)
+	mine, err := s.CreateSkillset(ctx, "u1", SkillsetInput{Name: "mine"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	theirs, err := s.CreateSkillset(ctx, "u2", SkillsetInput{Name: "theirs"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := []event.SkillsetPin{{ID: mine.ID, Name: "mine", Seq: 0, Hash: "stale"}, {ID: theirs.ID, Name: "theirs", Seq: 7, Hash: "h7"}}
+	pins, err := s.RepinSkillsets(ctx, "u1", old)
+	if err != nil || len(pins) != 2 || pins[0].Seq != 1 || pins[0].Hash == "stale" || pins[1] != old[1] {
+		t.Fatalf("pins = %+v, %v", pins, err)
+	}
+	_, err = s.RepinSkillsets(ctx, "u1", []event.SkillsetPin{{ID: "missing"}})
+	wantErr(t, "missing", err, confstore.ErrNotFound)
+	db.fail["GetVersion"] = true
+	_, err = s.RepinSkillsets(ctx, "u1", old[:1])
+	wantErr(t, "version read", err, errDB)
+	db.fail["GetSkillset"] = true
+	_, err = s.RepinSkillsets(ctx, "u1", old)
+	wantErr(t, "set read", err, errDB)
+}
+
 func TestSkillTrees(t *testing.T) {
 	ctx := context.Background()
 	s, db := newBroken(t)

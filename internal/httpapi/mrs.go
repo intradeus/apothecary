@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/ports/repoport"
 	"apothecary/internal/run"
 	"apothecary/internal/run/runinput"
@@ -51,7 +52,7 @@ type MRRunRequest struct {
 	Repo   string            `json:"repo,omitempty"`
 	Flow   string            `json:"flow,omitempty"`
 	Params map[string]string `json:"params,omitempty"`
-	// Skillsets to install into the workspace (seq 0 = latest).
+	// Skillsets are the caller's to install into the workspace (seq 0 = latest).
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
@@ -155,7 +156,7 @@ func (s *Server) startMRRun(w http.ResponseWriter, r *http.Request) {
 	// a double click, or another flow — is refused by the engine: 409
 	// naming the run.
 	runID, err := s.Runs.CreateRunWith(ctx, mergerequest.Work(mr), flowName, projectID,
-		runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets})
+		runinput.Input{Params: body.Params, MR: &runinput.MR{Repo: body.Repo, IID: iid}, Skillsets: body.Skillsets, Starter: auth.UserID(ctx)})
 	if err != nil {
 		runStartErr(w, err)
 		return

@@ -74,7 +74,7 @@ func TestGoalClaimsTheStartersUploads(t *testing.T) {
 	mine := uploadAs(t, att, "collab", "spec.md", "the spec")
 	owners := uploadAs(t, att, "", "owners.md", "the owner's")
 	runID, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "T", AttachmentIDs: []string{mine.ID, owners.ID}},
-		"loop", testProject, runinput.Input{Uploader: "collab"})
+		"loop", testProject, runinput.Input{Starter: "collab"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,16 +2,12 @@
      ?project= preselects the workshop; one on a remote tracker takes new
      issues there, so the page links to it instead of a form. -->
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api } from '$lib/api';
 	import { to } from '$lib/core/urls';
-	import { errorMessage } from '$lib/core/errors';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
-	import type { Integration } from '$lib/domain';
-	import { isInternal, sourceOf, trackerHome } from '$lib/tickets/tracker';
+	import { isInternal } from '$lib/tickets/tracker';
 	import TicketForm from '$lib/tickets/TicketForm.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -20,22 +16,9 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import { I } from '$lib/design/icons';
 
-	let integrations = $state<Integration[] | null>(null);
-	let loadErr = $state('');
-	async function loadIntegrations() {
-		loadErr = '';
-		try {
-			integrations = await api.integrations.list();
-		} catch (e) {
-			loadErr = errorMessage(e);
-		}
-	}
-	onMount(() => void loadIntegrations());
-
 	const asked = $derived(page.url.searchParams.get('project') ?? '');
 	const project = $derived(fleet.projectById.get(asked) ?? fleet.projects[0]);
-	const source = $derived(project ? sourceOf(project, integrations) : undefined);
-	const home = $derived(trackerHome(source));
+	const source = $derived(project?.ticketSource);
 	const options = $derived<SelectOption[]>(
 		fleet.projects.map((p) => ({ value: p.id, label: p.name }))
 	);
@@ -67,16 +50,13 @@
 </PageHeader>
 
 <div class="page glass">
-	{#if (fleet.updatedAt === null && fleet.error) || loadErr}
+	{#if fleet.updatedAt === null && fleet.error}
 		<ErrorCard
 			cause={t('page.newTicket.loadError')}
-			detail={loadErr || fleet.error}
-			onretry={() => {
-				void fleet.refresh();
-				void loadIntegrations();
-			}}
+			detail={fleet.error}
+			onretry={() => void fleet.refresh()}
 		/>
-	{:else if fleet.updatedAt === null || integrations === null}
+	{:else if fleet.updatedAt === null}
 		<Skeleton pane lines={8} />
 	{:else if !project}
 		<Callout hue="warning" glyph={I.warn}>
@@ -101,8 +81,8 @@
 		{:else}
 			<Callout hue="accent" glyph={I.info}>
 				{t('page.newTicket.remote', { name: source?.name ?? '' })}
-				{#if source && home}
-					<a href={home} target="_blank" rel="noreferrer"
+				{#if source?.home}
+					<a href={source.home} target="_blank" rel="noreferrer"
 						>{t('tickets.openIn', { name: source.name })} {I.external}</a
 					>
 				{/if}

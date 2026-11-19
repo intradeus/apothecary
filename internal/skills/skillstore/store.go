@@ -336,8 +336,9 @@ func (s *Store) bump(ctx context.Context, setID string) (Version, bool, error) {
 // --- the engine's side ------------------------------------------------------
 
 // ResolveSkillsets turns a run request's refs into pins: the skillset must
-// be the project owner's (anyone else's is "not found"), seq 0 means the
-// head, and the version must exist. Duplicates collapse to the first.
+// be userID's, the run's starter (anyone else's is "not found"), seq 0
+// means the head, and the version must exist. Duplicates collapse to the
+// first.
 func (s *Store) ResolveSkillsets(ctx context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error) {
 	var pins []event.SkillsetPin
 	seen := map[string]bool{}
@@ -367,6 +368,34 @@ func (s *Store) ResolveSkillsets(ctx context.Context, userID string, refs []skil
 		pins = append(pins, event.SkillsetPin{ID: set.ID, Name: set.Name, Seq: v.Seq, Hash: v.Hash})
 	}
 	return pins, nil
+}
+
+// RepinSkillsets carries a run's pins over to its rerun by userID: a set of
+// theirs moves to its head version, anyone else's stays at the version the
+// run installed — a rerun reaches no version of someone else's set the
+// original did not already hold. A set gone since is "not found", as it is
+// to ResolveSkillsets.
+func (s *Store) RepinSkillsets(ctx context.Context, userID string, pins []event.SkillsetPin) ([]event.SkillsetPin, error) {
+	out := make([]event.SkillsetPin, 0, len(pins))
+	for _, p := range pins {
+		set, err := s.db.GetSkillset(ctx, p.ID)
+		if errors.Is(err, confstore.ErrNotFound) {
+			return nil, fmt.Errorf("skillset %s: %w", p.ID, confstore.ErrNotFound)
+		}
+		if err != nil {
+			return nil, err
+		}
+		if set.UserID != userID {
+			out = append(out, p)
+			continue
+		}
+		v, err := s.db.GetVersion(ctx, set.ID, set.HeadSeq)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, event.SkillsetPin{ID: set.ID, Name: set.Name, Seq: v.Seq, Hash: v.Hash})
+	}
+	return out, nil
 }
 
 // SkillTrees assembles the trees a run installs from its pins: each member

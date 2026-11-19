@@ -1157,6 +1157,22 @@ describe('projects', () => {
 		).toBe('viewer');
 	});
 
+	it("reads the workshop's ticket source, its address absent on the internal tracker", () => {
+		expect(
+			map.toProject(
+				wire<Wire.ProjectView>({
+					ticket_source: { kind: 'jira', name: 'Jira', home: 'https://acme.atlassian.net' }
+				})
+			).ticketSource
+		).toEqual({ kind: 'jira', name: 'Jira', home: 'https://acme.atlassian.net' });
+		expect(
+			map.toProject(
+				wire<Wire.ProjectView>({ ticket_source: { kind: 'internal', name: 'Internal' } })
+			).ticketSource
+		).toEqual({ kind: 'internal', name: 'Internal', home: '' });
+		expect(map.toProject(wire<Wire.ProjectView>({})).ticketSource).toBeUndefined();
+	});
+
 	it.each<[string, string]>([
 		['maintainer', 'maintainer'],
 		['operator', 'operator'],

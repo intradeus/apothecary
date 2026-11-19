@@ -10,7 +10,7 @@ import { prefs } from '$lib/app/prefs.svelte';
 import { session } from '$lib/app/session.svelte';
 import type { Me } from '$lib/domain';
 import { aPing, aProject, aRun, aTicketRow } from '$test/fixtures';
-import { anIntegration, bindable } from '$test/fixtures/app.svelte';
+import { bindable } from '$test/fixtures/app.svelte';
 import { aHold, anOpenMr } from '$test/fixtures/run-components';
 import CommandPalette from './CommandPalette.svelte';
 
@@ -101,10 +101,7 @@ describe('CommandPalette, listing', () => {
 	});
 
 	it('offers New ticket only where the workshop’s source is the internal tracker', async () => {
-		fleet.projects = [aProject({ id: 'p1', ticketSourceId: 'src' })];
-		vi.mocked(api.integrations.list).mockResolvedValue([
-			anIntegration({ id: 'src', kind: 'internal', port: 'ticketsource' })
-		]);
+		fleet.projects = [aProject({ id: 'p1' })];
 		setup();
 		await userEvent.type(search(), 'new ticket');
 		await userEvent.keyboard('{Enter}');
@@ -112,17 +109,16 @@ describe('CommandPalette, listing', () => {
 	});
 
 	it('offers no New ticket on a remote source', async () => {
-		fleet.projects = [aProject({ id: 'p1', ticketSourceId: 'src' })];
-		vi.mocked(api.integrations.list).mockResolvedValue([
-			anIntegration({ id: 'src', kind: 'jira', port: 'ticketsource' })
-		]);
+		fleet.projects = [
+			aProject({ id: 'p1', ticketSource: { kind: 'jira', name: 'Jira', home: '' } })
+		];
 		setup();
 		await tick();
 		expect(labels().join('|')).not.toContain('New ticket');
 	});
 
-	it('survives the integrations failing to load', async () => {
-		vi.mocked(api.integrations.list).mockRejectedValue(new Error('down'));
+	it('offers no New ticket when the source is gone', async () => {
+		fleet.projects = [aProject({ id: 'p1', ticketSource: undefined })];
 		setup();
 		await tick();
 		expect(labels().join('|')).not.toContain('New ticket');

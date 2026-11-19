@@ -3051,6 +3051,8 @@ components:
           items:
             $ref: '#/components/schemas/ExtraRepo'
           type: array
+        ticket_source:
+          $ref: '#/components/schemas/TicketSourceView'
         ticket_source_id:
           type: string
         updated_at:
@@ -4744,6 +4746,18 @@ components:
         - kind
         - name
       type: object
+    TicketSourceView:
+      properties:
+        home:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+      required:
+        - kind
+        - name
+      type: object
     TicketStatusRequest:
       properties:
         status:
@@ -5351,7 +5365,7 @@ components:
 info:
   description: The engine's whole surface. The control-plane UI talks only to this API, and its client is generated from this document.
   title: Apothecary engine API
-  version: 1.2.0
+  version: 2.0.0
 openapi: 3.0.3
 paths:
   /api/actions:

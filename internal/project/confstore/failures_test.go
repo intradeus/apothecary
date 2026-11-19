@@ -326,6 +326,14 @@ func TestWrongKeyIsRefusedAndNamesTheRow(t *testing.T) {
 			t.Errorf("%s: the error carries the secret", name)
 		}
 	}
+	// What is shown of it beyond its owner needs no key at all.
+	shown, err := other.GetIntegrationSealed(ctx, in.ID)
+	if err != nil || shown.Kind != "gitlab" || shown.Name != "n" || shown.Secrets != nil {
+		t.Errorf("sealed = %+v, %v", shown, err)
+	}
+	if _, err := other.GetIntegrationSealed(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("sealed of nothing = %v", err)
+	}
 }
 
 func second[T any](_ T, err error) error { return err }

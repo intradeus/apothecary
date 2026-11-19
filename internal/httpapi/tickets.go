@@ -599,7 +599,7 @@ func (s *Server) startWorkshopTicketRun(w http.ResponseWriter, r *http.Request) 
 		in.SourceID, in.SourceKind, in.SourceKey, in.SourceURL = t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL
 	}
 	runID, err := s.Runs.CreateRunWith(ctx, in, body.Flow, ws.project.ID,
-		runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets, Uploader: auth.UserID(ctx)})
+		runinput.Input{Params: body.Params, MR: body.MR, Skillsets: body.Skillsets, Starter: auth.UserID(ctx)})
 	if err != nil {
 		runStartErr(w, err)
 		return

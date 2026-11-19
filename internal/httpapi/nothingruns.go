@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/flow"
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
@@ -38,7 +39,7 @@ type NothingRunRequest struct {
 	// own name: working on an existing branch is what OnBranch says.
 	NewBranch string            `json:"new_branch,omitempty"`
 	Params    map[string]string `json:"params,omitempty"`
-	// Skillsets to install into the workspace (seq 0 = latest).
+	// Skillsets are the caller's to install into the workspace (seq 0 = latest).
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
@@ -102,7 +103,7 @@ func (s *Server) startNothingRun(w http.ResponseWriter, r *http.Request) {
 		t.Branch = newBranch
 	}
 	runID, err := s.Runs.CreateRunWith(ctx, t, flowName, projectID,
-		runinput.Input{Params: body.Params, Skillsets: body.Skillsets})
+		runinput.Input{Params: body.Params, Skillsets: body.Skillsets, Starter: auth.UserID(ctx)})
 	if err != nil {
 		runStartErr(w, err)
 		return

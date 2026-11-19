@@ -1290,6 +1290,7 @@ export type {
 	TicketRequest,
 	TicketRow,
 	TicketSourceRef,
+	TicketSourceView,
 	TicketStatusRequest,
 	Token,
 	TokenCreated,

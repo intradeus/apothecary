@@ -16,9 +16,8 @@ import (
 )
 
 // fakeSkillLib is the engine's SkillStore for scenarios: sets by id with a
-// head version and member skill names, trees by skill name.
+// head version, member skill names and an owner, trees by skill name.
 type fakeSkillLib struct {
-	owner string
 	sets  map[string]*fakeSet
 	trees map[string]skills.Tree
 	fail  error
@@ -28,6 +27,7 @@ type fakeSet struct {
 	name   string
 	head   int
 	skills []string
+	owner  string // "" = the harness's workshop owner
 }
 
 func (f *fakeSkillLib) ResolveSkillsets(_ context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error) {
@@ -39,7 +39,7 @@ func (f *fakeSkillLib) ResolveSkillsets(_ context.Context, userID string, refs [
 		}
 		seen[r.ID] = true
 		set, ok := f.sets[r.ID]
-		if !ok || userID != f.owner {
+		if !ok || userID != set.owner {
 			return nil, fmt.Errorf("skillset %s: not found", r.ID)
 		}
 		seq := r.Seq
@@ -49,6 +49,22 @@ func (f *fakeSkillLib) ResolveSkillsets(_ context.Context, userID string, refs [
 		pins = append(pins, event.SkillsetPin{ID: r.ID, Name: set.name, Seq: seq, Hash: fmt.Sprintf("hash-%d", seq)})
 	}
 	return pins, nil
+}
+
+func (f *fakeSkillLib) RepinSkillsets(_ context.Context, userID string, pins []event.SkillsetPin) ([]event.SkillsetPin, error) {
+	out := make([]event.SkillsetPin, 0, len(pins))
+	for _, p := range pins {
+		set, ok := f.sets[p.ID]
+		switch {
+		case !ok:
+			return nil, fmt.Errorf("skillset %s: not found", p.ID)
+		case set.owner != userID:
+			out = append(out, p)
+		default:
+			out = append(out, event.SkillsetPin{ID: p.ID, Name: set.name, Seq: set.head, Hash: fmt.Sprintf("hash-%d", set.head)})
+		}
+	}
+	return out, nil
 }
 
 func (f *fakeSkillLib) SkillTrees(_ context.Context, pins []event.SkillsetPin) ([]skills.Tree, error) {
@@ -236,6 +252,65 @@ func TestRerunRepinsSkillsets(t *testing.T) {
 	h.e.Wait(none)
 	if v := h.view(t, none); len(v.Skillsets) != 0 {
 		t.Errorf("cleared rerun pins = %+v", v.Skillsets)
+	}
+}
+
+// On a shared workshop the skillsets are the starter's: a collaborator
+// names their own, never the owner's. A rerun re-pins only its starter's
+// sets to their latest; anyone else's install at the version the original
+// did, whoever reruns it.
+func TestSkillsetsAreTheStarters(t *testing.T) {
+	lib := newSkillLib()
+	lib.sets["collabs"] = &fakeSet{name: "Collab's", head: 1, skills: []string{"beta"}, owner: "collab"}
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Skills = lib }, mustFlow(t, loopFlowDoc))
+	ctx := context.Background()
+	start := func(in runinput.Input) string {
+		t.Helper()
+		id, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.e.Wait(id)
+		return id
+	}
+	rerun := func(id string, in runinput.Input) []event.SkillsetPin {
+		t.Helper()
+		again, err := h.e.Rerun(ctx, id, in)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.e.Wait(again)
+		return h.view(t, again).Skillsets
+	}
+	pinned := func(pins []event.SkillsetPin, id string, seq int) bool {
+		return len(pins) == 1 && pins[0].ID == id && pins[0].Seq == seq
+	}
+
+	if _, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "t"}, "loop", testProject,
+		runinput.Input{Starter: "collab", Skillsets: []skills.Ref{{ID: "set1"}}}); err == nil || !strings.Contains(err.Error(), "skillset set1") {
+		t.Errorf("a collaborator naming the owner's set: err = %v", err)
+	}
+	collabs := start(runinput.Input{Starter: "collab", Skillsets: []skills.Ref{{ID: "collabs"}}})
+	if pins := h.view(t, collabs).Skillsets; !pinned(pins, "collabs", 1) {
+		t.Errorf("collaborator's run pins = %+v, want their set at v1", pins)
+	}
+	owners := start(runinput.Input{Skillsets: []skills.Ref{{ID: "set1", Seq: 1}}})
+	lib.sets["set1"].head, lib.sets["collabs"].head = 3, 2
+
+	if pins := rerun(owners, runinput.Input{Starter: "collab"}); !pinned(pins, "set1", 1) {
+		t.Errorf("collaborator's rerun of the owner's run = %+v, want set1 still at v1", pins)
+	}
+	if _, err := h.e.Rerun(ctx, owners, runinput.Input{Starter: "collab", Skillsets: []skills.Ref{{ID: "set1"}}}); err == nil || !strings.Contains(err.Error(), "skillset set1") {
+		t.Errorf("a collaborator's rerun naming the owner's set: err = %v", err)
+	}
+	if pins := rerun(collabs, runinput.Input{Starter: "collab"}); !pinned(pins, "collabs", 2) {
+		t.Errorf("collaborator's rerun of their run = %+v, want their set at v2", pins)
+	}
+	if pins := rerun(collabs, runinput.Input{}); !pinned(pins, "collabs", 1) {
+		t.Errorf("owner's rerun of the collaborator's run = %+v, want their set still at v1", pins)
+	}
+	if pins := rerun(owners, runinput.Input{}); !pinned(pins, "set1", 3) {
+		t.Errorf("owner's rerun = %+v, want set1 at v3", pins)
 	}
 }
 

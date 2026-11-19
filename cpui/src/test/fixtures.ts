@@ -58,6 +58,7 @@ export const aProject = (over: Partial<Project> = {}): Project =>
 		commands: {},
 		defaultFlow: 'builder',
 		ticketSourceId: '01TESTSRC0000000000000ABCD',
+		ticketSource: { kind: 'internal', name: 'Internal', home: '' },
 		ownerId: 'u1',
 		access: { role: 'owner', actions: [...PROJECT_ACTIONS] },
 		createdAt: AT,
@@ -87,6 +88,24 @@ export const aViewerProject = (over: Partial<Project> = {}): Project =>
 		access: {
 			role: 'viewer',
 			actions: ['project:read', 'project:leave', 'run:read', 'ticket:read']
+		},
+		...over
+	});
+
+/** A workshop shared with the caller as an operator: it runs and writes
+ *  tickets, no shell, no settings. */
+export const anOperatorProject = (over: Partial<Project> = {}): Project =>
+	aViewerProject({
+		access: {
+			role: 'operator',
+			actions: [
+				'project:read',
+				'project:leave',
+				'run:read',
+				'run:operate',
+				'ticket:read',
+				'ticket:write'
+			]
 		},
 		...over
 	});

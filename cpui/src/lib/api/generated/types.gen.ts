@@ -1351,6 +1351,7 @@ export type ProjectView = {
 	repo?: RepoConfig;
 	repo_account_id?: string;
 	repos?: Array<ExtraRepo>;
+	ticket_source?: TicketSourceView;
 	ticket_source_id?: string;
 	updated_at?: string;
 	user_id?: string;
@@ -2064,6 +2065,12 @@ export type TicketRow = {
 
 export type TicketSourceRef = {
 	id: string;
+	kind: string;
+	name: string;
+};
+
+export type TicketSourceView = {
+	home?: string;
 	kind: string;
 	name: string;
 };

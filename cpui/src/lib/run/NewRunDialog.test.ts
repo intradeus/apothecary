@@ -161,9 +161,9 @@ describe('NewRunDialog', () => {
 		});
 
 		it('offers no New ticket on a remote source', async () => {
-			vi.mocked(api.integrations.list).mockResolvedValue([
-				anIntegration({ id: 'src', kind: 'jira', port: 'ticketsource' })
-			]);
+			fleet.projects = [
+				aProject({ id: 'p1', ticketSource: { kind: 'jira', name: 'Jira', home: '' } })
+			];
 			open();
 
 			expect(
@@ -172,8 +172,8 @@ describe('NewRunDialog', () => {
 			expect(screen.queryByRole('link', { name: /ticket/i })).not.toBeInTheDocument();
 		});
 
-		it('offers no New ticket when the integrations cannot be read', async () => {
-			vi.mocked(api.integrations.list).mockRejectedValue(new Error('down'));
+		it('offers no New ticket when the source is gone', async () => {
+			fleet.projects = [aProject({ id: 'p1', ticketSource: undefined })];
 			open();
 
 			await screen.findByText('A run works on a ticket, and there is none yet. Write one first.');

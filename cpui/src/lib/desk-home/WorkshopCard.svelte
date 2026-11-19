@@ -8,7 +8,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
 	import { fmtCost, fmtDuration } from '$lib/core/format';
-	import type { Integration, Project, Run } from '$lib/domain';
+	import type { Project, Run } from '$lib/domain';
 	import StageChip from '$lib/ui/StageChip.svelte';
 	import { ms, spring } from '$lib/ui/motion';
 	import RunRow from '$lib/run/RunRow.svelte';
@@ -22,7 +22,6 @@
 		finished = [],
 		liveTotal,
 		pings = 0,
-		integrations = null,
 		now
 	}: {
 		project: Project;
@@ -33,8 +32,6 @@
 		/** All live runs of the workshop, for the head summary. */
 		liveTotal: number;
 		pings?: number;
-		/** For where its next ticket is written; null while loading. */
-		integrations?: Integration[] | null;
 		now: number;
 	} = $props();
 
@@ -91,7 +88,7 @@
 	<footer class="pane-foot">
 		<a href={to.tickets({ project: project.id })}>{t('deskhome.card.tickets')}</a>
 		<span class="spacer"></span>
-		<NewTicketLink {project} {integrations} label={t('deskhome.card.newTicket')} cls="btn-sm" />
+		<NewTicketLink {project} label={t('deskhome.card.newTicket')} cls="btn-sm" />
 	</footer>
 </article>
 
