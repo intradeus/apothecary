@@ -14,6 +14,10 @@ import { bindable } from '$test/fixtures/app.svelte';
 import { aHold, anOpenMr } from '$test/fixtures/run-components';
 import CommandPalette from './CommandPalette.svelte';
 
+vi.mock(
+	'$lib/assistant/AssistantPanel.svelte',
+	() => import('$test/fixtures/AssistantPanelStub.svelte')
+);
 vi.mock('$lib/api', () => ({
 	api: {
 		projects: { tickets: vi.fn(), mergeRequests: vi.fn() },
@@ -323,6 +327,16 @@ describe('CommandPalette, doing things', () => {
 		expect(props.open).toBe(false);
 		expect(await screen.findByRole('dialog', { name: 'New run' })).toBeInTheDocument();
 		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('opens the assistant with no page, closing itself', async () => {
+		const { props } = setup();
+		await userEvent.type(search(), 'ask the');
+		expect(selected()).toHaveTextContent('Ask the assistant');
+		await userEvent.keyboard('{Enter}');
+		expect(props.open).toBe(false);
+		const panel = await screen.findByRole('region', { name: 'Assistant' });
+		expect(panel.dataset.kind).toBe('general');
 	});
 
 	it('jumps to a merge request of any workshop, reading them once a search is typed', async () => {

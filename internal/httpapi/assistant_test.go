@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"maps"
 	"net/http"
 	"slices"
 	"strings"
@@ -62,6 +64,8 @@ func (apiChecks) TicketTypes(context.Context, string, string) ([]string, error) 
 	return []string{"bug"}, nil
 }
 
+func (apiChecks) DashboardPanels(context.Context, string, json.RawMessage) error { return nil }
+
 func newAssistantEnv(t *testing.T) *env {
 	t.Helper()
 	x := newEnv(t, engine.Config{})
@@ -82,7 +86,7 @@ func TestAssistantSessionsArePersonal(t *testing.T) {
 
 	// No pods here: the status says so, and a question is refused.
 	st := decode[assistant.Status](t, x.expect(t, "me", nil, "GET", "/api/assistant", nil, 200))
-	if st.Enabled || st.Reason == "" || len(st.Pages) != 3 {
+	if st.Enabled || st.Reason == "" || len(st.Pages) != len(assistant.Kinds) {
 		t.Errorf("status = %+v", st)
 	}
 	x.expect(t, "a choice that is mine", nil, "PUT", "/api/assistant/choice", AssistantChoiceRequest{Integration: "int-1", Model: "acme/one"}, 200)
@@ -100,7 +104,7 @@ func TestAssistantSessionsArePersonal(t *testing.T) {
 	}
 	// Another's workshop is not there; a bad kind is refused.
 	x.expect(t, "another's workshop", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "flow", Workshop: "prj-bob", Subject: "x"}, 404)
-	x.expect(t, "a bad kind", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "dashboard", Workshop: testProject, Subject: "x"}, 400)
+	x.expect(t, "a bad kind", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "widget", Workshop: testProject, Subject: "x"}, 400)
 
 	id := view.Session.ID
 	x.expect(t, "messages", nil, "GET", "/api/assistant/sessions/"+id+"/messages", nil, 200)
@@ -270,11 +274,172 @@ func TestAssistantStream(t *testing.T) {
 
 func TestAssistantStatusCodes(t *testing.T) {
 	for err, want := range map[error]int{
-		assistant.ErrNotFound: 404, assistant.ErrInvalid: 400, assistant.ErrBusy: 409, assistant.ErrNoChoice: 409,
+		assistant.ErrNotFound: 404, assistant.ErrInvalid: 400, assistant.ErrBusy: 409, assistant.ErrStale: 409, assistant.ErrNoChoice: 409,
 		assistant.ErrNotYours: 403, assistant.ErrNotEnabled: 503, errors.New("x"): 500,
 	} {
 		if got := assistantStatus(err); got != want {
 			t.Errorf("%v = %d, want %d", err, got, want)
 		}
 	}
+}
+
+// A session's token lists request beside fill (none on the palette's page),
+// with its session bound; each act must be a write tool fitting its input.
+func TestAssistantRequestTool(t *testing.T) {
+	x := newAssistantEnv(t)
+	ctx := context.Background()
+	svc := x.srv.Assistant
+	open := func(kind, ws, subject string) assistant.Session {
+		return decode[AssistantSessionView](t, x.expect(t, "open", nil, "POST", "/api/assistant/sessions",
+			AssistantOpenRequest{Kind: kind, Workshop: ws, Subject: subject}, 200)).Session
+	}
+	tools := func(s assistant.Session) (map[string]string, map[string]string) {
+		secret, err := svc.Token(ctx, testUser, s.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		hdr := bearer(secret)
+		_, r := x.mcpCall(t, hdr, "tools/list", nil)
+		var list struct {
+			Tools []mcpToolDef `json:"tools"`
+		}
+		if json.Unmarshal(r.Result, &list) != nil {
+			t.Fatal("tools/list")
+		}
+		out := map[string]string{}
+		for _, tl := range list.Tools {
+			raw, _ := json.Marshal(tl.InputSchema)
+			out[tl.Name] = string(raw)
+		}
+		return out, hdr
+	}
+	ticket := open("ticket", testProject, "T-1")
+	got, hdr := tools(ticket)
+	if got["fill"] == "" || got["request"] == "" || strings.Contains(got["request"], `"id"`) {
+		t.Errorf("a ticket session's bound tools: fill %q, request %q", got["fill"], got["request"])
+	}
+	for name := range got {
+		if strings.HasPrefix(name, "create_") || strings.HasPrefix(name, "start_") || strings.HasPrefix(name, "update_") {
+			t.Errorf("the session's token lists a write: %s", name)
+		}
+	}
+	palette, _ := tools(open("general", "", "palette"))
+	if palette["fill"] != "" || palette["request"] == "" {
+		t.Errorf("the palette's bound tools: %v", slices.Sorted(maps.Keys(palette)))
+	}
+
+	call := func(acts []map[string]any) string {
+		res := x.mcpTool(t, hdr, "request", map[string]any{"why": "Start a run on it.", "acts": acts})
+		return res.Content[0].Text
+	}
+	for name, c := range map[string]struct {
+		acts []map[string]any
+		want string
+	}{
+		"a read":           {[]map[string]any{{"tool": "list_tickets", "arguments": map[string]any{"id": testProject}}}, "not a write tool"},
+		"an unknown tool":  {[]map[string]any{{"tool": "delete_everything"}}, "not a write tool"},
+		"its own":          {[]map[string]any{{"tool": "fill", "arguments": map[string]any{}}}, "not a write tool"},
+		"a missing arg":    {[]map[string]any{{"tool": "start_run", "arguments": map[string]any{"id": testProject}}}, "start_run's arguments"},
+		"a wrong arg":      {[]map[string]any{{"tool": "pause_run", "arguments": map[string]any{"id": testProject, "speed": 3}}}, "pause_run's arguments"},
+		"no question open": {[]map[string]any{{"tool": "start_run", "arguments": map[string]any{"id": testProject, "key": "T-1"}}}, "no question is being answered"},
+	} {
+		if out := call(c.acts); !strings.Contains(out, c.want) || !strings.Contains(out, `"ok":false`) {
+			t.Errorf("%s = %s", name, out)
+		}
+	}
+	// The agent never confirms its own request: its token cannot reach the
+	// person's decision.
+	m, err := svc.Store.AppendAssistantMessage(ctx, assistant.Message{SessionID: ticket.ID, Role: assistant.RoleAssistant,
+		Request: &assistant.Request{Why: "x", State: assistant.RequestPending, Acts: []assistant.Act{{Tool: "start_run", Arguments: json.RawMessage(`{}`)}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, verb := range []string{"confirm", "decline"} {
+		x.expect(t, "the session's own "+verb, hdr, "POST", fmt.Sprintf("/api/assistant/sessions/%s/messages/%d/%s", ticket.ID, m.Seq, verb), nil, 403)
+	}
+	// The route itself: only the session's own token.
+	x.expect(t, "my token", nil, "POST", "/api/assistant/sessions/"+ticket.ID+"/request",
+		AssistantActsRequest{Why: "x", Acts: []AssistantActIn{{Tool: "start_run", Arguments: map[string]any{"id": testProject, "key": "T-1"}}}}, 403)
+}
+
+// The person's click runs each act through its route as the person: here,
+// from a ticket's page, "start a run on this" starts it with one
+// confirmation. A token without the act's action gets the refusal as the
+// outcome; a declined request runs nothing.
+func TestAssistantRequestConfirmed(t *testing.T) {
+	x := newAssistantEnv(t)
+	ctx := context.Background()
+	svc := x.srv.Assistant
+	key := x.newTicket(t, "Add a health endpoint", "")
+	s := decode[AssistantSessionView](t, x.expect(t, "open", nil, "POST", "/api/assistant/sessions",
+		AssistantOpenRequest{Kind: "ticket", Workshop: testProject, Subject: key}, 200)).Session
+	ask := func(acts ...assistant.Act) assistant.Message {
+		m, err := svc.Store.AppendAssistantMessage(ctx, assistant.Message{SessionID: s.ID, Role: assistant.RoleAssistant, Text: "Shall I?",
+			Request: &assistant.Request{Why: "Start a run on it.", State: assistant.RequestPending, Acts: acts}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	start := assistant.Act{Tool: "start_run", Arguments: json.RawMessage(`{"id":"` + testProject + `","key":"` + key + `"}`)}
+	m := ask(start)
+	path := fmt.Sprintf("/api/assistant/sessions/%s/messages/%d", s.ID, m.Seq)
+	done := decode[assistant.Message](t, x.expect(t, "confirm", nil, "POST", path+"/confirm", nil, 200))
+	if r := done.Request; r.State != assistant.RequestDone || r.Acts[0].Status != http.StatusCreated || !strings.Contains(r.Acts[0].Result, "run_id") {
+		t.Fatalf("confirmed = %+v", r)
+	}
+	runs := decode[[]map[string]any](t, x.expect(t, "runs", nil, "GET", "/api/runs?project="+testProject, nil, 200))
+	if len(runs) != 1 {
+		t.Errorf("runs after the confirmation = %d", len(runs))
+	}
+	x.expect(t, "twice", nil, "POST", path+"/confirm", nil, 409)
+
+	// As a token that may talk to its assistant but not file tickets.
+	secret, _, err := x.srv.Auth.NewToken(ctx, testUser, "panel only", nil, auth.Grant{Actions: []string{"assistant:read", "assistant:write"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m = ask(assistant.Act{Tool: "create_ticket", Arguments: json.RawMessage(`{"id":"` + testProject + `","title":"T","goal":"G"}`)})
+	path = fmt.Sprintf("/api/assistant/sessions/%s/messages/%d", s.ID, m.Seq)
+	refused := decode[assistant.Message](t, x.expect(t, "confirm as a narrow token", bearer(secret), "POST", path+"/confirm", nil, 200))
+	if a := refused.Request.Acts[0]; a.Status != http.StatusForbidden || !strings.Contains(a.Result, "ticket:write") {
+		t.Errorf("an act beyond the caller = %+v", a)
+	}
+
+	m = ask(start)
+	path = fmt.Sprintf("/api/assistant/sessions/%s/messages/%d", s.ID, m.Seq)
+	declined := decode[assistant.Message](t, x.expect(t, "decline", nil, "POST", path+"/decline", nil, 200))
+	if declined.Request.State != assistant.RequestDeclined || declined.Request.Acts[0].Status != 0 {
+		t.Errorf("declined = %+v", declined.Request)
+	}
+	x.expect(t, "a bad seq", nil, "POST", "/api/assistant/sessions/"+s.ID+"/messages/x/confirm", nil, 400)
+	x.expect(t, "no request there", nil, "POST", "/api/assistant/sessions/"+s.ID+"/messages/999/confirm", nil, 404)
+}
+
+// The session's own routes answer for what they change, and refuse what
+// they cannot read.
+func TestAssistantSessionRoutes(t *testing.T) {
+	x := newAssistantEnv(t)
+	s := decode[AssistantSessionView](t, x.expect(t, "open", nil, "POST", "/api/assistant/sessions",
+		AssistantOpenRequest{Kind: "ticket", Workshop: testProject, Subject: "draft-1"}, 200)).Session
+	base := "/api/assistant/sessions/" + s.ID
+	x.expect(t, "cancel with nothing running", nil, "POST", base+"/cancel", nil, 204)
+	if got := decode[assistant.Session](t, x.expect(t, "model", nil, "PUT", base+"/model", AssistantModelRequest{Model: "acme/two"}, 200)); got.Model != "acme/two" {
+		t.Errorf("model = %+v", got)
+	}
+	if got := decode[assistant.Session](t, x.expect(t, "subject", nil, "PUT", base+"/subject", AssistantSubjectRequest{Subject: "T-9"}, 200)); got.Subject != "T-9" {
+		t.Errorf("subject = %+v", got)
+	}
+	x.expect(t, "no subject", nil, "PUT", base+"/subject", AssistantSubjectRequest{Subject: " "}, 400)
+	for _, c := range []struct{ method, path string }{
+		{"PUT", base + "/model"}, {"PUT", base + "/subject"}, {"POST", base + "/request"}, {"POST", "/api/assistant/repos/refresh"},
+	} {
+		res, _ := x.do(t, c.method, c.path, "not an object", nil)
+		if res.StatusCode != http.StatusBadRequest {
+			t.Errorf("%s %s with a bad body = %d", c.method, c.path, res.StatusCode)
+		}
+	}
+	// No pods on this server: a refresh says so.
+	x.expect(t, "refresh", nil, "POST", "/api/assistant/repos/refresh", AssistantRefreshRequest{Workshop: testProject}, 503)
+	x.expect(t, "refresh elsewhere", nil, "POST", "/api/assistant/repos/refresh", AssistantRefreshRequest{Workshop: "nope"}, 404)
 }

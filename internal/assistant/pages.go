@@ -35,14 +35,19 @@ type Checks interface {
 	// TicketTypes are the issue type ids of a workshop's ticket source, as
 	// person reaches it; empty when it has none.
 	TicketTypes(ctx context.Context, person, workshop string) ([]string, error)
+	// DashboardPanels checks a dashboard's panels as the analytics service
+	// would save them for person.
+	DashboardPanels(ctx context.Context, person string, panels json.RawMessage) error
 }
 
 // commonInstructions open every page's.
 const commonInstructions = `You are the Apothecary assistant, beside a page of the Apothecary web app. Apothecary runs AI agents on repositories: a workshop is a project (its repositories, flows, tickets and settings), a flow is a YAML document that says what a run does, a ticket is a piece of work a run starts on, a skill is instructions and files an agent is given.
 
-You can read, never change: the workshop's repositories in your working directory (your own read and search tools), their history (the git tool), and the platform (the apothecary tools: workshops, tickets, flows, skills, runs). Your one way to act is the fill tool: it puts what you propose into the person's page, for them to read, change and save. Nothing is saved until they save it; never say it is.
+You can read, never change: the workshop's repositories in your working directory (your own read and search tools), their history (the git tool), and the platform (the apothecary tools: workshops, tickets, flows, skills, runs, analytics). You act in two ways, both through the person:
+- fill puts what you propose into the person's page, for them to read, change and save. Nothing is saved until they save it; never say it is. Call fill with the whole of what the page should hold, not a difference. If fill answers with errors, correct them and call it again.
+- request asks the person to confirm acts on the platform: filing tickets, starting or steering runs, saving flows, skills or dashboards (each act one of the platform's write tools, with its arguments). They see each act and confirm or decline; you learn what came of them in their next message. Never say an act is done before you learn it was. Put every act the person asked for in one request.
 
-Call fill with the whole of what the page should hold, not a difference. If fill answers with errors, correct them and call it again. Then tell the person, briefly, what you filled and why. When the person asks a question that needs no change, answer it and do not call fill.`
+Then tell the person, briefly, what you filled or asked and why. When the person asks a question that needs no change, answer it and call neither.`
 
 var pages = map[Kind]Page{
 	KindFlow: {
@@ -111,6 +116,60 @@ This page is a skill's editor. A skill is a folder: SKILL.md, which opens with Y
 			"additionalProperties": false,
 		},
 		// An attached workshop's: a skill session reads none without one.
+		Repos: true,
+	},
+	KindRun: {
+		Kind: KindRun,
+		Instructions: commonInstructions + `
+
+This page is a run: get_run, wait_run and read_run_journal show its stages, attempts, verdicts, costs and failures; list_runs and the analytics tools show how its flow's other runs went. When the person wants the run's flow changed, call fill with the flow's name and its whole new YAML (get_flow gives it as it is now, which may be newer than the version this run started on): it opens in the flow editor, unsaved. Steering the run itself (retry, pause, abort) is a request.`,
+		Presets: []string{
+			"Why did this run fail?",
+			"Change the flow so this failure does not happen again.",
+			"Summarize what this run did, stage by stage.",
+		},
+		FillSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"flow": map[string]any{"type": "string", "description": "The flow's name in the run's workshop."},
+				"yaml": map[string]any{"type": "string", "description": "The whole flow document, as YAML."},
+			},
+			"required":             []string{"flow", "yaml"},
+			"additionalProperties": false,
+		},
+		Repos: true,
+	},
+	KindDashboard: {
+		Kind: KindDashboard,
+		Instructions: commonInstructions + `
+
+This page is a dashboard's editor. A dashboard is panels, each a query over the analytics catalog (get_analytics_catalog: its grains, dimensions and measures) with a visualization and a width on a 12-column grid; get_dashboard shows one, and query_analytics runs a panel's query so you can check it answers. A fill replaces the dashboard's panels, in order.`,
+		Presets: []string{
+			"Build me a dashboard of where this workshop's runs fail.",
+			"Add a panel with cost per run, by flow, over time.",
+			"Explain what each panel shows.",
+		},
+		FillSchema: map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"panels": map[string]any{"type": "array", "description": "Every panel of the dashboard, in order, as get_dashboard shows them.",
+					"items": map[string]any{"type": "object"}},
+			},
+			"required":             []string{"panels"},
+			"additionalProperties": false,
+		},
+	},
+	KindGeneral: {
+		Kind: KindGeneral,
+		Instructions: commonInstructions + `
+
+You were opened from the command palette, beside no page: there is no page to fill. Answer from what you read, and act through request.`,
+		Presets: []string{
+			"What needs my attention?",
+			"Which runs failed today, and why?",
+			"File a ticket from my notes.",
+		},
+		// A workshop the person names: its repositories.
 		Repos: true,
 	},
 }
@@ -213,8 +272,42 @@ func (p Page) Check(ctx context.Context, c Checks, person, workshop string, raw 
 		}
 		out, _ := json.Marshal(f)
 		return out, nil
+	case KindRun:
+		var f struct {
+			Flow string `json:"flow"`
+			YAML string `json:"yaml"`
+		}
+		if err := dec.Decode(&f); err != nil {
+			return nil, []string{"the fill is not {flow, yaml}: " + err.Error()}
+		}
+		if strings.TrimSpace(f.Flow) == "" || strings.TrimSpace(f.YAML) == "" {
+			return nil, []string{"flow and yaml are both needed"}
+		}
+		if _, err := flow.Parse(f.Flow, []byte(f.YAML)); err != nil {
+			return nil, []string{err.Error()}
+		}
+		if _, err := flow.ParseDoc(f.Flow, []byte(f.YAML)); err != nil {
+			return nil, []string{err.Error()}
+		}
+		out, _ := json.Marshal(f)
+		return out, nil
+	case KindDashboard:
+		var f struct {
+			Panels json.RawMessage `json:"panels"`
+		}
+		if err := dec.Decode(&f); err != nil {
+			return nil, []string{"the fill is not {panels}: " + err.Error()}
+		}
+		if len(f.Panels) == 0 || f.Panels[0] != '[' {
+			return nil, []string{"panels is a list"}
+		}
+		if err := c.DashboardPanels(ctx, person, f.Panels); err != nil {
+			return nil, []string{err.Error()}
+		}
+		out, _ := json.Marshal(f)
+		return out, nil
 	}
-	return nil, []string{"no page " + string(p.Kind)}
+	return nil, []string{"the " + string(p.Kind) + " page has nothing to fill: answer, or request"}
 }
 
 // maxContext bounds what the page's state adds to a prompt.
@@ -255,7 +348,7 @@ func (p Page) Context(raw json.RawMessage) string {
 		// The form as it stands, as the panel sent it.
 		var pretty bytes.Buffer
 		if json.Indent(&pretty, raw, "", "  ") == nil {
-			fmt.Fprintf(&b, "The %s's form now (unsaved edits included):\n```json\n%s\n```\n", p.Kind, pretty.String())
+			fmt.Fprintf(&b, "The %s page as the person sees it now (unsaved edits included):\n```json\n%s\n```\n", p.Kind, pretty.String())
 		}
 	}
 	out := b.String()

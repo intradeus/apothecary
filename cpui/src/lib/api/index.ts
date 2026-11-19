@@ -52,6 +52,7 @@ import type {
 	DrillRun,
 	Grain,
 	MeasureRef,
+	Panel,
 	Scorecard,
 	ScorecardDraft,
 	TimeRange
@@ -497,6 +498,32 @@ export const assistant = {
 			await unwrap(gen.sendAssistantMessage({ path: { id }, body: { text, context } }))
 		),
 	cancel: (id: string) => unwrapVoid(gen.cancelAssistantTurn({ path: { id } })),
+	/** Run the acts an answer asked for, as the caller, in order until one
+	 *  fails; answers the message with what came of each. */
+	confirm: async (id: string, seq: number): Promise<AssistantMessage> =>
+		map.toAssistantMessage(
+			await unwrap(gen.confirmAssistantRequest({ path: { id, seq: String(seq) } }))
+		),
+	/** A dashboard fill's panels (the engine's shape, as get_dashboard
+	 *  shows them) as the editor holds them, each with an id; null when the
+	 *  fill is not a list of panels. */
+	panelsOf: (fill: unknown): Panel[] | null => {
+		const list = (fill as { panels?: unknown } | null)?.panels;
+		if (!Array.isArray(list)) return null;
+		try {
+			return list.map((w, i) => {
+				const p = map.toPanel(w as Wire.Panel);
+				return { ...p, id: p.id || `filled-${Date.now().toString(36)}-${i}` };
+			});
+		} catch {
+			return null;
+		}
+	},
+	/** Decline the acts an answer asked for: none runs. */
+	decline: async (id: string, seq: number): Promise<AssistantMessage> =>
+		map.toAssistantMessage(
+			await unwrap(gen.declineAssistantRequest({ path: { id, seq: String(seq) } }))
+		),
 	setModel: async (id: string, model: string): Promise<AssistantSession> =>
 		map.toAssistantSession(await unwrap(gen.setAssistantModel({ path: { id }, body: { model } }))),
 	/** A draft's session follows what it was saved as. */
@@ -580,6 +607,15 @@ export const assistant = {
 			on('head', (w) => {
 				const head = typeof w.seq === 'number' ? w.seq : 0;
 				if (after < 0 || after > head) after = head;
+			});
+			on('request', (w, seq) => {
+				if (!w.message) return;
+				onFrame({
+					kind: 'request',
+					seq,
+					sessionId: str(w.session),
+					message: map.toAssistantMessage(w.message as Wire.AssistantMessage)
+				});
 			});
 			on('gap', () => onFrame({ kind: 'gap' }));
 			source.onerror = () => {

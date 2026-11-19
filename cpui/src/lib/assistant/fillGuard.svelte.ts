@@ -125,3 +125,60 @@ export class FillGuard<T> implements PageGuard {
 		this.asking = false;
 	}
 }
+
+/** A page with nothing to fill (the command palette's): every fill is
+ *  refused, so the panel only answers and requests. */
+export class NoFill implements PageGuard {
+	readonly changed: string[] = [];
+	readonly pending = null;
+	asking = $state(false);
+	ask() {
+		this.asking = true;
+	}
+	answered() {
+		this.asking = false;
+	}
+	offer(): boolean {
+		return false;
+	}
+	applyNow(): boolean {
+		return false;
+	}
+	applyPending() {}
+	discardPending() {}
+	revert() {}
+}
+
+/** A page whose fill belongs on another page (a run's change to its flow,
+ *  opened in the flow editor): the fill is held for the person to take
+ *  there, not applied here. */
+export class HandoffGuard<T> implements PageGuard {
+	readonly changed: string[] = [];
+	readonly pending = null;
+	asking = $state(false);
+	/** The fill to take to its page; null: none. */
+	handoff = $state<T | null>(null);
+
+	constructor(private read: (fill: unknown) => T | null) {}
+
+	ask() {
+		this.asking = true;
+	}
+	answered() {
+		this.asking = false;
+	}
+	offer(fill: unknown): boolean {
+		return this.applyNow(fill);
+	}
+	applyNow(fill: unknown): boolean {
+		const v = this.read(fill);
+		if (v === null) return false;
+		this.handoff = v;
+		return true;
+	}
+	applyPending() {}
+	discardPending() {}
+	revert() {
+		this.handoff = null;
+	}
+}

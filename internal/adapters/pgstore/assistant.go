@@ -2,7 +2,9 @@ package pgstore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -90,15 +92,22 @@ func (s *Store) AppendAssistantMessage(ctx context.Context, m assistant.Message)
 		m.At = time.Now()
 	}
 	m.At = m.At.Truncate(time.Microsecond).UTC()
-	var fill any
+	var fill, req any
 	if len(m.Fill) > 0 {
 		fill = string(m.Fill)
 	}
+	if m.Request != nil {
+		data, err := json.Marshal(m.Request)
+		if err != nil {
+			return assistant.Message{}, err
+		}
+		req = string(data)
+	}
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO assistant_messages (session_id, seq, role, text, fill, error, cost_usd, at)
-		SELECT $1, COALESCE((SELECT MAX(seq) FROM assistant_messages WHERE session_id = $1), 0) + 1, $2, $3, $4::jsonb, $5, $6, $7
+		INSERT INTO assistant_messages (session_id, seq, role, text, fill, request, error, cost_usd, at)
+		SELECT $1, COALESCE((SELECT MAX(seq) FROM assistant_messages WHERE session_id = $1), 0) + 1, $2, $3, $4::jsonb, $8::jsonb, $5, $6, $7
 		WHERE EXISTS (SELECT 1 FROM assistant_sessions WHERE id = $1)
-		RETURNING seq`, m.SessionID, m.Role, m.Text, fill, m.Error, m.CostUSD, m.At).Scan(&m.Seq)
+		RETURNING seq`, m.SessionID, m.Role, m.Text, fill, m.Error, m.CostUSD, m.At, req).Scan(&m.Seq)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return assistant.Message{}, errors.Join(assistant.ErrInvalid, errors.New("no session "+m.SessionID))
 	}
@@ -107,7 +116,7 @@ func (s *Store) AppendAssistantMessage(ctx context.Context, m assistant.Message)
 
 func (s *Store) AssistantMessages(ctx context.Context, sessionID string, afterSeq int64) ([]assistant.Message, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT seq, role, text, fill, error, cost_usd, at FROM assistant_messages
+		SELECT seq, role, text, fill, request, error, cost_usd, at FROM assistant_messages
 		WHERE session_id = $1 AND seq > $2 ORDER BY seq`, sessionID, afterSeq)
 	if err != nil {
 		return nil, err
@@ -116,17 +125,53 @@ func (s *Store) AssistantMessages(ctx context.Context, sessionID string, afterSe
 	var out []assistant.Message
 	for rows.Next() {
 		m := assistant.Message{SessionID: sessionID}
-		var fill []byte
-		if err := rows.Scan(&m.Seq, &m.Role, &m.Text, &fill, &m.Error, &m.CostUSD, &m.At); err != nil {
+		var fill, req []byte
+		if err := rows.Scan(&m.Seq, &m.Role, &m.Text, &fill, &req, &m.Error, &m.CostUSD, &m.At); err != nil {
 			return nil, err
 		}
 		if len(fill) > 0 {
 			m.Fill = fill
 		}
+		if len(req) > 0 {
+			var r assistant.Request
+			if err := json.Unmarshal(req, &r); err != nil {
+				return nil, err
+			}
+			m.Request = &r
+		}
 		m.At = m.At.UTC()
 		out = append(out, m)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) SetAssistantRequest(ctx context.Context, sessionID string, seq int64, from string, r assistant.Request) error {
+	if err := assistant.CheckRequest(r); err != nil {
+		return err
+	}
+	data, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE assistant_messages SET request = $3::jsonb
+		WHERE session_id = $1 AND seq = $2 AND request ->> 'state' = $4`, sessionID, seq, string(data), from)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+	// Why not: no such request, or it moved on.
+	var state *string
+	err = s.pool.QueryRow(ctx, `SELECT request ->> 'state' FROM assistant_messages WHERE session_id = $1 AND seq = $2`, sessionID, seq).Scan(&state)
+	if errors.Is(err, pgx.ErrNoRows) || (err == nil && state == nil) {
+		return errors.Join(assistant.ErrInvalid, fmt.Errorf("no message %d holding a request in session %s", seq, sessionID))
+	}
+	if err != nil {
+		return err
+	}
+	return errors.Join(assistant.ErrStale, fmt.Errorf("the request is %s, not %s", *state, from))
 }
 
 func (s *Store) AssistantChoice(ctx context.Context, userID string) (assistant.Choice, error) {

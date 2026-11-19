@@ -92,6 +92,19 @@ the UI or with the API directly:
 
 `TestMCPNeverATool` holds the list.
 
+## The assistant's own tools
+
+The in-app assistant reaches the same server with a token of its own,
+minted per answer and holding the read tools only. Two more tools are its
+alone, bound to its conversation, and no other token lists them:
+
+- `fill` puts a proposal in the page beside it (a flow's YAML, a ticket's
+  fields, a skill's files, a dashboard's panels), unsaved;
+- `request` asks you to confirm acts: each one of the write tools above,
+  with its arguments. The panel shows them; **Do it** runs them in order,
+  as you, through the same routes, until one fails, and the assistant
+  learns what came of them with your next message.
+
 ## What it is not
 
 - A browser session cannot use it: it takes a bearer token only, and a
@@ -124,7 +137,8 @@ changes something says so to the client (`readOnlyHint` false), and
 | `create_automation`, `update_automation` | writes a workshop's automations (with `run:operate` too) |
 | `list_skills`, `get_skill`, `list_skillsets`, `get_skillset` | reads your skill library |
 | `create_skill`, `update_skill`, `create_skillset`, `update_skillset` | writes it |
-| `list_runs`, `get_run`, `wait_run` | reads runs, and waits for one to change |
+| `list_runs`, `get_run`, `wait_run`, `read_run_journal` | reads runs and their journals (each stage's attempts, verdicts, decisions and notes), and waits for one to change |
 | `start_run`, `pause_run`, `resume_run`, `retry_run`, `abort_run` | starts a run on a ticket, and steers it |
 | `get_analytics_catalog`, `list_dashboards`, `get_dashboard`, `list_scorecards`, `get_scorecard` | reads the analytics catalog and your dashboards and scorecards |
+| `query_analytics`, `analytics_values`, `drill_analytics` | runs an analytics query over your runs, a dimension's values, and the runs behind a number |
 | `create_dashboard`, `update_dashboard`, `create_scorecard`, `update_scorecard` | writes them |

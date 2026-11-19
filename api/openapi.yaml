@@ -350,6 +350,46 @@ components:
         - messages
         - threads
       type: object
+    AssistantAct:
+      properties:
+        arguments: {}
+        result:
+          type: string
+        status:
+          type: integer
+        title:
+          type: string
+        tool:
+          type: string
+      required:
+        - arguments
+        - tool
+      type: object
+    AssistantActIn:
+      properties:
+        arguments:
+          additionalProperties: {}
+          nullable: true
+          type: object
+        tool:
+          type: string
+      required:
+        - arguments
+        - tool
+      type: object
+    AssistantActsRequest:
+      properties:
+        acts:
+          items:
+            $ref: '#/components/schemas/AssistantActIn'
+          nullable: true
+          type: array
+        why:
+          type: string
+      required:
+        - acts
+        - why
+      type: object
     AssistantChoice:
       properties:
         integration:
@@ -411,6 +451,8 @@ components:
         error:
           type: string
         fill: {}
+        request:
+          $ref: '#/components/schemas/AssistantRequest'
         role:
           type: string
         seq:
@@ -503,6 +545,24 @@ components:
         - name
         - ok
         - workshop
+      type: object
+    AssistantRequest:
+      properties:
+        acts:
+          items:
+            $ref: '#/components/schemas/AssistantAct'
+          nullable: true
+          type: array
+        reported:
+          type: boolean
+        state:
+          type: string
+        why:
+          type: string
+      required:
+        - acts
+        - state
+        - why
       type: object
     AssistantSession:
       properties:
@@ -6663,6 +6723,111 @@ paths:
       tags:
         - assistant
       x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/messages/{seq}/confirm:
+    post:
+      description: 'Each act goes through its route as if the caller called it: their actions decide. Answers the message with each act''s status and result; 409 for a request decided already or being decided.'
+      operationId: confirmAssistantRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantMessage'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Run the acts an answer asked for, in order, as the caller, until one fails
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/messages/{seq}/decline:
+    post:
+      operationId: declineAssistantRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantMessage'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Decline the acts an answer asked for: none runs'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
   /api/assistant/sessions/{id}/model:
     put:
       operationId: setAssistantModel
@@ -6716,6 +6881,60 @@ paths:
       tags:
         - assistant
       x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/request:
+    post:
+      description: Only the session's own token, while its question is answered. Each act's tool must be a write tool and its arguments must fit its input; ok false with the errors otherwise. The person confirms or declines in the panel; the session's next prompt says what came of it.
+      operationId: requestAssistantActs
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantActsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantFillResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Ask the person to confirm acts: each a write tool of the MCP face, with its arguments; nothing runs until they do'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:fill
   /api/assistant/sessions/{id}/subject:
     put:
       operationId: setAssistantSubject
@@ -13584,6 +13803,55 @@ paths:
       summary: Everything on a run's Record, in one zip
       tags:
         - files
+      x-apothecary-action: run:read
+  /api/runs/{id}/history:
+    get:
+      description: 'What journal_read gives the run''s own agents, for whoever may read the run: with no ref every decision, note and attempt''s record with its verdict; with ref (<stage>#<n> (review#5), <stage>#<n>/decision#<k>, <stage>#<n>/note#<k>, run, or run/decision#<k>) one entry whole, an attempt with its outputs and its log.'
+      operationId: readRunHistory
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 'an entry''s reference; none: the whole journal'
+          in: query
+          name: ref
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntry'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'The run''s journal as a person reads it: every record, or one entry by its reference'
+      tags:
+        - runs
       x-apothecary-action: run:read
   /api/runs/{id}/hold:
     delete:

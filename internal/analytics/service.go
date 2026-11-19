@@ -280,6 +280,13 @@ func (s *Service) DeleteDashboard(ctx context.Context, id string) error {
 // at most 30 panels each of which compiles (with its scorecard's measures),
 // a known viz and width; panel ids filled in; no saved time range (the
 // dashboard supplies one when viewed).
+// CheckPanels checks a dashboard's panels as saving them for userID would:
+// what an assistant's fill of a dashboard goes through.
+func (s *Service) CheckPanels(ctx context.Context, userID string, panels []Panel) error {
+	in := DashboardInput{Name: "check", Panels: panels}
+	return s.checkDashboard(ctx, userID, &in)
+}
+
 func (s *Service) checkDashboard(ctx context.Context, userID string, in *DashboardInput) error {
 	name, err := checkName(in.Name)
 	if err != nil {

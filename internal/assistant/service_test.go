@@ -270,6 +270,13 @@ func (fakeChecks) TicketTypes(context.Context, string, string) ([]string, error)
 	return []string{"bug", "feature"}, nil
 }
 
+func (fakeChecks) DashboardPanels(_ context.Context, _ string, panels json.RawMessage) error {
+	if strings.Contains(string(panels), "nope") {
+		return errors.New("measure nope is not in the catalog")
+	}
+	return nil
+}
+
 type world struct {
 	svc    *Service
 	store  *MemStore
@@ -506,7 +513,7 @@ func TestOpenAndOwnership(t *testing.T) {
 		t.Error("the same subject opened two sessions")
 	}
 	for name, args := range map[string][3]string{
-		"a bad kind":              {"dashboard", "w1", "x"},
+		"a bad kind":              {"widget", "w1", "x"},
 		"no subject":              {"flow", "w1", " "},
 		"a flow with no workshop": {"flow", "", "x"},
 		"a workshop out of reach": {"ticket", "w-denied", "x"},
@@ -746,5 +753,246 @@ func TestASkillReadsAnAttachedWorkshop(t *testing.T) {
 			(tc.read != "" && !strings.Contains(start, tc.read)) {
 			t.Errorf("workshop %q: fetches %d, start %s", tc.workshop, fetches, start)
 		}
+	}
+}
+
+// A request (phase 5): proposed in a turn by the session's own token,
+// kept with the answer, confirmed (its acts run in order until one fails)
+// or declined, and what came of it is in the next prompt, once.
+func TestARequestIsConfirmedAndReported(t *testing.T) {
+	w := newWorld(t, "claude-code")
+	ctx := context.Background()
+	s, _, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "T-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	acts := []Act{
+		{Tool: "start_run", Title: "Start one attempt", Arguments: json.RawMessage(`{"id":"w1","key":"T-1"}`)},
+		{Tool: "pause_run", Arguments: json.RawMessage(`{"id":"r1"}`)},
+		{Tool: "abort_run", Arguments: json.RawMessage(`{"id":"r1"}`)},
+	}
+	// Outside a turn, and with another token: nothing.
+	if errs, err := w.svc.Propose(ctx, "tok-1", "u1", s.ID, Request{Why: "x", Acts: acts}); err == nil && len(errs) == 0 {
+		t.Error("a request outside a turn was taken")
+	}
+	w.host.onPrompt = func(string) {
+		live, _, _ := w.svc.Store.AssistantSession(ctx, s.ID)
+		if _, err := w.svc.Propose(ctx, "tok-other", "u1", s.ID, Request{Why: "x", Acts: acts}); !errors.Is(err, ErrNotYours) {
+			t.Errorf("another token's request = %v", err)
+		}
+		for name, r := range map[string]Request{
+			"no why":    {Acts: acts},
+			"no acts":   {Why: "x"},
+			"a secret":  {Why: "x", Acts: []Act{{Tool: "create_ticket", Arguments: json.RawMessage(`{"goal":"sk-secret-key"}`)}}},
+			"too many":  {Why: "x", Acts: slices.Repeat(acts[:1], maxActs+1)},
+			"a bad act": {Why: "x", Acts: []Act{{Tool: "", Arguments: json.RawMessage(`{}`)}}},
+		} {
+			if errs, err := w.svc.Propose(ctx, live.TokenID, "u1", s.ID, r); err != nil || len(errs) == 0 {
+				t.Errorf("%s = %v, %v", name, errs, err)
+			}
+		}
+		// A first request, then one that replaces it.
+		if errs, err := w.svc.Propose(ctx, live.TokenID, "u1", s.ID, Request{Why: "first", Acts: acts[:1]}); err != nil || len(errs) > 0 {
+			t.Errorf("a good request = %v, %v", errs, err)
+		}
+		if errs, err := w.svc.Propose(ctx, live.TokenID, "u1", s.ID, Request{Why: "Start it, then hold it.", Acts: acts,
+			State: RequestDone}); err != nil || len(errs) > 0 {
+			t.Errorf("the second request = %v, %v", errs, err)
+		}
+	}
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "start a run on this", nil); err != nil {
+		t.Fatal(err)
+	}
+	got := frames(t, w.svc, "u1", idle)
+	var requests int
+	for _, f := range got {
+		if f.Kind == "request" {
+			requests++
+		}
+	}
+	if requests != 2 {
+		t.Errorf("request frames = %d, want 2", requests)
+	}
+	answered(t, w.svc, s.ID, 2)
+	msgs, _ := w.svc.Store.AssistantMessages(ctx, s.ID, 0)
+	r := msgs[1].Request
+	if r == nil || r.Why != "Start it, then hold it." || r.State != RequestPending || len(r.Acts) != 3 {
+		t.Fatalf("the answer's request = %+v", r)
+	}
+
+	// Confirmed: run in order; the second fails, the third is not run.
+	var ran []string
+	run := func(_ context.Context, a Act) (int, string) {
+		ran = append(ran, a.Tool)
+		if a.Tool == "pause_run" {
+			return 409, strings.Repeat("x", maxResult+10)
+		}
+		return 201, `{"run_id":"r1"}`
+	}
+	if _, err := w.svc.Decide(ctx, "stranger", s.ID, msgs[1].Seq, true, run); !errors.Is(err, ErrNotFound) {
+		t.Errorf("another person's decision = %v", err)
+	}
+	m, err := w.svc.Decide(ctx, "u1", s.ID, msgs[1].Seq, true, run)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(ran, []string{"start_run", "pause_run"}) || m.Request.State != RequestDone ||
+		m.Request.Acts[0].Status != 201 || m.Request.Acts[1].Status != 409 || len(m.Request.Acts[1].Result) > maxResult+10 ||
+		m.Request.Acts[2].Status != 0 {
+		t.Errorf("confirmed = %v %+v", ran, m.Request)
+	}
+	if _, err := w.svc.Decide(ctx, "u1", s.ID, msgs[1].Seq, false, run); !errors.Is(err, ErrStale) {
+		t.Errorf("deciding twice = %v", err)
+	}
+	if _, err := w.svc.Decide(ctx, "u1", s.ID, msgs[0].Seq, true, run); !errors.Is(err, ErrNotFound) {
+		t.Errorf("a message with no request = %v", err)
+	}
+
+	// The next prompt says what came of it, and the one after does not.
+	w.host.onPrompt = nil
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "and now?", nil); err != nil {
+		t.Fatal(err)
+	}
+	answered(t, w.svc, s.ID, 4)
+	w.host.mu.Lock()
+	p := w.host.prompts[1]
+	w.host.mu.Unlock()
+	if !strings.Contains(p, `"Start it, then hold it.": confirmed.`) || !strings.Contains(p, "start_run: done, 201") ||
+		!strings.Contains(p, "pause_run: failed, 409") || !strings.Contains(p, "abort_run: not run") {
+		t.Errorf("the next prompt = %q", p)
+	}
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "again", nil); err != nil {
+		t.Fatal(err)
+	}
+	answered(t, w.svc, s.ID, 6)
+	w.host.mu.Lock()
+	p = w.host.prompts[2]
+	w.host.mu.Unlock()
+	if strings.Contains(p, "What came of your requests") {
+		t.Errorf("an outcome told twice: %q", p)
+	}
+}
+
+// A declined request runs nothing; a pending one is said to be waiting.
+func TestARequestDeclinedOrWaiting(t *testing.T) {
+	w := newWorld(t, "claude-code")
+	ctx := context.Background()
+	s, _, _ := w.svc.Open(ctx, "u1", KindGeneral, "", "palette")
+	add := func(why string) Message {
+		m, err := w.store.AppendAssistantMessage(ctx, Message{SessionID: s.ID, Role: RoleAssistant, Text: "?",
+			Request: &Request{Why: why, State: RequestPending, Acts: []Act{{Tool: "create_ticket", Arguments: json.RawMessage(`{}`)}}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	declined, waiting := add("File it."), add("Run it.")
+	m, err := w.svc.Decide(ctx, "u1", s.ID, declined.Seq, false, func(context.Context, Act) (int, string) {
+		t.Error("a declined act ran")
+		return 0, ""
+	})
+	if err != nil || m.Request.State != RequestDeclined {
+		t.Fatalf("declined = %+v, %v", m.Request, err)
+	}
+	text, told := w.svc.outcomes(ctx, s.ID)
+	if !strings.Contains(text, `"File it.": declined`) || !strings.Contains(text, `"Run it.": not decided yet`) || len(told) != 1 || told[0].Seq != declined.Seq {
+		t.Errorf("outcomes = %q, told %d", text, len(told))
+	}
+	w.svc.reported(ctx, s.ID, told)
+	text, told = w.svc.outcomes(ctx, s.ID)
+	if strings.Contains(text, "File it.") || !strings.Contains(text, "Run it.") || len(told) != 0 {
+		t.Errorf("after reporting = %q", text)
+	}
+	_ = waiting
+	// A request left running (the engine stopped mid-way) is never run
+	// again, and the assistant is told its outcome is unknown.
+	stuck := add("Ship it.")
+	r := *stuck.Request
+	r.State = RequestRunning
+	if err := w.store.SetAssistantRequest(ctx, s.ID, stuck.Seq, RequestPending, r); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Decide(ctx, "u1", s.ID, stuck.Seq, true, func(context.Context, Act) (int, string) {
+		t.Error("an interrupted request ran again")
+		return 0, ""
+	}); !errors.Is(err, ErrStale) {
+		t.Errorf("confirming an interrupted request = %v", err)
+	}
+	if text, _ := w.svc.outcomes(ctx, s.ID); !strings.Contains(text, `"Ship it.": confirmed, but its acts were interrupted`) {
+		t.Errorf("outcomes = %q", text)
+	}
+	// Two clicks at once: the second waits its turn, then finds it decided.
+	block := make(chan struct{})
+	go func() {
+		_, _ = w.svc.Decide(ctx, "u1", s.ID, waiting.Seq, true, func(context.Context, Act) (int, string) {
+			<-block
+			return 201, "ok"
+		})
+	}()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		w.svc.mu.Lock()
+		busy := len(w.svc.deciding) > 0
+		w.svc.mu.Unlock()
+		if busy || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := w.svc.Decide(ctx, "u1", s.ID, waiting.Seq, true, nil); !errors.Is(err, ErrStale) {
+		t.Errorf("a second click = %v", err)
+	}
+	close(block)
+}
+
+// The run and dashboard pages' fills, and the general page's none.
+func TestNewPagesFill(t *testing.T) {
+	ctx := context.Background()
+	flowDoc := "name: ship\nversion: 5\nparameters: { harness: fake, model: fake/model }\nagents:\n  - name: b\n    prompt: build\nmain:\n  - { id: build, type: agent, harness: $harness, model: $model, agent: b }\n"
+	fill, _ := json.Marshal(map[string]string{"flow": "ship", "yaml": flowDoc})
+	if out, errs := pages[KindRun].Check(ctx, fakeChecks{}, "u1", "w1", fill); len(errs) > 0 || !strings.Contains(string(out), `"flow":"ship"`) {
+		t.Errorf("a run's flow fill = %s %v", out, errs)
+	}
+	for name, raw := range map[string]string{
+		"no flow":  `{"yaml":"x"}`,
+		"bad yaml": `{"flow":"ship","yaml":"stages: ["}`,
+		"extra":    `{"flow":"ship","yaml":"x","more":1}`,
+	} {
+		if _, errs := pages[KindRun].Check(ctx, fakeChecks{}, "u1", "w1", json.RawMessage(raw)); len(errs) == 0 {
+			t.Errorf("run %s: accepted", name)
+		}
+	}
+	if _, errs := pages[KindDashboard].Check(ctx, fakeChecks{}, "u1", "", json.RawMessage(`{"panels":[{"title":"a"}]}`)); len(errs) > 0 {
+		t.Errorf("a dashboard fill = %v", errs)
+	}
+	for name, raw := range map[string]string{
+		"not a list":    `{"panels":{}}`,
+		"the catalog's": `{"panels":[{"measure":"nope"}]}`,
+		"nothing":       `{}`,
+	} {
+		if _, errs := pages[KindDashboard].Check(ctx, fakeChecks{}, "u1", "", json.RawMessage(raw)); len(errs) == 0 {
+			t.Errorf("dashboard %s: accepted", name)
+		}
+	}
+	if _, errs := pages[KindGeneral].Check(ctx, fakeChecks{}, "u1", "", json.RawMessage(`{}`)); len(errs) == 0 || !strings.Contains(errs[0], "nothing to fill") {
+		t.Errorf("the general page's fill = %v", errs)
+	}
+	// A run's session names its workshop; a palette's needs none, and has no
+	// fill tool.
+	w := newWorld(t, "claude-code")
+	if _, _, err := w.svc.Open(ctx, "u1", KindRun, "", "r1"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("a run with no workshop = %v", err)
+	}
+	s, _, err := w.svc.Open(ctx, "u1", KindGeneral, "", "palette")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok, err := w.svc.Token(ctx, "u1", s.ID)
+	if err != nil || tok == "" {
+		t.Fatal(err)
+	}
+	live, _, _ := w.store.AssistantSession(ctx, s.ID)
+	if sid, schema, ok := w.svc.FillTool(ctx, live.TokenID); !ok || sid != s.ID || schema != nil {
+		t.Errorf("the palette's bound tools = %s %v %v", sid, schema, ok)
 	}
 }

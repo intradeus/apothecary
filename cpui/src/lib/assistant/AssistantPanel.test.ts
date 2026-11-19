@@ -2,6 +2,8 @@ import { render, screen, waitFor } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aProject, aRun } from '$test/fixtures';
 import {
 	ticketFill,
 	type AssistantFrame,
@@ -24,7 +26,9 @@ vi.mock('$lib/api', () => ({
 			setChoice: vi.fn(),
 			refresh: vi.fn(),
 			messages: vi.fn(),
-			stream: vi.fn()
+			stream: vi.fn(),
+			confirm: vi.fn(),
+			decline: vi.fn()
 		}
 	}
 }));
@@ -336,5 +340,138 @@ describe('AssistantPanel', () => {
 		vi.mocked(api.assistant.status).mockRejectedValueOnce(new Error('engine down'));
 		setup();
 		expect(await screen.findByText('engine down')).toBeInTheDocument();
+	});
+
+	it('shows a request as it is proposed, then asks to confirm it, and shows what came of it', async () => {
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'start a run on this'));
+		const request = {
+			why: 'Start a run on T-1.',
+			state: 'pending' as const,
+			acts: [{ tool: 'start_run', title: 'Start one attempt', arguments: { id: 'w1', key: 'T-1' } }]
+		};
+		setup();
+		await screen.findByText('Turn my notes into a ticket.');
+		await userEvent.type(textbox(), 'start a run on this{Enter}');
+		push({ kind: 'state', seq: 1, sessionId: 's1', busy: true });
+		push({
+			kind: 'request',
+			seq: 2,
+			sessionId: 's1',
+			message: msg(0, 'assistant', '', { request })
+		});
+		expect(await screen.findByText('Start a run on T-1.')).toBeInTheDocument();
+		expect(screen.getByText('Confirm once the answer is in.')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
+		push({
+			kind: 'message',
+			seq: 3,
+			sessionId: 's1',
+			message: msg(2, 'assistant', 'Shall I?', { request })
+		});
+		push({ kind: 'state', seq: 4, sessionId: 's1', busy: false });
+		expect(await screen.findByText('Shall I?')).toBeInTheDocument();
+		expect(screen.getAllByText('Start a run on T-1.')).toHaveLength(1);
+		expect(screen.getByText('start_run')).toBeInTheDocument();
+		expect(screen.getByText(/"key": "T-1"/)).toBeInTheDocument();
+
+		vi.mocked(api.assistant.confirm).mockResolvedValue(
+			msg(2, 'assistant', 'Shall I?', {
+				request: {
+					...request,
+					state: 'done',
+					acts: [{ ...request.acts[0], status: 201, result: '{"run_id":"r1"}' }]
+				}
+			})
+		);
+		await userEvent.click(screen.getByRole('button', { name: 'Do it' }));
+		expect(api.assistant.confirm).toHaveBeenCalledWith('s1', 2);
+		expect(await screen.findByText('201')).toBeInTheDocument();
+		expect(screen.getByText('Done')).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
+	});
+
+	it('declines a request, shows one decided elsewhere, and a refused decision', async () => {
+		const request = {
+			why: 'File it.',
+			state: 'pending' as const,
+			acts: [
+				{ tool: 'create_ticket', arguments: {} },
+				{ tool: 'start_run', arguments: {} }
+			]
+		};
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session,
+			messages: [msg(2, 'assistant', 'Shall I?', { request })],
+			busy: false
+		});
+		vi.mocked(api.assistant.decline).mockRejectedValueOnce(new Error('decided already'));
+		setup();
+		await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+		expect(await screen.findByText('decided already')).toBeInTheDocument();
+		// Decided in another tab: the stream replaces it.
+		push({
+			kind: 'request',
+			seq: 5,
+			sessionId: 's1',
+			message: msg(2, 'assistant', 'Shall I?', {
+				request: {
+					...request,
+					state: 'done',
+					acts: [
+						{ ...request.acts[0], status: 403, result: 'this needs ticket:write' },
+						request.acts[1]
+					]
+				}
+			})
+		});
+		expect(await screen.findByText('403')).toHaveClass('tint-danger');
+		expect(screen.getByText('not run')).toBeInTheDocument();
+		expect(screen.getByText('this needs ticket:write')).toBeInTheDocument();
+	});
+
+	it('names what an act’s ids are, and shows a request running or interrupted', async () => {
+		fleet.projects = [aProject({ id: 'p1', name: 'billing' })];
+		fleet.runs = [aRun({ id: 'r1', title: 'Add caching' })];
+		const request = {
+			why: 'Stop it.',
+			state: 'running' as const,
+			acts: [{ tool: 'abort_run', arguments: { id: 'r1', workshop: 'p1', other: 'x' } }]
+		};
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session,
+			messages: [msg(2, 'assistant', 'Stopping.', { request })],
+			busy: false
+		});
+		setup();
+		expect(await screen.findByText('id: the run “Add caching”')).toBeInTheDocument();
+		expect(screen.getByText('workshop: the workshop billing')).toBeInTheDocument();
+		expect(screen.getByText(/Interrupted: check what it did/)).toBeInTheDocument();
+		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
+		fleet.projects = [];
+		fleet.runs = [];
+	});
+
+	it('drops a proposed request when the record is read again', async () => {
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'go'));
+		setup();
+		await screen.findByText('Turn my notes into a ticket.');
+		await userEvent.type(textbox(), 'go{Enter}');
+		push({ kind: 'state', seq: 1, sessionId: 's1', busy: true });
+		push({
+			kind: 'request',
+			seq: 2,
+			sessionId: 's1',
+			message: msg(0, 'assistant', '', {
+				request: {
+					why: 'Proposed.',
+					state: 'pending',
+					acts: [{ tool: 'start_run', arguments: {} }]
+				}
+			})
+		});
+		expect(await screen.findByText('Proposed.')).toBeInTheDocument();
+		vi.mocked(api.assistant.open).mockResolvedValue({ session, messages: [], busy: false });
+		push({ kind: 'gap' });
+		await waitFor(() => expect(screen.queryByText('Proposed.')).not.toBeInTheDocument());
 	});
 });

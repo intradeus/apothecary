@@ -69,6 +69,9 @@ export class FlowEditor {
 	/** Bumped each time the flow is loaded, saved or replaced by a version:
 	 *  what an assistant's fill could undo is gone. */
 	replaced = $state(0);
+	/** Bumped when a load has finished: the flow, its document and its
+	 *  check all in. */
+	loaded = $state(0);
 	cloning = $state(false);
 
 	/** What is selected, and the sequence open beside the flow. */
@@ -146,6 +149,7 @@ export class FlowEditor {
 				this.validation = { ok: false, title: t('page.flow.noParse'), errors: r.errors ?? [] };
 				this.validateOpen = true;
 			}
+			this.loaded++;
 		} catch (e) {
 			this.error = errorMessage(e);
 		}

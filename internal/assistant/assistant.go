@@ -15,6 +15,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -25,13 +26,17 @@ import (
 type Kind string
 
 const (
-	KindFlow   Kind = "flow"
-	KindTicket Kind = "ticket"
-	KindSkill  Kind = "skill"
+	KindFlow      Kind = "flow"
+	KindTicket    Kind = "ticket"
+	KindSkill     Kind = "skill"
+	KindRun       Kind = "run"
+	KindDashboard Kind = "dashboard"
+	// KindGeneral is no page: the command palette's, which fills nothing.
+	KindGeneral Kind = "general"
 )
 
 // Kinds are the pages the assistant serves.
-var Kinds = []Kind{KindFlow, KindTicket, KindSkill}
+var Kinds = []Kind{KindFlow, KindTicket, KindSkill, KindRun, KindDashboard, KindGeneral}
 
 // Valid reports a kind the assistant serves.
 func (k Kind) Valid() bool { return slices.Contains(Kinds, k) }
@@ -73,9 +78,50 @@ type Message struct {
 	Role      string          `json:"role"`
 	Text      string          `json:"text"`
 	Fill      json.RawMessage `json:"fill,omitempty"`
-	Error     string          `json:"error,omitempty"`
-	CostUSD   float64         `json:"cost_usd,omitempty"`
-	At        time.Time       `json:"at"`
+	// Request is what the answer asked the person to confirm, and what came
+	// of it.
+	Request *Request  `json:"request,omitempty"`
+	Error   string    `json:"error,omitempty"`
+	CostUSD float64   `json:"cost_usd,omitempty"`
+	At      time.Time `json:"at"`
+}
+
+// Request states.
+const (
+	RequestPending = "pending"
+	// RequestRunning: confirmed, its acts running. One left so (the engine
+	// stopped mid-way) is never run again: what it did is unknown.
+	RequestRunning  = "running"
+	RequestDone     = "done"
+	RequestDeclined = "declined"
+)
+
+// ErrStale is a request no longer in the state a change expected: decided,
+// or being decided, meanwhile.
+var ErrStale = errors.New("assistant: the request changed meanwhile")
+
+// Request is acts an answer asks the person to confirm (docs/assistant-plan.md,
+// phase 5): the assistant's token changes nothing, so each act is one of the
+// MCP face's write tools that the person's click runs, as the person.
+type Request struct {
+	// Why is the assistant's one line for the person.
+	Why   string `json:"why"`
+	Acts  []Act  `json:"acts"`
+	State string `json:"state"`
+	// Reported: the outcome was put in a later prompt.
+	Reported bool `json:"reported,omitempty"`
+}
+
+// Act is one tool call a request holds, and its outcome once confirmed.
+type Act struct {
+	Tool string `json:"tool"`
+	// Title is what the tool does, for the person.
+	Title     string          `json:"title,omitempty"`
+	Arguments json.RawMessage `json:"arguments"`
+	// Status is the route's answer (0: not run, an earlier act failed);
+	// Result its text, cut.
+	Status int    `json:"status,omitempty"`
+	Result string `json:"result,omitempty"`
 }
 
 // Choice is a person's standing choice: the harness integration their
@@ -96,6 +142,10 @@ type Store interface {
 	// AppendAssistantMessage numbers m after the session's last.
 	AppendAssistantMessage(ctx context.Context, m Message) (Message, error)
 	AssistantMessages(ctx context.Context, sessionID string, afterSeq int64) ([]Message, error)
+	// SetAssistantRequest replaces a message's request (a decision, an
+	// outcome reported) when it is in state from, else ErrStale: the state
+	// moves once, whoever else tries. A message that has none is ErrInvalid.
+	SetAssistantRequest(ctx context.Context, sessionID string, seq int64, from string, r Request) error
 	AssistantChoice(ctx context.Context, userID string) (Choice, error)
 	SaveAssistantChoice(ctx context.Context, c Choice) error
 }
@@ -189,6 +239,10 @@ func (s *MemStore) AppendAssistantMessage(_ context.Context, m Message) (Message
 		m.At = time.Now()
 	}
 	m.At = stored(m.At)
+	if m.Request != nil {
+		cp := cloneRequest(*m.Request)
+		m.Request = &cp
+	}
 	s.messages[m.SessionID] = append(list, m)
 	return m, nil
 }
@@ -203,6 +257,34 @@ func (s *MemStore) AssistantMessages(_ context.Context, sessionID string, afterS
 		}
 	}
 	return out, nil
+}
+
+func (s *MemStore) SetAssistantRequest(_ context.Context, sessionID string, seq int64, from string, r Request) error {
+	if err := CheckRequest(r); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.messages[sessionID]
+	for i := range list {
+		if list[i].Seq == seq {
+			if list[i].Request == nil {
+				return errors.Join(ErrInvalid, errors.New("the message holds no request"))
+			}
+			if list[i].Request.State != from {
+				return errors.Join(ErrStale, fmt.Errorf("the request is %s, not %s", list[i].Request.State, from))
+			}
+			cp := cloneRequest(r)
+			list[i].Request = &cp
+			return nil
+		}
+	}
+	return errors.Join(ErrInvalid, fmt.Errorf("no message %d in session %s", seq, sessionID))
+}
+
+func cloneRequest(r Request) Request {
+	r.Acts = slices.Clone(r.Acts)
+	return r
 }
 
 func (s *MemStore) AssistantChoice(_ context.Context, userID string) (Choice, error) {
@@ -246,6 +328,25 @@ func CheckMessage(m Message) error {
 	}
 	if len(m.Fill) > 0 && !json.Valid(m.Fill) {
 		return errors.Join(ErrInvalid, errors.New("a fill that is not JSON"))
+	}
+	if m.Request != nil {
+		return CheckRequest(*m.Request)
+	}
+	return nil
+}
+
+// CheckRequest refuses a request the stores could not keep faithfully.
+func CheckRequest(r Request) error {
+	if len(r.Acts) == 0 || (r.State != RequestPending && r.State != RequestRunning && r.State != RequestDone && r.State != RequestDeclined) {
+		return errors.Join(ErrInvalid, errors.New("a request needs its acts and a state"))
+	}
+	if strings.ContainsRune(r.Why, 0) {
+		return errors.Join(ErrInvalid, errors.New("a NUL byte"))
+	}
+	for _, a := range r.Acts {
+		if a.Tool == "" || !json.Valid(a.Arguments) || strings.ContainsRune(a.Result, 0) || strings.ContainsRune(a.Title, 0) {
+			return errors.Join(ErrInvalid, errors.New("an act needs its tool and JSON arguments"))
+		}
 	}
 	return nil
 }

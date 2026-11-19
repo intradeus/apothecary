@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -574,10 +575,11 @@ func (s *Server) mcpTools(ctx context.Context, p auth.Principal) ([]*mcpTool, er
 		if !ok {
 			continue
 		}
-		if t.route.ID == fillRouteID {
-			// The fill tool is an assistant session's alone, bound to it
-			// and shaped as its page's fill; no other token lists it.
-			bound, ok := s.boundFill(ctx, p, t, rt)
+		if boundRoute(t.route.ID) {
+			// The fill and request tools are an assistant session's alone,
+			// bound to it (fill shaped as its page's fill); no other token
+			// lists them.
+			bound, ok := s.boundTool(ctx, p, t, rt)
 			if ok {
 				out = append(out, bound)
 			}
@@ -597,14 +599,19 @@ func (s *Server) mcpTools(ctx context.Context, p auth.Principal) ([]*mcpTool, er
 	return out, nil
 }
 
-// fillRouteID is the assistant's fill route: a tool only for the session
-// whose token calls it.
-const fillRouteID = "fillAssistantSession"
+// fillRouteID and requestRouteID are the assistant's own routes: tools only
+// for the session whose token calls them.
+const (
+	fillRouteID    = "fillAssistantSession"
+	requestRouteID = "requestAssistantActs"
+)
 
-// boundFill is the fill tool as an assistant session's token sees it: its
-// page's fill as the input, its session bound. ok false for any other
-// principal.
-func (s *Server) boundFill(ctx context.Context, p auth.Principal, t *mcpTool, rt Route) (*mcpTool, bool) {
+func boundRoute(id string) bool { return id == fillRouteID || id == requestRouteID }
+
+// boundTool is fill or request as an assistant session's token sees it: its
+// session bound, fill's input its page's fill (a page with none lists no
+// fill). ok false for any other principal.
+func (s *Server) boundTool(ctx context.Context, p auth.Principal, t *mcpTool, rt Route) (*mcpTool, bool) {
 	if s.Assistant == nil || p.Token == nil {
 		return nil, false
 	}
@@ -619,25 +626,63 @@ func (s *Server) boundFill(ctx context.Context, p auth.Principal, t *mcpTool, rt
 	bound := *t
 	bound.route = rt
 	bound.boundSession = sid
-	bound.def.InputSchema = schema
+	if rt.ID == fillRouteID {
+		if schema == nil {
+			return nil, false
+		}
+		bound.def.InputSchema = schema
+	} else {
+		bound.def.InputSchema = withoutArg(t.def.InputSchema, "id")
+	}
+	// Neither changes anything until the person does.
 	bound.def.Annotations = map[string]any{"readOnlyHint": false, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
 	return &bound, true
+}
+
+// withoutArg is a tool's input schema without one argument (a bound one).
+func withoutArg(schema map[string]any, name string) map[string]any {
+	out := maps.Clone(schema)
+	if props, ok := schema["properties"].(map[string]any); ok {
+		p := maps.Clone(props)
+		delete(p, name)
+		out["properties"] = p
+	}
+	if req, ok := schema["required"].([]string); ok {
+		out["required"] = slices.DeleteFunc(slices.Clone(req), func(r string) bool { return r == name })
+	}
+	return out
 }
 
 // callTool runs the tool's route as the caller: a request built from the
 // arguments, through the route's own guard.
 func (s *Server) callTool(ctx context.Context, outer *http.Request, t *mcpTool, args map[string]json.RawMessage) mcpCallResult {
 	if t.boundSession != "" {
-		// The model passed the page's fill; the session is the token's.
-		fill, err := json.Marshal(args)
-		if err != nil {
-			return mcpCallResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
-		}
 		id, _ := json.Marshal(t.boundSession)
-		args = map[string]json.RawMessage{"id": id, "fill": fill}
+		if t.route.ID == fillRouteID {
+			// The model passed the page's fill; the session is the token's.
+			fill, err := json.Marshal(args)
+			if err != nil {
+				return mcpCallResult{Content: []mcpContent{{Type: "text", Text: err.Error()}}, IsError: true}
+			}
+			args = map[string]json.RawMessage{"id": id, "fill": fill}
+		} else {
+			args = maps.Clone(args)
+			if args == nil {
+				args = map[string]json.RawMessage{}
+			}
+			args["id"] = id
+		}
 	}
-	fail := func(format string, a ...any) mcpCallResult {
-		return mcpCallResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(format, a...)}}, IsError: true}
+	res, _ := s.runTool(ctx, outer, t, args, "Authorization", "User-Agent")
+	return res
+}
+
+// runTool runs the tool's route with args, as the principal outer's
+// forwarded headers prove, and answers its result and status (0: refused
+// before the route, its arguments wrong).
+func (s *Server) runTool(ctx context.Context, outer *http.Request, t *mcpTool, args map[string]json.RawMessage, forward ...string) (mcpCallResult, int) {
+	fail := func(format string, a ...any) (mcpCallResult, int) {
+		return mcpCallResult{Content: []mcpContent{{Type: "text", Text: fmt.Sprintf(format, a...)}}, IsError: true}, 0
 	}
 	path := t.route.Path
 	values := map[string]string{}
@@ -696,8 +741,11 @@ func (s *Server) callTool(ctx context.Context, outer *http.Request, t *mcpTool, 
 	}
 	req.Host = outer.Host
 	req.RemoteAddr = outer.RemoteAddr
-	req.Header.Set("Authorization", outer.Header.Get("Authorization"))
-	req.Header.Set("User-Agent", outer.Header.Get("User-Agent"))
+	for _, h := range forward {
+		if v := outer.Header.Values(h); len(v) > 0 {
+			req.Header[http.CanonicalHeaderKey(h)] = slices.Clone(v)
+		}
+	}
 	if rd != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
@@ -706,7 +754,11 @@ func (s *Server) callTool(ctx context.Context, outer *http.Request, t *mcpTool, 
 	}
 	rec := newToolRecorder()
 	s.guard(t.route)(rec, req)
-	return toolResult(rec)
+	status := rec.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	return toolResult(rec), status
 }
 
 func rawKeys(m map[string]json.RawMessage) map[string]any {
@@ -809,7 +861,7 @@ func mcpActions(reads bool) []authz.Action {
 	}
 	var out []authz.Action
 	for _, t := range all {
-		if t.route.ID == fillRouteID || (reads && !readRoute(t.route)) {
+		if boundRoute(t.route.ID) || (reads && !readRoute(t.route)) {
 			continue
 		}
 		if !slices.Contains(out, t.route.Action) {

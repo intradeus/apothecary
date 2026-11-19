@@ -1817,6 +1817,10 @@ describe('accounts', () => {
 			map.toPermission({ action: 'x:y', kind: 'x', doc: '', grantable: false, purposes: null })
 				.purposes
 		).toEqual([]);
+		expect(map.toAssistantRequest({ why: 'w', state: 'running', acts: null }).state).toBe(
+			'running'
+		);
+		expect(map.toAssistantRequest({ why: 'w', state: 'odd', acts: null }).state).toBe('pending');
 		expect(
 			map.toTokenCall({ at: AT, method: 'POST', route: 'r', path: '/p', status: 201, tool: '' })
 		).toEqual({ at: AT, method: 'POST', route: 'r', path: '/p', status: 201, tool: undefined });

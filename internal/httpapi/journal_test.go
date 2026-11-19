@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"testing"
@@ -126,4 +127,18 @@ func TestJournalBesideFiles(t *testing.T) {
 	if res, _ := x.do(t, "GET", "/api/runs/"+other+"/journal/shoot%231?file=shot.svg", nil, tok); res.StatusCode != http.StatusUnauthorized {
 		t.Errorf("another run's file with this token = %d", res.StatusCode)
 	}
+}
+
+// A person reads a run's journal through its reader's route and the
+// read_run_journal tool, as its agents do with the run's token.
+func TestRunHistoryForAPerson(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	id, _ := x.holdRun(t)
+	res := x.mcpTool(t, nil, "read_run_journal", map[string]any{"id": id})
+	if res.IsError || !strings.Contains(res.Content[0].Text, "RUN JOURNAL") {
+		t.Errorf("the whole journal = %+v", res)
+	}
+	x.expect(t, "a bad ref", nil, "GET", "/api/runs/"+id+"/history?ref=%25%25", nil, 400)
+	x.expect(t, "no such entry", nil, "GET", "/api/runs/"+id+"/history?ref="+url.QueryEscape("review#9"), nil, 404)
+	x.expect(t, "no such run", nil, "GET", "/api/runs/nope/history", nil, 404)
 }

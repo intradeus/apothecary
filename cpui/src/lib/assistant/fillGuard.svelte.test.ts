@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ticketFill, type TicketFields } from '$lib/domain';
-import { FillGuard } from './fillGuard.svelte';
+import { FillGuard, HandoffGuard, NoFill } from './fillGuard.svelte';
 
 function page(init: TicketFields) {
 	let cur = { ...init };
@@ -111,5 +111,45 @@ describe('FillGuard', () => {
 		expect(p.guard.undo).toBeNull();
 		p.guard.revert();
 		expect(p.get().title).toBe('T');
+	});
+});
+
+describe('NoFill', () => {
+	it('fills nothing, and knows when it asked', () => {
+		const g = new NoFill();
+		g.ask();
+		expect(g.asking).toBe(true);
+		expect(g.offer()).toBe(false);
+		expect(g.applyNow()).toBe(false);
+		g.applyPending();
+		g.discardPending();
+		g.revert();
+		g.answered();
+		expect(g.asking).toBe(false);
+		expect(g.changed).toEqual([]);
+		expect(g.pending).toBeNull();
+	});
+});
+
+describe('HandoffGuard', () => {
+	const read = (f: unknown) =>
+		typeof f === 'object' && f !== null && 'yaml' in f ? (f as { yaml: string }) : null;
+
+	it('holds a fill for its page, and drops it', () => {
+		const g = new HandoffGuard(read);
+		g.ask();
+		expect(g.offer('not one')).toBe(false);
+		expect(g.offer({ yaml: 'a' })).toBe(true);
+		expect(g.handoff).toEqual({ yaml: 'a' });
+		expect(g.applyNow({ yaml: 'b' })).toBe(true);
+		expect(g.handoff).toEqual({ yaml: 'b' });
+		g.applyPending();
+		g.discardPending();
+		g.revert();
+		expect(g.handoff).toBeNull();
+		g.answered();
+		expect(g.asking).toBe(false);
+		expect(g.changed).toEqual([]);
+		expect(g.pending).toBeNull();
 	});
 });

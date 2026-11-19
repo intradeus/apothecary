@@ -358,6 +358,8 @@ var typeNameOverrides = map[string]string{
 	"assistant.Choice":        "AssistantChoice",
 	"assistant.Integration":   "AssistantIntegration",
 	"assistant.Message":       "AssistantMessage",
+	"assistant.Request":       "AssistantRequest",
+	"assistant.Act":           "AssistantAct",
 	"assistant.Status":        "AssistantStatus",
 	"assistant.Session":       "AssistantSession",
 	"assistant.RepoView":      "AssistantRepo",

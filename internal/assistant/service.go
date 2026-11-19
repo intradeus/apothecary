@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/oklog/ulid/v2"
 
@@ -116,7 +117,10 @@ type Service struct {
 	tokens  map[string]liveToken  // by session id
 	fetched map[string]time.Time  // by person + workshop
 	repos   map[string][]RepoView // by person + workshop: the last fetch
-	hub     hub
+	// deciding are the requests a person's confirm is running, by session
+	// and seq: a second click waits its turn.
+	deciding map[string]bool
+	hub      hub
 }
 
 type liveToken struct {
@@ -128,8 +132,10 @@ type liveToken struct {
 type turn struct {
 	cancel context.CancelFunc
 	fill   json.RawMessage
+	// request is the acts the answer asks the person to confirm.
+	request *Request
 	// red holds the turn's secrets: its answer is scrubbed of them, and a
-	// fill holding one is refused.
+	// fill or a request holding one is refused.
 	red *redactor
 }
 
@@ -163,6 +169,7 @@ func (svc *Service) init() {
 		svc.tokens = map[string]liveToken{}
 		svc.fetched = map[string]time.Time{}
 		svc.repos = map[string][]RepoView{}
+		svc.deciding = map[string]bool{}
 	}
 }
 
@@ -246,8 +253,8 @@ func (svc *Service) Open(ctx context.Context, person string, kind Kind, workshop
 	if !kind.Valid() || strings.TrimSpace(subject) == "" {
 		return Session{}, nil, errors.Join(ErrInvalid, errors.New("a session needs a kind and a subject"))
 	}
-	if kind != KindSkill && workshop == "" {
-		return Session{}, nil, errors.Join(ErrInvalid, errors.New("a flow's or a ticket's session needs its workshop"))
+	if (kind == KindFlow || kind == KindTicket || kind == KindRun) && workshop == "" {
+		return Session{}, nil, errors.Join(ErrInvalid, errors.New("a flow's, a ticket's or a run's session needs its workshop"))
 	}
 	if workshop != "" {
 		// Reading the workshop is the person's to have: the same check its
@@ -447,7 +454,10 @@ func (svc *Service) answer(ctx context.Context, t *turn, s Session, text string,
 	svc.mu.Lock()
 	fill := t.fill
 	svc.mu.Unlock()
-	m := Message{SessionID: s.ID, Role: RoleAssistant, Text: red.scrub(strings.TrimSpace(said)), Fill: fill, CostUSD: cost}
+	svc.mu.Lock()
+	request := t.request
+	svc.mu.Unlock()
+	m := Message{SessionID: s.ID, Role: RoleAssistant, Text: red.scrub(strings.TrimSpace(said)), Fill: fill, Request: request, CostUSD: cost}
 	if err != nil {
 		m.Error = red.scrub(err.Error())
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -561,7 +571,8 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	if s.Model == "" {
 		s.Model = sess.Model
 	}
-	prompt := svc.prompt(page, s, repos, text, pageContext, first)
+	outcomes, told := svc.outcomes(ctx, s.ID)
+	prompt := svc.prompt(page, s, repos, text, pageContext, first, outcomes)
 	evs, errs, err := cl.Events(ctx, "", 0)
 	if err != nil {
 		return "", 0, err
@@ -570,6 +581,7 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	if err := cl.Prompt(ctx, sidecar.PromptRequest{SessionID: sess.SessionID, Turn: turnID, Text: prompt}); err != nil {
 		return "", 0, fmt.Errorf("ask the harness: %w", err)
 	}
+	svc.reported(ctx, s.ID, told)
 	svc.status(person, s.ID, "")
 	var said strings.Builder
 	var cost float64
@@ -641,7 +653,7 @@ func RepoName(r assistantport.Repo) string {
 
 // prompt is the turn's text: the page's instructions on a session's first
 // turn, the page as it stands, the repositories, the person's words.
-func (svc *Service) prompt(page Page, s *Session, repos []assistantport.Repo, text string, pageContext json.RawMessage, first bool) string {
+func (svc *Service) prompt(page Page, s *Session, repos []assistantport.Repo, text string, pageContext json.RawMessage, first bool, outcomes string) string {
 	var b strings.Builder
 	if first {
 		b.WriteString(page.Instructions)
@@ -657,6 +669,7 @@ func (svc *Service) prompt(page Page, s *Session, repos []assistantport.Repo, te
 	if c := page.Context(pageContext); c != "" {
 		b.WriteString(c)
 	}
+	b.WriteString(outcomes)
 	b.WriteString("\nThe person asks:\n")
 	b.WriteString(text)
 	return b.String()
@@ -839,7 +852,7 @@ func (svc *Service) status(person, session, text string) {
 // Frame is one event on a person's stream.
 type Frame struct {
 	Seq      int64           `json:"seq"`
-	Kind     string          `json:"kind"` // message|delta|state|status|fill|repos
+	Kind     string          `json:"kind"` // message|delta|state|status|fill|request|repos
 	Session  string          `json:"session,omitempty"`
 	Message  *Message        `json:"message,omitempty"`
 	Text     string          `json:"text,omitempty"`
@@ -1033,3 +1046,191 @@ func (e *sessionEnv) abs(p string) string {
 }
 
 var _ envport.EnvProvisioner = (*sessionEnv)(nil)
+
+// --- requests ---------------------------------------------------------------
+
+// maxActs bounds a request: a handful of acts a person can read and confirm.
+const maxActs = 10
+
+// Propose is the request tool: acts the answer asks the person to confirm,
+// already checked against their tools (the API's). Only the session's own
+// token proposes, while its question is being answered; a second request
+// in one answer replaces the first. Nothing runs until the person confirms.
+func (svc *Service) Propose(ctx context.Context, tokenID, person, sessionID string, r Request) ([]string, error) {
+	s, err := svc.session(ctx, person, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if tokenID == "" || s.TokenID != tokenID {
+		return nil, ErrNotYours
+	}
+	if len(r.Acts) == 0 || len(r.Acts) > maxActs || strings.TrimSpace(r.Why) == "" {
+		return []string{fmt.Sprintf("a request is why (one line for the person) and 1 to %d acts", maxActs)}, nil
+	}
+	svc.mu.Lock()
+	svc.init()
+	t := svc.turns[sessionID]
+	svc.mu.Unlock()
+	if t == nil {
+		return []string{"no question is being answered: request only while answering one"}, nil
+	}
+	raw, _ := json.Marshal(r)
+	if t.red.holds(string(raw)) {
+		return []string{"the request holds a credential of this session (a key, a token, a login): never put one in an act"}, nil
+	}
+	r.State, r.Reported = RequestPending, false
+	for i := range r.Acts {
+		r.Acts[i].Status, r.Acts[i].Result = 0, ""
+	}
+	if err := CheckRequest(r); err != nil {
+		return []string{err.Error()}, nil
+	}
+	svc.mu.Lock()
+	t.request = &r
+	svc.mu.Unlock()
+	svc.hub.publish(person, Frame{Kind: "request", Session: sessionID, Message: &Message{SessionID: sessionID, Role: RoleAssistant, Request: &r}})
+	return nil, nil
+}
+
+// maxResult bounds what an act's outcome keeps of its answer.
+const maxResult = 2 << 10
+
+// Decide is the person's answer to a request: confirmed, each act runs in
+// order through run (the API's route, as the person) until one fails; the
+// rest are not run. Declined, none is. The outcome reaches the assistant
+// in the session's next prompt.
+func (svc *Service) Decide(ctx context.Context, person, sessionID string, seq int64, confirm bool,
+	run func(ctx context.Context, a Act) (int, string)) (Message, error) {
+	if _, err := svc.session(ctx, person, sessionID); err != nil {
+		return Message{}, err
+	}
+	key := fmt.Sprintf("%s/%d", sessionID, seq)
+	svc.mu.Lock()
+	svc.init()
+	if svc.deciding[key] {
+		svc.mu.Unlock()
+		return Message{}, errors.Join(ErrStale, errors.New("this request is being decided"))
+	}
+	svc.deciding[key] = true
+	svc.mu.Unlock()
+	defer func() {
+		svc.mu.Lock()
+		delete(svc.deciding, key)
+		svc.mu.Unlock()
+	}()
+	msgs, err := svc.Store.AssistantMessages(ctx, sessionID, seq-1)
+	if err != nil {
+		return Message{}, err
+	}
+	if len(msgs) == 0 || msgs[0].Seq != seq || msgs[0].Request == nil {
+		return Message{}, errors.Join(ErrNotFound, errors.New("no request there"))
+	}
+	m := msgs[0]
+	r := *m.Request
+	r.Acts = slices.Clone(r.Acts)
+	if r.State != RequestPending {
+		return Message{}, errors.Join(ErrStale, fmt.Errorf("this request is %s already", r.State))
+	}
+	// The outcome is kept whatever the caller does now: the acts ran.
+	sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+	defer cancel()
+	if !confirm {
+		r.State = RequestDeclined
+		if err := svc.Store.SetAssistantRequest(sctx, sessionID, seq, RequestPending, r); err != nil {
+			return Message{}, err
+		}
+	} else {
+		// Claimed before anything runs: a second click, another tab or an
+		// engine that stops mid-way never runs these acts again.
+		r.State = RequestRunning
+		if err := svc.Store.SetAssistantRequest(sctx, sessionID, seq, RequestPending, r); err != nil {
+			return Message{}, err
+		}
+		running := r
+		svc.hub.publish(person, Frame{Kind: "request", Session: sessionID, Message: &Message{SessionID: sessionID, Seq: seq, Role: m.Role, Text: m.Text, Fill: m.Fill, Request: &running, At: m.At}})
+		r.Acts = slices.Clone(r.Acts)
+		for i := range r.Acts {
+			status, result := run(ctx, r.Acts[i])
+			if len(result) > maxResult {
+				cut := maxResult
+				for cut > 0 && !utf8.RuneStart(result[cut]) {
+					cut--
+				}
+				result = result[:cut] + " [cut]"
+			}
+			r.Acts[i].Status, r.Acts[i].Result = status, result
+			if status >= 400 || status == 0 {
+				break
+			}
+		}
+		r.State = RequestDone
+		if err := svc.Store.SetAssistantRequest(sctx, sessionID, seq, RequestRunning, r); err != nil {
+			return Message{}, err
+		}
+	}
+	m.Request = &r
+	svc.hub.publish(person, Frame{Kind: "request", Session: sessionID, Message: &m})
+	return m, nil
+}
+
+// outcomes are what the assistant has not been told of its requests: the
+// prompt's lines, and the messages they come from.
+func (svc *Service) outcomes(ctx context.Context, sessionID string) (string, []Message) {
+	msgs, err := svc.Store.AssistantMessages(ctx, sessionID, 0)
+	if err != nil {
+		return "", nil
+	}
+	var b strings.Builder
+	var told []Message
+	for _, m := range msgs {
+		r := m.Request
+		if r == nil || r.Reported {
+			continue
+		}
+		if r.State == RequestRunning {
+			svc.mu.Lock()
+			now := svc.deciding[fmt.Sprintf("%s/%d", sessionID, m.Seq)]
+			svc.mu.Unlock()
+			if now {
+				continue // running as we speak: its outcome comes next time
+			}
+		}
+		if b.Len() == 0 {
+			b.WriteString("\nWhat came of your requests to the person:\n")
+		}
+		switch r.State {
+		case RequestPending:
+			fmt.Fprintf(&b, "- %q: not decided yet (the person has not confirmed it).\n", r.Why)
+			continue
+		case RequestDeclined:
+			fmt.Fprintf(&b, "- %q: declined; nothing was done.\n", r.Why)
+		case RequestRunning:
+			fmt.Fprintf(&b, "- %q: confirmed, but its acts were interrupted: what they did is unknown; read the platform before asking again.\n", r.Why)
+		default:
+			fmt.Fprintf(&b, "- %q: confirmed.\n", r.Why)
+			for _, a := range r.Acts {
+				switch {
+				case a.Status == 0:
+					fmt.Fprintf(&b, "  - %s: not run (an earlier act failed).\n", a.Tool)
+				case a.Status >= 400:
+					fmt.Fprintf(&b, "  - %s: failed, %d: %s\n", a.Tool, a.Status, a.Result)
+				default:
+					fmt.Fprintf(&b, "  - %s: done, %d: %s\n", a.Tool, a.Status, a.Result)
+				}
+			}
+		}
+		told = append(told, m)
+	}
+	return b.String(), told
+}
+
+// reported marks outcomes as told.
+func (svc *Service) reported(ctx context.Context, sessionID string, told []Message) {
+	for _, m := range told {
+		r := *m.Request
+		r.Reported = true
+		if err := svc.Store.SetAssistantRequest(ctx, sessionID, m.Seq, m.Request.State, r); err != nil {
+			svc.log().Warn("assistant: mark a request reported", "session", sessionID, "seq", m.Seq, "err", err)
+		}
+	}
+}

@@ -1,10 +1,40 @@
-// The assistant beside the flow, ticket and skill pages: a person's
-// conversation with an agent in their own pod, whose one way to act is to
-// fill the page's inputs. Frontend-owned shapes; the mappers translate.
+// The assistant beside a page (a flow, a ticket, a skill, a run, a
+// dashboard) or none (the command palette's): a person's conversation with
+// an agent in their own pod, which acts two ways, both through the person:
+// it fills the page's inputs, and it asks the person to confirm acts.
+// Frontend-owned shapes; the mappers translate.
 
-export type AssistantKind = 'flow' | 'ticket' | 'skill';
+export type AssistantKind = 'flow' | 'ticket' | 'skill' | 'run' | 'dashboard' | 'general';
 
-export const ASSISTANT_KINDS: readonly AssistantKind[] = ['flow', 'ticket', 'skill'];
+export const ASSISTANT_KINDS: readonly AssistantKind[] = [
+	'flow',
+	'ticket',
+	'skill',
+	'run',
+	'dashboard',
+	'general'
+];
+
+/** One act a request asks the person to confirm: a write tool of the
+ *  platform and its arguments, then what came of it. */
+export interface AssistantAct {
+	tool: string;
+	/** What the tool does, for the person. */
+	title?: string;
+	arguments: unknown;
+	/** The route's answer once confirmed; none: not run. */
+	status?: number;
+	result?: string;
+}
+
+/** Acts an answer asks the person to confirm, and their state. */
+export interface AssistantRequest {
+	why: string;
+	acts: AssistantAct[];
+	/** running: confirmed, its acts running, or interrupted (never run
+	 *  again). */
+	state: 'pending' | 'running' | 'done' | 'declined';
+}
 
 /** One of the person's harness integrations the assistant runs on. */
 export interface AssistantIntegration {
@@ -55,6 +85,8 @@ export interface AssistantMessage {
 	text: string;
 	/** What the answer filled the page with, when it did. */
 	fill?: unknown;
+	/** What it asked the person to confirm, when it did. */
+	request?: AssistantRequest;
 	error?: string;
 	costUsd: number;
 	at: string;
@@ -73,6 +105,14 @@ export type AssistantFrame =
 			page: AssistantKind;
 			subject: string;
 			fill: unknown;
+	  }
+	| {
+			/** A request proposed mid-answer (seq 0), or one decided (its
+			 *  message, replaced). */
+			kind: 'request';
+			seq: number;
+			sessionId: string;
+			message: AssistantMessage;
 	  }
 	| { kind: 'repos'; seq: number; workshop: string; text?: string; repos?: AssistantRepo[] }
 	| { kind: 'gap' };
@@ -144,3 +184,28 @@ export function skillFill(cur: SkillFields, fill: unknown): Filled<SkillFields> 
 /** A new draft's subject: a session's id before the first save. */
 export const draftSubject = () =>
 	`draft-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** A run's fill: a change to a flow, taken to the flow editor. */
+export interface RunFill {
+	flow: string;
+	yaml: string;
+}
+
+/** A run page's fill, when it is one. */
+export function runFill(fill: unknown): RunFill | null {
+	if (!isObject(fill) || typeof fill.flow !== 'string' || typeof fill.yaml !== 'string')
+		return null;
+	if (!fill.flow || !fill.yaml) return null;
+	return { flow: fill.flow, yaml: fill.yaml };
+}
+
+/** A dashboard's fill: every panel, in order. */
+export function dashboardFill<P>(
+	cur: { panels: P[] },
+	fill: unknown
+): Filled<{ panels: P[] }> | null {
+	if (!isObject(fill) || !Array.isArray(fill.panels)) return null;
+	const next = { panels: fill.panels.filter(isObject) as P[] };
+	const changed = JSON.stringify(next.panels) === JSON.stringify(cur.panels) ? [] : ['panels'];
+	return { next, changed };
+}

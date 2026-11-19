@@ -5,12 +5,18 @@ package httpapi
 // fill a session's agent calls through the MCP face.
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
+	"strings"
 	"time"
+
+	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
@@ -78,7 +84,7 @@ func assistantStatus(err error) int {
 		return http.StatusNotFound
 	case errors.Is(err, assistant.ErrInvalid):
 		return http.StatusBadRequest
-	case errors.Is(err, assistant.ErrBusy):
+	case errors.Is(err, assistant.ErrBusy), errors.Is(err, assistant.ErrStale):
 		return http.StatusConflict
 	case errors.Is(err, assistant.ErrNoChoice):
 		return http.StatusConflict
@@ -243,6 +249,162 @@ func (s *Server) fillAssistantSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, AssistantFillResult{OK: true})
 }
 
+// AssistantActsRequest is the request tool's call: acts for the person to
+// confirm.
+type AssistantActsRequest struct {
+	Why  string           `json:"why" doc:"One line for the person: what the acts are for."`
+	Acts []AssistantActIn `json:"acts"`
+}
+
+// AssistantActIn is one act: a write tool of the MCP face and its arguments.
+type AssistantActIn struct {
+	Tool      string         `json:"tool"`
+	Arguments map[string]any `json:"arguments"`
+}
+
+func (s *Server) requestAssistantActs(w http.ResponseWriter, r *http.Request) {
+	var body AssistantActsRequest
+	if !readJSON(w, r, &body) {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	tokenID := ""
+	if p.Token != nil {
+		tokenID = p.Token.ID
+	}
+	req, errs := s.checkActs(body)
+	if len(errs) > 0 {
+		writeJSON(w, http.StatusOK, AssistantFillResult{Errors: errs})
+		return
+	}
+	errs, err := s.Assistant.Propose(r.Context(), tokenID, p.User.ID, r.PathValue("id"), req)
+	if err != nil {
+		writeErr(w, assistantStatus(err), err.Error())
+		return
+	}
+	if len(errs) > 0 {
+		writeJSON(w, http.StatusOK, AssistantFillResult{Errors: errs})
+		return
+	}
+	writeJSON(w, http.StatusOK, AssistantFillResult{OK: true})
+}
+
+// checkActs holds each act to the face's write tools: one that exists, is
+// not a read, not the assistant's own, and whose arguments fit its input.
+func (s *Server) checkActs(body AssistantActsRequest) (assistant.Request, []string) {
+	all, err := mcpCatalog()
+	if err != nil {
+		return assistant.Request{}, []string{err.Error()}
+	}
+	out := assistant.Request{Why: strings.TrimSpace(body.Why), State: assistant.RequestPending}
+	var errs []string
+	for i, a := range body.Acts {
+		j := slices.IndexFunc(all, func(t *mcpTool) bool { return t.def.Name == a.Tool })
+		if j < 0 || boundRoute(all[j].route.ID) || readRoute(all[j].route) {
+			errs = append(errs, fmt.Sprintf("act %d: %q is not a write tool of the platform", i+1, a.Tool))
+			continue
+		}
+		t := all[j]
+		if t.route.Enabled != nil && !t.route.Enabled(s) {
+			errs = append(errs, fmt.Sprintf("act %d: %s is not served here", i+1, a.Tool))
+			continue
+		}
+		args := a.Arguments
+		if args == nil {
+			args = map[string]any{}
+		}
+		if err := validateArgs(t, args); err != nil {
+			schema, _ := json.Marshal(t.def.InputSchema)
+			errs = append(errs, fmt.Sprintf("act %d: %s's arguments: %v. Its input: %s", i+1, a.Tool, err, schema))
+			continue
+		}
+		raw, _ := json.Marshal(args)
+		out.Acts = append(out.Acts, assistant.Act{Tool: a.Tool, Title: t.route.Summary, Arguments: raw})
+	}
+	return out, errs
+}
+
+// validateArgs checks arguments against a tool's input schema.
+func validateArgs(t *mcpTool, args map[string]any) error {
+	raw, err := json.Marshal(t.def.InputSchema)
+	if err != nil {
+		return err
+	}
+	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+	if err != nil {
+		return err
+	}
+	c := jsonschema.NewCompiler()
+	if err := c.AddResource("tool.json", doc); err != nil {
+		return err
+	}
+	sch, err := c.Compile("tool.json")
+	if err != nil {
+		return err
+	}
+	// Through JSON: the validator wants JSON's own types.
+	data, _ := json.Marshal(args)
+	v, err := jsonschema.UnmarshalJSON(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	return sch.Validate(v)
+}
+
+// decideAssistantRequest confirms (each act run as the caller, through its
+// route) or declines a request.
+func (s *Server) decideAssistantRequest(confirm bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		seq, err := strconv.ParseInt(r.PathValue("seq"), 10, 64)
+		if err != nil || seq < 1 {
+			writeErr(w, http.StatusBadRequest, "invalid seq")
+			return
+		}
+		all, err := mcpCatalog()
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		run := func(ctx context.Context, a assistant.Act) (int, string) {
+			j := slices.IndexFunc(all, func(t *mcpTool) bool { return t.def.Name == a.Tool })
+			if j < 0 || boundRoute(all[j].route.ID) || readRoute(all[j].route) {
+				return http.StatusBadRequest, a.Tool + " is not a write tool"
+			}
+			t := *all[j]
+			served := false
+			for _, rt := range s.routes() {
+				if rt.ID == t.route.ID && (rt.Enabled == nil || rt.Enabled(s)) {
+					t.route, served = rt, true
+				}
+			}
+			if !served {
+				return http.StatusServiceUnavailable, a.Tool + " is not served here"
+			}
+			var args map[string]json.RawMessage
+			if err := json.Unmarshal(a.Arguments, &args); err != nil {
+				return http.StatusBadRequest, err.Error()
+			}
+			// As the person: their session's cookie (with what proved it
+			// same-origin) or their own token.
+			res, status := s.runTool(ctx, r, &t, args, "Authorization", "Cookie", "Origin", "Referer", "Sec-Fetch-Site", "User-Agent")
+			if status == 0 {
+				status = http.StatusBadRequest
+			}
+			text := ""
+			if len(res.Content) > 0 {
+				text = res.Content[0].Text
+			}
+			return status, text
+		}
+		m, err := s.Assistant.Decide(r.Context(), auth.UserID(r.Context()), r.PathValue("id"), seq, confirm, run)
+		if err != nil {
+			writeErr(w, assistantStatus(err), err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, m)
+	}
+}
+
 func (s *Server) streamAssistant(w http.ResponseWriter, r *http.Request) {
 	// No position: from now. A panel reads what it opens from the record;
 	// what the stream kept is for a reconnect, which names where it was.
@@ -350,5 +512,19 @@ func (s *Server) assistantRoutes() []Route {
 			Handler: s.fillAssistantSession, Body: AssistantFillRequest{}, Returns: AssistantFillResult{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantFill,
 			Tool: &Tool{Name: "fill", Doc: "Fill the person's page with what you propose: it appears in their form or editor for them to read, change and save. Nothing is saved. Answers ok, or the errors to correct.",
 				Args: map[string]string{"id": "Your session's id.", "fill": "The page's fill."}}},
+		{Method: "POST", Path: "/api/assistant/sessions/{id}/request", ID: requestRouteID, Tag: tagAssistant,
+			Summary: "Ask the person to confirm acts: each a write tool of the MCP face, with its arguments; nothing runs until they do",
+			Doc: "Only the session's own token, while its question is answered. Each act's tool must be a write tool and its arguments must fit its input; ok false with the errors otherwise. " +
+				"The person confirms or declines in the panel; the session's next prompt says what came of it.",
+			Handler: s.requestAssistantActs, Body: AssistantActsRequest{}, Returns: AssistantFillResult{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantFill,
+			Tool: &Tool{Name: "request", Doc: "Ask the person to confirm acts on the platform: filing tickets, starting or steering runs, saving flows, skills, automations or dashboards. Each act is one of the platform's write tools (create_ticket, update_ticket, start_run, pause_run, resume_run, retry_run, abort_run, create_flow, update_flow, create_automation, update_automation, create_skill, update_skill, create_skillset, update_skillset, create_dashboard, update_dashboard, create_scorecard, update_scorecard) with the arguments that tool takes. why is one line for the person. Nothing runs until they confirm; their next message says what came of it. Answers ok, or the errors to correct (a wrong argument names the tool's input).",
+				Args: map[string]string{"id": "Your session's id."}}},
+		{Method: "POST", Path: "/api/assistant/sessions/{id}/messages/{seq}/confirm", ID: "confirmAssistantRequest", Tag: tagAssistant,
+			Summary: "Run the acts an answer asked for, in order, as the caller, until one fails",
+			Doc:     "Each act goes through its route as if the caller called it: their actions decide. Answers the message with each act's status and result; 409 for a request decided already or being decided.",
+			Handler: s.decideAssistantRequest(true), Returns: assistant.Message{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantWrite},
+		{Method: "POST", Path: "/api/assistant/sessions/{id}/messages/{seq}/decline", ID: "declineAssistantRequest", Tag: tagAssistant,
+			Summary: "Decline the acts an answer asked for: none runs",
+			Handler: s.decideAssistantRequest(false), Returns: assistant.Message{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantWrite},
 	}
 }

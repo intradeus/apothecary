@@ -5,9 +5,11 @@
 	import { onMount, untrack } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
 	import { api } from '$lib/api';
+	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
 	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
+	import { takeFlowFill } from '$lib/assistant/handoff';
 	import { flowFill } from '$lib/domain';
 	import AgentsPage from '$lib/flow/AgentsPage.svelte';
 	import FlowGraph from '$lib/flow/FlowGraph.svelte';
@@ -37,6 +39,20 @@
 	$effect(() => {
 		void ed.replaced;
 		untrack(() => flowGuard.settle());
+	});
+	// Once loaded whole, a change the assistant proposed from a run (handed
+	// off) fills the editor, with its Undo. A flow that does not load drops
+	// it: it must not wait in the tab for a later opening.
+	let handoffTaken = false;
+	$effect(() => {
+		const done = ed.loaded > 0;
+		const failed = !!ed.error && !ed.flow;
+		untrack(() => {
+			if (handoffTaken || (!done && !failed)) return;
+			handoffTaken = true;
+			const yaml = takeFlowFill(projectId, name);
+			if (done && yaml !== null && flowGuard.applyNow({ yaml })) ed.showAssistant = true;
+		});
 	});
 	// The workshop's values for this flow's parameters, read when the
 	// assistant opens: what the agent reads beside the YAML.
@@ -201,6 +217,8 @@
 						check={checkYaml}
 						label={t('page.flow.yamlLabel')}
 					/>
+				{:catch e}
+					<ErrorCard cause={t('page.flow.editorFailed')} detail={errorMessage(e)} />
 				{/await}
 			{/if}
 		</div>

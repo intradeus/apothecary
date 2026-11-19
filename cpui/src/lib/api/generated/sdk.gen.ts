@@ -68,6 +68,9 @@ import type {
 	CompleteSignInData,
 	CompleteSignInErrors,
 	CompleteSignInResponses,
+	ConfirmAssistantRequestData,
+	ConfirmAssistantRequestErrors,
+	ConfirmAssistantRequestResponses,
 	CopyFlowData,
 	CopyFlowErrors,
 	CopyFlowResponses,
@@ -110,6 +113,9 @@ import type {
 	CreateWorkshopTicketData,
 	CreateWorkshopTicketErrors,
 	CreateWorkshopTicketResponses,
+	DeclineAssistantRequestData,
+	DeclineAssistantRequestErrors,
+	DeclineAssistantRequestResponses,
 	DeleteAutomationData,
 	DeleteAutomationErrors,
 	DeleteAutomationResponses,
@@ -539,6 +545,9 @@ import type {
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
+	ReadRunHistoryData,
+	ReadRunHistoryErrors,
+	ReadRunHistoryResponses,
 	ReadRunJournalData,
 	ReadRunJournalEntryData,
 	ReadRunJournalEntryErrors,
@@ -572,6 +581,9 @@ import type {
 	ReportObservedPortsData,
 	ReportObservedPortsErrors,
 	ReportObservedPortsResponses,
+	RequestAssistantActsData,
+	RequestAssistantActsErrors,
+	RequestAssistantActsResponses,
 	RerunRunData,
 	RerunRunErrors,
 	RerunRunResponses,
@@ -1366,6 +1378,62 @@ export const sendAssistantMessage = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * Run the acts an answer asked for, in order, as the caller, until one fails
+ *
+ * Each act goes through its route as if the caller called it: their actions decide. Answers the message with each act's status and result; 409 for a request decided already or being decided.
+ */
+export const confirmAssistantRequest = <ThrowOnError extends boolean = false>(
+	options: Options<ConfirmAssistantRequestData, ThrowOnError>
+): RequestResult<ConfirmAssistantRequestResponses, ConfirmAssistantRequestErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		ConfirmAssistantRequestResponses,
+		ConfirmAssistantRequestErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/messages/{seq}/confirm',
+		...options
+	});
+
+/**
+ * Decline the acts an answer asked for: none runs
+ */
+export const declineAssistantRequest = <ThrowOnError extends boolean = false>(
+	options: Options<DeclineAssistantRequestData, ThrowOnError>
+): RequestResult<DeclineAssistantRequestResponses, DeclineAssistantRequestErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		DeclineAssistantRequestResponses,
+		DeclineAssistantRequestErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/messages/{seq}/decline',
+		...options
+	});
+
+/**
  * Pick the model the session answers with from its next question
  */
 export const setAssistantModel = <ThrowOnError extends boolean = false>(
@@ -1393,6 +1461,39 @@ export const setAssistantModel = <ThrowOnError extends boolean = false>(
 			}
 		}
 	);
+
+/**
+ * Ask the person to confirm acts: each a write tool of the MCP face, with its arguments; nothing runs until they do
+ *
+ * Only the session's own token, while its question is answered. Each act's tool must be a write tool and its arguments must fit its input; ok false with the errors otherwise. The person confirms or declines in the panel; the session's next prompt says what came of it.
+ */
+export const requestAssistantActs = <ThrowOnError extends boolean = false>(
+	options: Options<RequestAssistantActsData, ThrowOnError>
+): RequestResult<RequestAssistantActsResponses, RequestAssistantActsErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		RequestAssistantActsResponses,
+		RequestAssistantActsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/request',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
 
 /**
  * Move a draft's session to what it was saved as
@@ -5283,6 +5384,31 @@ export const downloadRunFiles = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/files.zip',
+		...options
+	});
+
+/**
+ * The run's journal as a person reads it: every record, or one entry by its reference
+ *
+ * What journal_read gives the run's own agents, for whoever may read the run: with no ref every decision, note and attempt's record with its verdict; with ref (<stage>#<n> (review#5), <stage>#<n>/decision#<k>, <stage>#<n>/note#<k>, run, or run/decision#<k>) one entry whole, an attempt with its outputs and its log.
+ */
+export const readRunHistory = <ThrowOnError extends boolean = false>(
+	options: Options<ReadRunHistoryData, ThrowOnError>
+): RequestResult<ReadRunHistoryResponses, ReadRunHistoryErrors, ThrowOnError> =>
+	(options.client ?? client).get<ReadRunHistoryResponses, ReadRunHistoryErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/history',
 		...options
 	});
 

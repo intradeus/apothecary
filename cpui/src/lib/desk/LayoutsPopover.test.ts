@@ -103,11 +103,11 @@ describe('LayoutsPopover', () => {
 
 		it('counts what is shown', async () => {
 			setup(aDesk(leaf(['session', 'logs'])));
-			expect(screen.getByText('2 of 15 shown')).toBeInTheDocument();
+			expect(screen.getByText('2 of 16 shown')).toBeInTheDocument();
 
 			await userEvent.click(win('Flow'));
 
-			expect(screen.getByText('3 of 15 shown')).toBeInTheDocument();
+			expect(screen.getByText('3 of 16 shown')).toBeInTheDocument();
 		});
 
 		it('hides a shown view', async () => {
@@ -134,7 +134,7 @@ describe('LayoutsPopover', () => {
 			await userEvent.click(win('Session'));
 
 			expect(desk.tree).toBeNull();
-			expect(screen.getByText('0 of 15 shown')).toBeInTheDocument();
+			expect(screen.getByText('0 of 16 shown')).toBeInTheDocument();
 		});
 
 		it('fills an empty bench', async () => {

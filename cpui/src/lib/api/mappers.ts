@@ -12,6 +12,7 @@ import type * as Wire from './generated/types.gen';
 import type {
 	AssistantKind,
 	AssistantMessage,
+	AssistantRequest,
 	AssistantRepo,
 	AssistantSession,
 	AssistantStatus,
@@ -1948,8 +1949,24 @@ export function toAssistantMessage(w: Wire.AssistantMessage): AssistantMessage {
 		role: w.role === 'assistant' ? 'assistant' : 'person',
 		text: w.text,
 		fill: w.fill ?? undefined,
+		request: w.request ? toAssistantRequest(w.request) : undefined,
 		error: w.error || undefined,
 		costUsd: w.cost_usd ?? 0,
 		at: w.at
+	};
+}
+
+export function toAssistantRequest(w: Wire.AssistantRequest): AssistantRequest {
+	return {
+		why: w.why,
+		state:
+			w.state === 'done' || w.state === 'declined' || w.state === 'running' ? w.state : 'pending',
+		acts: (w.acts ?? []).map((a) => ({
+			tool: a.tool,
+			title: a.title || undefined,
+			arguments: a.arguments,
+			status: a.status || undefined,
+			result: a.result || undefined
+		}))
 	};
 }

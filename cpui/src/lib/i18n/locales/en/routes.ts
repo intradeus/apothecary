@@ -626,6 +626,7 @@ export default {
 	'page.flow.hint':
 		'<span class="kbd">⌫</span> delete selection · <span class="kbd">⌘S</span> save · drag handles to rewire',
 	'page.flow.yamlLabel': 'Flow YAML',
+	'page.flow.editorFailed': 'Couldn’t load the YAML editor',
 	'page.flow.closeVersions': 'Close versions',
 	'page.flow.versionsHelp':
 		'Content-addressed and immutable; every run pins the hash it started on. Node positions never create versions.',

@@ -496,5 +496,37 @@ describe('FlowEditorPage', () => {
 			const read = JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
 			expect(read.params).toEqual({});
 		});
+
+		it('opens with a change the assistant proposed from a run, once, with its undo', async () => {
+			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\nstages: {}\n');
+			vi.mocked(api.flows.get).mockResolvedValue(aFlow());
+			vi.mocked(api.flows.validate).mockImplementation(async () => validated(plainDoc()));
+			vi.mocked(api.flows.binding).mockResolvedValue(null);
+			render(FlowEditorPage, { projectId: 'p1', name: 'builder' });
+			// Taken once the flow has loaded whole: the YAML tab, the assistant
+			// open, the change marked, the editor holding it.
+			expect(await screen.findByRole('region', { name: 'Assistant' })).toBeInTheDocument();
+			expect(screen.getByRole('radio', { name: 'YAML' })).toHaveAttribute('aria-checked', 'true');
+			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('yaml');
+			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
+			const read = JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
+			expect(read.yaml).toBe('name: builder\nstages: {}\n');
+			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull();
+			await userEvent.click(screen.getByRole('button', { name: 'undo the fill' }));
+			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
+			expect(
+				JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!).yaml
+			).not.toBe('name: builder\nstages: {}\n');
+		});
+
+		it('drops a handed-off change when the flow does not load', async () => {
+			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\n');
+			vi.mocked(api.flows.get).mockRejectedValue(new Error('gone'));
+			render(FlowEditorPage, { projectId: 'p1', name: 'builder' });
+			expect(await screen.findByRole('alert')).toBeInTheDocument();
+			await waitFor(() =>
+				expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull()
+			);
+		});
 	});
 });

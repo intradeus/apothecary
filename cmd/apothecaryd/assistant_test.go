@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -14,6 +15,7 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
 	"apothecary/internal/adapters/pgstore/pgtest"
+	"apothecary/internal/analytics"
 	"apothecary/internal/assistant"
 	"apothecary/internal/platform/config"
 	"apothecary/internal/project/confstore"
@@ -39,13 +41,13 @@ func TestAssistantWiring(t *testing.T) {
 	for name, url := range map[string]string{"no engine URL": "", "not a URL": "::"} {
 		b := *boot
 		b.K8s.EngineURL = url
-		if _, _, err := wireAssistant(ctx, &b, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
+		if _, _, err := wireAssistant(ctx, &b, nil, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler)); err == nil {
 			t.Errorf("%s: wired", name)
 		}
 	}
 	off := *boot
 	off.Assistant.Enabled = false
-	svc, stop, err := wireAssistant(ctx, &off, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
+	svc, stop, err := wireAssistant(ctx, &off, nil, nil, nil, nil, nil, nil, nil, slog.New(slog.DiscardHandler))
 	if err != nil || svc == nil || svc.Pods != nil || !slices.Contains(svc.FaceActions, string(authz.ProjectRead)) {
 		t.Errorf("off = %+v, %v", svc, err)
 	}
@@ -176,6 +178,22 @@ func TestAssistantAdapters(t *testing.T) {
 	}
 	if list, _ := authsvc.ListTokens(ctx, owner.ID); len(list) != 0 {
 		t.Errorf("tokens after revoke = %+v", list)
+	}
+
+	// A dashboard's panels: the analytics service's rule, through the page
+	// checks; none served, none checked.
+	checks := pageChecks{ticketTypes: ticketTypes{conf: a.conf}, dashboards: &analytics.Service{Store: a.store}}
+	if err := checks.DashboardPanels(ctx, owner.ID, json.RawMessage(`[{"viz":"table","width":12,"query":{"grain":"runs"}}]`)); err != nil {
+		t.Errorf("good panels = %v", err)
+	}
+	if err := checks.DashboardPanels(ctx, owner.ID, json.RawMessage(`[{"viz":"pie","width":12,"query":{"grain":"runs"}}]`)); err == nil {
+		t.Error("a bad viz passed")
+	}
+	if err := checks.DashboardPanels(ctx, owner.ID, json.RawMessage(`{}`)); err == nil {
+		t.Error("panels that are not a list passed")
+	}
+	if err := (pageChecks{}).DashboardPanels(ctx, owner.ID, json.RawMessage(`[]`)); err == nil {
+		t.Error("no analytics, and panels checked")
 	}
 
 	// Ticket types: the workshop's source's.

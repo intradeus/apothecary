@@ -150,6 +150,26 @@ export type AskState = {
 	threads: Array<ThreadState> | null;
 };
 
+export type AssistantAct = {
+	arguments: unknown;
+	result?: string;
+	status?: number;
+	title?: string;
+	tool: string;
+};
+
+export type AssistantActIn = {
+	arguments: {
+		[key: string]: unknown;
+	} | null;
+	tool: string;
+};
+
+export type AssistantActsRequest = {
+	acts: Array<AssistantActIn> | null;
+	why: string;
+};
+
 export type AssistantChoice = {
 	integration: string;
 	model: string;
@@ -180,6 +200,7 @@ export type AssistantMessage = {
 	cost_usd?: number;
 	error?: string;
 	fill?: unknown;
+	request?: AssistantRequest;
 	role: string;
 	seq: number;
 	session_id: string;
@@ -222,6 +243,13 @@ export type AssistantRepo = {
 	name: string;
 	ok: boolean;
 	workshop: string;
+};
+
+export type AssistantRequest = {
+	acts: Array<AssistantAct> | null;
+	reported?: boolean;
+	state: string;
+	why: string;
 };
 
 export type AssistantSession = {
@@ -3390,6 +3418,100 @@ export type SendAssistantMessageResponses = {
 export type SendAssistantMessageResponse =
 	SendAssistantMessageResponses[keyof SendAssistantMessageResponses];
 
+export type ConfirmAssistantRequestData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/messages/{seq}/confirm';
+};
+
+export type ConfirmAssistantRequestErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ConfirmAssistantRequestResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantMessage;
+};
+
+export type ConfirmAssistantRequestResponse =
+	ConfirmAssistantRequestResponses[keyof ConfirmAssistantRequestResponses];
+
+export type DeclineAssistantRequestData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/messages/{seq}/decline';
+};
+
+export type DeclineAssistantRequestErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeclineAssistantRequestResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantMessage;
+};
+
+export type DeclineAssistantRequestResponse =
+	DeclineAssistantRequestResponses[keyof DeclineAssistantRequestResponses];
+
 export type SetAssistantModelData = {
 	body: AssistantModelRequest;
 	path: {
@@ -3435,6 +3557,52 @@ export type SetAssistantModelResponses = {
 
 export type SetAssistantModelResponse =
 	SetAssistantModelResponses[keyof SetAssistantModelResponses];
+
+export type RequestAssistantActsData = {
+	body: AssistantActsRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/request';
+};
+
+export type RequestAssistantActsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RequestAssistantActsResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantFillResult;
+};
+
+export type RequestAssistantActsResponse =
+	RequestAssistantActsResponses[keyof RequestAssistantActsResponses];
 
 export type SetAssistantSubjectData = {
 	body: AssistantSubjectRequest;
@@ -9773,6 +9941,52 @@ export type DownloadRunFilesResponses = {
 };
 
 export type DownloadRunFilesResponse = DownloadRunFilesResponses[keyof DownloadRunFilesResponses];
+
+export type ReadRunHistoryData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * an entry's reference; none: the whole journal
+		 */
+		ref?: string;
+	};
+	url: '/api/runs/{id}/history';
+};
+
+export type ReadRunHistoryErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReadRunHistoryResponses = {
+	/**
+	 * OK
+	 */
+	200: JournalEntry;
+};
+
+export type ReadRunHistoryResponse = ReadRunHistoryResponses[keyof ReadRunHistoryResponses];
 
 export type ReleaseRunData = {
 	body?: never;

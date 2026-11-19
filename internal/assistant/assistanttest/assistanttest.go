@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -90,7 +91,7 @@ func RunContract(t *testing.T, open func(t *testing.T) assistant.Store) {
 		for name, v := range map[string]assistant.Session{
 			"no id":      {UserID: "u", Kind: assistant.KindFlow, Subject: "x"},
 			"no person":  {ID: "s", Kind: assistant.KindFlow, Subject: "x"},
-			"a bad kind": {ID: "s", UserID: "u", Kind: "dashboard", Subject: "x"},
+			"a bad kind": {ID: "s", UserID: "u", Kind: "widget", Subject: "x"},
 			"no subject": {ID: "s", UserID: "u", Kind: assistant.KindFlow},
 			"a NUL byte": {ID: "s", UserID: "u", Kind: assistant.KindFlow, Subject: "x\x00"},
 		} {
@@ -157,6 +158,58 @@ func RunContract(t *testing.T, open func(t *testing.T) assistant.Store) {
 		}
 	})
 
+	t.Run("a request is kept with its answer and decided in place", func(t *testing.T) {
+		s := open(t)
+		if err := s.SaveAssistantSession(ctx, sess("s1", "u1", assistant.KindGeneral, "", "palette")); err != nil {
+			t.Fatal(err)
+		}
+		req := assistant.Request{Why: "Start a run on it.", State: assistant.RequestPending, Acts: []assistant.Act{
+			{Tool: "start_run", Title: "Start one attempt", Arguments: json.RawMessage(`{"id":"w1","key":"T-1"}`)},
+		}}
+		plain, err := s.AppendAssistantMessage(ctx, assistant.Message{SessionID: "s1", Role: assistant.RolePerson, Text: "run it"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		m, err := s.AppendAssistantMessage(ctx, assistant.Message{SessionID: "s1", Role: assistant.RoleAssistant, Text: "Shall I?", Request: &req})
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Acts[0].Tool = "changed after" // the store kept its own copy
+		got, _ := s.AssistantMessages(ctx, "s1", 0)
+		if len(got) != 2 || got[0].Request != nil || got[1].Request == nil || got[1].Request.Acts[0].Tool != "start_run" ||
+			!sameJSON(got[1].Request.Acts[0].Arguments, `{"id":"w1","key":"T-1"}`) || got[1].Request.State != assistant.RequestPending {
+			t.Fatalf("messages = %+v", got)
+		}
+		done := *got[1].Request
+		done.State, done.Reported = assistant.RequestDone, true
+		done.Acts = []assistant.Act{{Tool: "start_run", Arguments: json.RawMessage(`{}`), Status: 201, Result: "run r1"}}
+		if err := s.SetAssistantRequest(ctx, "s1", m.Seq, assistant.RequestPending, done); err != nil {
+			t.Fatal(err)
+		}
+		// The state moves once: a write expecting it pending finds it done.
+		if err := s.SetAssistantRequest(ctx, "s1", m.Seq, assistant.RequestPending, done); !errors.Is(err, assistant.ErrStale) {
+			t.Errorf("a second move from pending = %v", err)
+		}
+		got, _ = s.AssistantMessages(ctx, "s1", 1)
+		if r := got[0].Request; r.State != assistant.RequestDone || !r.Reported || r.Acts[0].Status != 201 || r.Acts[0].Result != "run r1" {
+			t.Errorf("decided = %+v", r)
+		}
+		for name, err := range map[string]error{
+			"a message with none": s.SetAssistantRequest(ctx, "s1", plain.Seq, assistant.RequestPending, done),
+			"no such message":     s.SetAssistantRequest(ctx, "s1", 99, assistant.RequestPending, done),
+			"no state":            s.SetAssistantRequest(ctx, "s1", m.Seq, assistant.RequestDone, assistant.Request{Acts: done.Acts}),
+			"no acts":             s.SetAssistantRequest(ctx, "s1", m.Seq, assistant.RequestDone, assistant.Request{State: assistant.RequestDone}),
+		} {
+			if !errors.Is(err, assistant.ErrInvalid) {
+				t.Errorf("%s = %v", name, err)
+			}
+		}
+		if _, err := s.AppendAssistantMessage(ctx, assistant.Message{SessionID: "s1", Role: assistant.RoleAssistant,
+			Request: &assistant.Request{State: "maybe", Acts: done.Acts}}); !errors.Is(err, assistant.ErrInvalid) {
+			t.Errorf("a request in no state = %v", err)
+		}
+	})
+
 	t.Run("choices", func(t *testing.T) {
 		s := open(t)
 		c, err := s.AssistantChoice(ctx, "u1")
@@ -176,4 +229,10 @@ func RunContract(t *testing.T, open func(t *testing.T) assistant.Store) {
 			t.Errorf("another's choice = %+v", c)
 		}
 	})
+}
+
+// sameJSON compares JSON as values: a store may reformat it (jsonb).
+func sameJSON(got json.RawMessage, want string) bool {
+	var a, b any
+	return json.Unmarshal(got, &a) == nil && json.Unmarshal([]byte(want), &b) == nil && reflect.DeepEqual(a, b)
 }

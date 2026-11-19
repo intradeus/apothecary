@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { draftSubject, flowFill, skillFill, ticketFill } from './assistant';
+import { dashboardFill, draftSubject, flowFill, runFill, skillFill, ticketFill } from './assistant';
 
 describe('fills', () => {
 	it('a flow fill is the whole document', () => {
@@ -50,5 +50,26 @@ describe('fills', () => {
 	it('draft subjects differ', () => {
 		expect(draftSubject()).toMatch(/^draft-/);
 		expect(draftSubject()).not.toBe(draftSubject());
+	});
+
+	it('a run fill is a flow’s name and its whole document', () => {
+		expect(runFill({ flow: 'ship', yaml: 'name: ship' })).toEqual({
+			flow: 'ship',
+			yaml: 'name: ship'
+		});
+		expect(runFill({ flow: '', yaml: 'x' })).toBeNull();
+		expect(runFill({ yaml: 'x' })).toBeNull();
+		expect(runFill('x')).toBeNull();
+	});
+
+	it('a dashboard fill is every panel', () => {
+		const cur = { panels: [{ title: 'a' }] };
+		expect(dashboardFill(cur, { panels: [{ title: 'b' }, 'junk'] })).toEqual({
+			next: { panels: [{ title: 'b' }] },
+			changed: ['panels']
+		});
+		expect(dashboardFill(cur, { panels: [{ title: 'a' }] })?.changed).toEqual([]);
+		expect(dashboardFill(cur, { panels: {} })).toBeNull();
+		expect(dashboardFill(cur, null)).toBeNull();
 	});
 });

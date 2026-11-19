@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -24,6 +26,7 @@ import (
 	assistantpod "apothecary/internal/adapters/assistant"
 	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/adapters/kube"
+	"apothecary/internal/analytics"
 	"apothecary/internal/assistant"
 	"apothecary/internal/httpapi"
 	"apothecary/internal/platform/config"
@@ -38,7 +41,7 @@ import (
 // wireAssistant builds the assistant over the store and the resolver. stop
 // ends its sweeps.
 func wireAssistant(ctx context.Context, boot *config.Boot, store assistant.Store, conf *confstore.Service, resolver *integrations.Resolver,
-	live *tickets.Live, authsvc *auth.Service, az *authz.Authorizer, log *slog.Logger) (*assistant.Service, func(), error) {
+	live *tickets.Live, authsvc *auth.Service, az *authz.Authorizer, dashboards *analytics.Service, log *slog.Logger) (*assistant.Service, func(), error) {
 	var faceActions []string
 	for _, a := range httpapi.MCPActions() {
 		faceActions = append(faceActions, string(a))
@@ -49,7 +52,7 @@ func wireAssistant(ctx context.Context, boot *config.Boot, store assistant.Store
 		Workshops:   workshopRepos{conf: conf, r: resolver, users: authsvc, az: az},
 		Tokens:      sessionTokens{a: authsvc},
 		FaceActions: faceActions,
-		Checks:      ticketTypes{conf: conf, live: live},
+		Checks:      pageChecks{ticketTypes: ticketTypes{conf: conf, live: live}, dashboards: dashboards},
 		Log:         log,
 	}
 	if !boot.Assistant.Enabled {
@@ -246,6 +249,24 @@ func (s sessionTokens) Mint(ctx context.Context, person, name string, actions, w
 
 func (s sessionTokens) Revoke(ctx context.Context, person, id string) error {
 	return s.a.DeleteToken(ctx, person, id)
+}
+
+// pageChecks are what the pages' checks read: a workshop's ticket types,
+// and the analytics service's rule for a dashboard's panels.
+type pageChecks struct {
+	ticketTypes
+	dashboards *analytics.Service
+}
+
+func (c pageChecks) DashboardPanels(ctx context.Context, person string, raw json.RawMessage) error {
+	var panels []analytics.Panel
+	if err := json.Unmarshal(raw, &panels); err != nil {
+		return fmt.Errorf("panels: %w", err)
+	}
+	if c.dashboards == nil {
+		return errors.New("analytics is not served here")
+	}
+	return c.dashboards.CheckPanels(ctx, person, panels)
 }
 
 // ticketTypes are a workshop's issue types, from its ticket source.

@@ -104,7 +104,9 @@ func TestPageContext(t *testing.T) {
 	}
 	for _, k := range Kinds {
 		p, ok := PageOf(k)
-		if !ok || len(p.Presets) == 0 || p.FillSchema["type"] != "object" || !strings.Contains(p.Instructions, "fill") {
+		// The general page (the command palette's) fills nothing.
+		fills := k != KindGeneral
+		if !ok || len(p.Presets) == 0 || (p.FillSchema["type"] == "object") != fills || !strings.Contains(p.Instructions, "request") {
 			t.Errorf("page %s = %+v", k, p)
 		}
 	}

@@ -6,12 +6,14 @@
 	// saved here: the page's own Save does that.
 	import { onDestroy, onMount, untrack } from 'svelte';
 	import { api } from '$lib/api';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
 	import type {
 		AssistantFrame,
 		AssistantKind,
 		AssistantMessage,
+		AssistantRequest,
 		AssistantSession,
 		AssistantStatus
 	} from '$lib/domain';
@@ -55,6 +57,11 @@
 	let loadError = $state('');
 	let fetching = $state(false);
 	let choice = $state('');
+	/** A request proposed while the answer is written: shown, decided once
+	 *  the answer is in. */
+	let liveRequest = $state<AssistantRequest | null>(null);
+	/** The message whose request is being decided. */
+	let deciding = $state<number | null>(null);
 	let stop: (() => void) | null = null;
 
 	const page = $derived(status?.pages[kind]);
@@ -102,7 +109,12 @@
 				if (f.message.role === 'assistant') {
 					live = '';
 					tool = '';
+					liveRequest = null;
 				}
+				break;
+			case 'request':
+				if (f.message.seq > 0) replace(f.message);
+				else liveRequest = f.message.request ?? null;
 				break;
 			case 'delta':
 				live = f.text;
@@ -132,6 +144,7 @@
 			const open = await api.assistant.open(kind, session.subject, workshop || undefined);
 			messages = open.messages;
 			busy = open.busy;
+			liveRequest = null;
 			if (!busy) {
 				live = '';
 				tool = '';
@@ -164,6 +177,7 @@
 				session = null;
 				messages = [];
 				busy = false;
+				liveRequest = null;
 				guard.answered();
 				void load();
 			});
@@ -185,6 +199,43 @@
 			guard.answered();
 			draft = q;
 			error = errorMessage(e);
+		}
+	}
+
+	/** What an act's ids name, for the person: a workshop's name, a run's
+	 *  title. An id alone hides which run an abort stops. */
+	function named(args: unknown): string[] {
+		if (typeof args !== 'object' || args === null) return [];
+		const out: string[] = [];
+		for (const [k, v] of Object.entries(args)) {
+			if (typeof v !== 'string') continue;
+			const ws = fleet.projectById.get(v);
+			const run = fleet.runById.get(v);
+			if (ws) out.push(t('assistant.namesWorkshop', { arg: k, name: ws.name }));
+			else if (run) out.push(t('assistant.namesRun', { arg: k, name: run.title }));
+		}
+		return out;
+	}
+
+	function replace(m: AssistantMessage) {
+		messages = messages.map((x) => (x.seq === m.seq ? m : x));
+	}
+
+	/** The person's answer to a request: confirmed, its acts run as them. */
+	async function decide(m: AssistantMessage, confirm: boolean) {
+		if (!session || deciding !== null) return;
+		deciding = m.seq;
+		error = '';
+		try {
+			replace(
+				confirm
+					? await api.assistant.confirm(session.id, m.seq)
+					: await api.assistant.decline(session.id, m.seq)
+			);
+		} catch (e) {
+			error = errorMessage(e);
+		} finally {
+			deciding = null;
 		}
 	}
 
@@ -235,6 +286,53 @@
 		}
 	}
 </script>
+
+{#snippet requestCard(r: AssistantRequest, m: AssistantMessage | null)}
+	<div class="request inset col" aria-label={t('assistant.request')}>
+		<strong class="small">{r.why}</strong>
+		<ol class="acts col">
+			{#each r.acts as a, i (i)}
+				<li class="col">
+					<span class="row nowrap">
+						<span class="mono small">{a.tool}</span>
+						{#if a.status}
+							<span class="pill sm mono" class:tint-danger={a.status >= 400}>{a.status}</span>
+						{:else if r.state === 'done'}
+							<span class="pill sm">{t('assistant.notRun')}</span>
+						{/if}
+					</span>
+					{#if a.title}<span class="muted small">{a.title}</span>{/if}
+					{#each named(a.arguments) as n (n)}<span class="small">{n}</span>{/each}
+					<pre class="args mono">{JSON.stringify(a.arguments, null, 2)}</pre>
+					{#if a.result}<span class="result small" title={a.result}>{a.result}</span>{/if}
+				</li>
+			{/each}
+		</ol>
+		{#if !m}
+			<span class="muted small">{t('assistant.requestWaits')}</span>
+		{:else if r.state === 'running'}
+			<span class="pill sm tint-attention"
+				>{deciding === m.seq ? t('assistant.running') : t('assistant.interrupted')}</span
+			>
+		{:else if r.state === 'pending'}
+			<div class="row">
+				<button
+					class="btn-primary btn-sm"
+					onclick={() => decide(m, true)}
+					disabled={deciding !== null}
+					aria-busy={deciding === m.seq}>{t('assistant.confirm')}</button
+				>
+				<button class="btn-sm" onclick={() => decide(m, false)} disabled={deciding !== null}
+					>{t('assistant.decline')}</button
+				>
+			</div>
+		{:else}
+			<span class="pill sm" class:tint-accent={r.state === 'done'}
+				>{r.state === 'done' ? t('assistant.confirmed') : t('assistant.declined')}</span
+			>
+		{/if}
+	</div>
+{/snippet}
 
 <section class="assistant glass pane" aria-label={t('assistant.title')}>
 	<div class="pane-head">
@@ -339,6 +437,9 @@
 							>{m.role === 'person' ? t('assistant.you') : t('assistant.it')}</span
 						>
 						{#if m.text}<p class="text">{m.text}</p>{/if}
+						{#if m.request}
+							{@render requestCard(m.request, m)}
+						{/if}
 						{#if m.fill !== undefined}
 							<span class="row">
 								<span class="pill sm tint-accent">{t('assistant.filledNote')}</span>
@@ -354,6 +455,7 @@
 					<div class="msg">
 						<span class="who muted small">{t('assistant.it')}</span>
 						{#if live}<p class="text">{live}</p>{/if}
+						{#if liveRequest}{@render requestCard(liveRequest, null)}{/if}
 						<span class="muted small">{tool || note || t('assistant.thinking')}</span>
 					</div>
 				{/if}
@@ -430,6 +532,28 @@
 		flex-wrap: wrap;
 		gap: 6px;
 		align-items: center;
+	}
+	.request {
+		gap: 6px;
+		padding: 8px 10px;
+	}
+	.acts {
+		margin: 0;
+		padding-left: 18px;
+		gap: 6px;
+	}
+	.args {
+		margin: 0;
+		max-height: 120px;
+		overflow: auto;
+		font-size: var(--fs-meta);
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	.result {
+		overflow-wrap: anywhere;
+		max-height: 4.5em;
+		overflow: hidden;
 	}
 	.filled {
 		gap: 8px;
