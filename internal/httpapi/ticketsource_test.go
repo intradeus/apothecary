@@ -27,6 +27,13 @@ func TestTrackerHome(t *testing.T) {
 		{"internal", confstore.KindInternal, nil, ""},
 		{"an address that is no web page", "jira", map[string]any{"base_url": "javascript:alert(1)"}, ""},
 		{"an address with no host", "jira", map[string]any{"base_url": "https://"}, ""},
+		{"jira site with credentials", "jira", map[string]any{"base_url": "https://alice:secret@jira.example/?token=private#fragment"}, "https://jira.example"},
+		{"gitlab host with credentials", "gitlab", map[string]any{"base_url": "https://oauth2:glpat-x@git.acme/sub/?private_token=y#z", "projects": "acme/app"},
+			"https://git.acme/sub/acme/app/-/issues"},
+		{"github enterprise with credentials", "github", map[string]any{"base_url": "https://bob:pw@gh.acme/api/v3/?access_token=t#f", "repos": "a/b"}, "https://gh.acme/a/b/issues"},
+		{"github.com with credentials", "github", map[string]any{"base_url": "https://u:p@api.github.com?x=1", "repos": "a/b"}, "https://github.com/a/b/issues"},
+		{"a scope that would add a query", "github", map[string]any{"repos": "a/b?token=t#f"}, "https://github.com/a/b%3Ftoken=t%23f/issues"},
+		{"an unknown kind", "trello", map[string]any{"base_url": "https://trello.com"}, ""},
 	} {
 		if got := trackerHome(c.kind, c.config); got != c.want {
 			t.Errorf("%s: %q, want %q", c.name, got, c.want)

@@ -51,7 +51,10 @@ func (s *Server) ticketSourceView(ctx context.Context, id string, seen projectLo
 // trackerHome is where a remote tracker's issues are browsed, from its
 // config: the site for Jira, the one project's or repository's issues on
 // GitLab and GitHub (the host alone when the scope names several). "" when
-// there is no telling, or the address is no http(s) one.
+// there is no telling, or the address is no http(s) one. The address is
+// the configured one stripped of whatever may carry a credential — its
+// user info, query and fragment — since everyone the workshop is shared
+// with reads it.
 func trackerHome(kind string, config map[string]any) string {
 	str := func(key string) string {
 		v, _ := config[key].(string)
@@ -73,27 +76,36 @@ func trackerHome(kind string, config map[string]any) string {
 		return one
 	}
 	base := str("base_url")
-	var home string
+	var scope []string
 	switch kind {
 	case "jira":
-		home = base
 	case "gitlab":
-		home = cmp.Or(base, "https://gitlab.com")
+		base = cmp.Or(base, "https://gitlab.com")
 		if p := only("projects"); p != "" {
-			home += "/" + p + "/-/issues"
+			scope = []string{p, "-", "issues"}
 		}
 	case "github":
-		// base_url is the API: api.github.com, or <host>/api/v3 on Enterprise.
-		home = "https://github.com"
-		if api := cmp.Or(base, "https://api.github.com"); api != "https://api.github.com" {
-			home = strings.TrimSuffix(api, "/api/v3")
-		}
+		base = cmp.Or(base, "https://api.github.com")
 		if r := only("repos"); r != "" {
-			home += "/" + r + "/issues"
+			scope = []string{r, "issues"}
 		}
-	}
-	if u, err := url.Parse(home); err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+	default:
 		return ""
 	}
-	return home
+	u, err := url.Parse(base)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return ""
+	}
+	home := url.URL{Scheme: u.Scheme, Host: u.Host, Path: strings.TrimRight(u.Path, "/")}
+	if kind == "github" {
+		// base_url is the API: api.github.com, or <host>/api/v3 on Enterprise.
+		if home.Host == "api.github.com" {
+			home = url.URL{Scheme: "https", Host: "github.com"}
+		}
+		home.Path = strings.TrimSuffix(home.Path, "/api/v3")
+	}
+	if scope != nil {
+		home = *home.JoinPath(scope...)
+	}
+	return home.String()
 }

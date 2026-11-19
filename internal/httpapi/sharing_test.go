@@ -811,4 +811,32 @@ func TestSharedWorkshopShowsItsTicketSource(t *testing.T) {
 	if rows := decode[[]ProjectView](t, x.expect(t, "operator", op, "GET", "/api/projects", nil, http.StatusOK)); len(rows) != 1 || rows[0].TicketSource == nil || *rows[0].TicketSource != want {
 		t.Errorf("listed = %+v", rows)
 	}
+
+	// A tracker address carrying credentials reaches its readers as the
+	// bare browse address.
+	for _, c := range []struct{ kind, baseURL, home string }{
+		{"jira", "https://alice:SECRET-USERINFO@jira.example/?token=SECRET-QUERY#SECRET-FRAGMENT", "https://jira.example"},
+		{"github", "https://bob:SECRET-USERINFO@gh.acme/api/v3?access_token=SECRET-QUERY#SECRET-FRAGMENT", "https://gh.acme/acme/app/issues"},
+	} {
+		x.conf.KindValid = nil
+		in, err := x.conf.CreateIntegration(ctx, confstore.Integration{UserID: testUser, Port: confstore.PortTicketSource, Kind: c.kind, Name: c.kind,
+			Config: map[string]any{"base_url": c.baseURL, "repos": "acme/app"}})
+		x.conf.KindValid = valid
+		if err != nil {
+			t.Fatal(err)
+		}
+		full["ticket_source_id"] = in.ID
+		x.expect(t, "owner", nil, "PUT", path, full, http.StatusOK)
+		for _, data := range [][]byte{
+			x.expect(t, "operator", op, "GET", path, nil, http.StatusOK),
+			x.expect(t, "operator", op, "GET", "/api/projects", nil, http.StatusOK),
+		} {
+			if strings.Contains(string(data), "SECRET") {
+				t.Errorf("%s: a credential in the tracker address leaked: %s", c.kind, data)
+			}
+		}
+		if src := source(x.expect(t, "operator", op, "GET", path, nil, http.StatusOK)); src == nil || src.Home != c.home {
+			t.Errorf("%s: source = %+v, want home %q", c.kind, src, c.home)
+		}
+	}
 }
