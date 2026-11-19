@@ -38,9 +38,10 @@ type Reach struct {
 	Role      string
 }
 
-// PutMember shares a workshop with an account, or changes its role there.
-// The owner is not a member.
-func (s *Service) PutMember(ctx context.Context, m Member) (Member, error) {
+// PutMember shares a workshop with an account, or changes its role there,
+// when its role there is still from ("": not yet a member) — ErrConflict
+// when it changed meanwhile. The owner is not a member.
+func (s *Service) PutMember(ctx context.Context, m Member, from string) (Member, error) {
 	if !slices.Contains(MemberRoles, m.Role) {
 		return Member{}, invalidf("role must be viewer, operator or maintainer")
 	}
@@ -51,12 +52,8 @@ func (s *Service) PutMember(ctx context.Context, m Member) (Member, error) {
 	if p.UserID == m.UserID {
 		return Member{}, invalidf("the owner of a workshop is not one of its members")
 	}
-	if old, err := s.db.GetMember(ctx, m.ProjectID, m.UserID); err == nil {
-		m.CreatedAt = old.CreatedAt
-	} else {
-		m.CreatedAt = s.now().UTC()
-	}
-	if err := s.db.PutMember(ctx, m); err != nil {
+	m.CreatedAt = s.now().UTC() // a change keeps the stored one
+	if err := s.db.PutMember(ctx, m, from); err != nil {
 		return Member{}, err
 	}
 	return s.db.GetMember(ctx, m.ProjectID, m.UserID)
@@ -70,8 +67,11 @@ func (s *Service) ListMembers(ctx context.Context, projectID string) ([]Member, 
 	return s.db.ListMembers(ctx, projectID)
 }
 
-func (s *Service) DeleteMember(ctx context.Context, projectID, userID string) error {
-	return s.db.DeleteMember(ctx, projectID, userID)
+// DeleteMember stops sharing a workshop with an account whose role there is
+// still from: ErrConflict when it changed meanwhile, ErrNotFound when it
+// is no member.
+func (s *Service) DeleteMember(ctx context.Context, projectID, userID, from string) error {
+	return s.db.DeleteMember(ctx, projectID, userID, from)
 }
 
 // ProjectAccess is a project's owner and userID's role on it: RoleOwner

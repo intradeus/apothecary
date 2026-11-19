@@ -908,11 +908,19 @@ func (s *Store) ListVisibleProjects(ctx context.Context, userID string, projectI
 	return out, rows.Err()
 }
 
-func (s *Store) PutMember(ctx context.Context, m confstore.Member) error {
-	_, err := s.pool.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role, created_at)
-		VALUES ($1,$2,$3,$4)
-		ON CONFLICT (project_id, user_id) DO UPDATE SET role=EXCLUDED.role`,
-		m.ProjectID, m.UserID, m.Role, m.CreatedAt)
+func (s *Store) PutMember(ctx context.Context, m confstore.Member, from string) error {
+	// One statement each way: the role is compared and written atomically.
+	var tag pgconn.CommandTag
+	var err error
+	if from == "" {
+		tag, err = s.pool.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role, created_at)
+			VALUES ($1,$2,$3,$4) ON CONFLICT (project_id, user_id) DO NOTHING`,
+			m.ProjectID, m.UserID, m.Role, m.CreatedAt)
+	} else {
+		tag, err = s.pool.Exec(ctx, `UPDATE project_members SET role=$3
+			WHERE project_id=$1 AND user_id=$2 AND role=$4`,
+			m.ProjectID, m.UserID, m.Role, from)
+	}
 	var pg *pgconn.PgError
 	switch {
 	case errors.As(err, &pg) && pg.Code == "23514":
@@ -921,8 +929,23 @@ func (s *Store) PutMember(ctx context.Context, m confstore.Member) error {
 		return fmt.Errorf("project %s: %w", m.ProjectID, confstore.ErrNotFound)
 	case isFK(err):
 		return fmt.Errorf("user %s: %w", m.UserID, confstore.ErrNotFound)
+	case err != nil:
+		return err
+	case tag.RowsAffected() == 1:
+		return nil
 	}
-	return err
+	if _, err := s.GetProject(ctx, m.ProjectID); err != nil {
+		return err
+	}
+	return memberChanged(m.UserID, from)
+}
+
+// memberChanged is a compare-and-swap that lost: the role is no longer from.
+func memberChanged(userID, from string) error {
+	if from == "" {
+		from = "none"
+	}
+	return fmt.Errorf("member %s: the role is no longer %s; reload and try again: %w", userID, from, confstore.ErrConflict)
 }
 
 const memberCols = `project_id, user_id, role, created_at`
@@ -954,15 +977,18 @@ func (s *Store) ListMembers(ctx context.Context, projectID string) ([]confstore.
 	return out, rows.Err()
 }
 
-func (s *Store) DeleteMember(ctx context.Context, projectID, userID string) error {
-	tag, err := s.pool.Exec(ctx, `DELETE FROM project_members WHERE project_id=$1 AND user_id=$2`, projectID, userID)
+func (s *Store) DeleteMember(ctx context.Context, projectID, userID, from string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM project_members WHERE project_id=$1 AND user_id=$2 AND role=$3`, projectID, userID, from)
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("member %s: %w", userID, confstore.ErrNotFound)
+	if tag.RowsAffected() == 1 {
+		return nil
 	}
-	return nil
+	if _, err := s.GetMember(ctx, projectID, userID); err != nil {
+		return err
+	}
+	return memberChanged(userID, from)
 }
 
 func (s *Store) ProjectAccess(ctx context.Context, projectID, userID string) (string, string, error) {

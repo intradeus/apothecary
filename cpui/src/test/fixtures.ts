@@ -65,7 +65,8 @@ export const aProject = (over: Partial<Project> = {}): Project =>
 		...over
 	}) as Project;
 
-/** Every action a workshop role can hold: what its owner has. */
+/** What a workshop's owner holds: every workshop action but project:leave
+ *  (an owner deletes its workshop, it never leaves it). */
 export const PROJECT_ACTIONS = [
 	'project:read',
 	'project:write',
@@ -83,7 +84,10 @@ export const aViewerProject = (over: Partial<Project> = {}): Project =>
 	aProject({
 		ownerId: 'u2',
 		ownerHandle: 'ada',
-		access: { role: 'viewer', actions: ['project:read', 'run:read', 'ticket:read'] },
+		access: {
+			role: 'viewer',
+			actions: ['project:read', 'project:leave', 'run:read', 'ticket:read']
+		},
 		...over
 	});
 

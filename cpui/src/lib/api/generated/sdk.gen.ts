@@ -3536,7 +3536,7 @@ export const listMembers = <ThrowOnError extends boolean = false>(
 /**
  * Share a project with an account, by handle or email
  *
- * role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself.
+ * role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself; 409 when the account's role there changed while this was decided (reload and retry).
  */
 export const addMember = <ThrowOnError extends boolean = false>(
 	options: Options<AddMemberData, ThrowOnError>
@@ -3565,7 +3565,7 @@ export const addMember = <ThrowOnError extends boolean = false>(
 /**
  * Stop sharing a project with a member
  *
- * Only the owner removes a maintainer.
+ * Only the owner removes a maintainer. 409 when the role changed while this was decided (reload and retry).
  */
 export const removeMember = <ThrowOnError extends boolean = false>(
 	options: Options<RemoveMemberData, ThrowOnError>
@@ -3590,7 +3590,7 @@ export const removeMember = <ThrowOnError extends boolean = false>(
 /**
  * Change a member's role
  *
- * Only the owner makes or unmakes a maintainer.
+ * Only the owner makes or unmakes a maintainer. 409 when the role changed while this was decided (reload and retry).
  */
 export const updateMember = <ThrowOnError extends boolean = false>(
 	options: Options<UpdateMemberData, ThrowOnError>
@@ -3618,6 +3618,8 @@ export const updateMember = <ThrowOnError extends boolean = false>(
 
 /**
  * Leave a project shared with one
+ *
+ * project:leave: every member holds it, the owner does not (it deletes the project instead), and a limited token never does.
  */
 export const leaveProject = <ThrowOnError extends boolean = false>(
 	options: Options<LeaveProjectData, ThrowOnError>
@@ -5568,7 +5570,7 @@ export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
 /**
  * One file anywhere in the workspace, by absolute or ~ path
  *
- * Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
+ * Read as the workspace's remote user, the terminal's reach (run:shell); path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
  */
 export const getWorkspacePathFile = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspacePathFileData, ThrowOnError>
@@ -5597,7 +5599,7 @@ export const getWorkspacePathFile = <ThrowOnError extends boolean = false>(
 /**
  * One directory level anywhere in the workspace, by absolute or ~ path
  *
- * Read as the workspace's remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).
+ * Read as the workspace's remote user, the same reach as its terminal, so it takes the terminal's run:shell: nothing that user can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).
  */
 export const getWorkspacePathTree = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspacePathTreeData, ThrowOnError>
@@ -5651,7 +5653,7 @@ export const getWorkspaceRepos = <ThrowOnError extends boolean = false>(
 /**
  * Where a path mentioned in the run lives: a checkout's file or an absolute one
  *
- * A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
+ * A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. Outside the checkouts is the terminal's reach: 403 without run:shell, whether or not something is there. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
  */
 export const resolveWorkspacePath = <ThrowOnError extends boolean = false>(
 	options: Options<ResolveWorkspacePathData, ThrowOnError>
@@ -5680,7 +5682,7 @@ export const resolveWorkspacePath = <ThrowOnError extends boolean = false>(
 /**
  * Whether each of a batch of workspace paths exists, with its size and mtime
  *
- * What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.
+ * What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch — an absolute one without run:shell (the terminal's reach) among them. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.
  */
 export const statWorkspacePaths = <ThrowOnError extends boolean = false>(
 	options: Options<StatWorkspacePathsData, ThrowOnError>

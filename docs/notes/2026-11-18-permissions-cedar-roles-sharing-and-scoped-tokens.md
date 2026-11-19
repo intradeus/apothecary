@@ -30,13 +30,17 @@ policy matrix is the real guard.
 
 - **Actions** are one closed vocabulary, `kind:verb`
   (`internal/account/authz/actions.go`): `instance:admin`; `account:read`,
-  `account:manage`; `project:create|read|write|members|delete`;
+  `account:manage`; `project:create|read|write|members|leave|delete`;
   `run:read|operate|shell`; `ticket:read|write`; and `read|write` of each
   personal kind (integration, credential, channel, skill, analytics,
   notice, settings). Every user route declares exactly one (`Route.Action`,
   emitted in the spec as `x-apothecary-action`); `GET /api/permissions`
   serves the list. The terminal, the port tunnel and the SSH tunnel —
-  outside the table — declare `run:shell`.
+  outside the table — declare `run:shell`, and so does a workspace read
+  past its checkouts: `workspace/path/tree|file`, and an absolute path in
+  `workspace/stat` (that item is refused) or `workspace/resolve` (403,
+  whether or not it exists). Inside the checkouts is `run:read`; the
+  sidecar keeps a checkout path, symlinks resolved, inside its checkout.
 - **Instance roles** (`users.role`, migration 0010): `admin` is a member
   who also holds `instance:admin` — and nothing else: no rule grants an
   admin a view into anyone's work. `member` is today's user. `guest`
@@ -59,7 +63,12 @@ policy matrix is the real guard.
   ask, take over, egress allow) and writes tickets; maintainer also
   changes settings, flows, automations and secrets, shares (up to
   maintainer) and opens a shell. Only the owner deletes the workshop and
-  adds, changes or removes a maintainer. Personal configuration is never
+  adds, changes or removes a maintainer. That rule is checked against the
+  member's role as the handler read it, and the write is a
+  compare-and-swap on that role (`PutMember`/`DeleteMember` take `from`):
+  a role changed in between — an operator promoted while a maintainer's
+  demotion was in flight — answers 409 and writes nothing. Every member
+  holds `project:leave`, the owner does not. Personal configuration is never
   shared. A ticket or a run a collaborator writes or starts is still the
   owner's; the files they attach are their own uploads, claimed as theirs
   (never as the owner's on their behalf), and a ticket's files are the
@@ -69,8 +78,10 @@ policy matrix is the real guard.
   sign-in. A scoped token holds a non-empty action list and, optionally,
   some workshops. Each request is the intersection of what the account may
   do now and what the token holds: a role or a membership lost narrows the
-  token at once. A scoped token never holds `account:manage`, so it can
-  neither mint a wider token nor change the password. A token limited to
+  token at once. A scoped token never holds `account:manage` or
+  `project:leave` (neither is grantable, and a policy forbids them past
+  the mint), so it can neither mint a wider token, change the password,
+  nor take its account off a workshop. A token limited to
   workshops reaches a workshop's kind of resource (workshop, run, ticket)
   only inside them — one in no workshop (a run from before workshops, an
   upload not claimed yet) is outside every limit; personal configuration is
@@ -94,8 +105,14 @@ policy matrix is the real guard.
   validates a grant through `CheckGrant` (wired to `authz.ValidateGrant`);
   nil refuses every scoped token.
 - Leaving a workshop is its own route, `DELETE
-  /api/projects/{id}/members/me` (`project:read`), so removing someone
-  else stays `project:members`.
+  /api/projects/{id}/members/me`, with its own action `project:leave`
+  (every member's, never a scoped token's), so removing someone else stays
+  `project:members` and a token that may only see workshops cannot leave
+  one.
+- The settings form of a workshop shared with the caller keeps the
+  owner's harness integrations as they are and offers none of the
+  caller's: the caller cannot see the owner's, and the engine takes no one
+  else's.
 - `GET /api/tickets/{id}` resolves a ticket's workshop as the first of its
   owner's workshops on the ticket's source that the caller is a member of.
 - Analytics takes the visible project ids only (as planned): a run whose
@@ -109,9 +126,9 @@ policy matrix is the real guard.
   owner stands down runs collaborators started.
 - A workspace holds the owner's injected repository and model
   credentials, so `run:shell` (terminal, editor, exposed ports, port
-  tunnel, SSH) is a maintainer's. Ask and take-over can read workspace
-  files too and sit at operator: "operator" means trusted with the
-  workshop's credentials in practice.
+  tunnel, SSH, files outside the checkouts) is a maintainer's. Ask and
+  take-over can read workspace files too and sit at operator: "operator"
+  means trusted with the workshop's credentials in practice.
 - Adding a member by handle or email tells anyone holding
   `project:members` whether an account exists. Acceptable inside one
   instance.
@@ -126,12 +143,15 @@ relation × action, with the 404/403 split), `TestAdminSeesNoOneElsesWork`,
 `TestTokenIsAnIntersection`, `TestVisibility`, `TestVocabularyIsClosed`
 (schema validation of the policies, entities and requests). `httpapi`:
 `TestEveryRouteDeclaresItsAccess`, `TestSharedWorkshop`,
-`TestMembersRoutes`, `TestGuestRole`, `TestScopedTokenLifecycle`,
-`TestListsEqualTheGuard`, and the existing guard walks unchanged in what
-they assert; `TestAppGrantFollowsTheMembership`,
-`TestOperatorsAttachTheirOwnUploads`. Stores: `authtest` (role and grant
-round-trips, each user write writing its own columns, the last enabled
-admin under two simultaneous demotions), `conftest` (members),
-`TestListsSeeByWorkshop`, the three migration tests; `auth`:
-`TestAProfileEditCannotUndoARoleChange`. `sshdoor`:
-`TestDoorSharedWorkshop`.
+`TestWorkspaceBeyondTheCheckoutsIsTheShells`, `TestMembersRoutes`,
+`TestMemberChangesFromAStaleRole`, `TestGuestRole`,
+`TestScopedTokenLifecycle`, `TestListsEqualTheGuard`, and the existing
+guard walks unchanged in what they assert;
+`TestAppGrantFollowsTheMembership`, `TestOperatorsAttachTheirOwnUploads`.
+Stores: `authtest` (role and grant round-trips, each user write writing
+its own columns, the last enabled admin under two simultaneous
+demotions), `conftest` (members, a write from a stale role, two writes
+racing from the same role), `TestListsSeeByWorkshop`, the three migration
+tests; `auth`: `TestAProfileEditCannotUndoARoleChange`. `sshdoor`:
+`TestDoorSharedWorkshop`. cpui: `ProjectForm.test.ts` (a shared
+workshop's harnesses kept through an edit).

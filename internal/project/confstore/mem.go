@@ -358,7 +358,7 @@ func (m *Mem) ListVisibleProjects(_ context.Context, userID string, projectIDs [
 	return out, nil
 }
 
-func (m *Mem) PutMember(_ context.Context, x Member) error {
+func (m *Mem) PutMember(_ context.Context, x Member, from string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !slices.Contains(MemberRoles, x.Role) {
@@ -367,12 +367,25 @@ func (m *Mem) PutMember(_ context.Context, x Member) error {
 	if _, ok := m.projects[x.ProjectID]; !ok {
 		return notFound("project", x.ProjectID)
 	}
-	x.CreatedAt = pgTime(x.CreatedAt)
-	if old, ok := m.members[flowKey(x.ProjectID, x.UserID)]; ok {
-		x.CreatedAt = old.CreatedAt // parity with pg: an upsert changes the role only
+	k := flowKey(x.ProjectID, x.UserID)
+	old, ok := m.members[k]
+	if old.Role != from {
+		return memberChanged(x.UserID, from)
 	}
-	m.members[flowKey(x.ProjectID, x.UserID)] = x
+	x.CreatedAt = pgTime(x.CreatedAt)
+	if ok {
+		x.CreatedAt = old.CreatedAt // parity with pg: a change is the role only
+	}
+	m.members[k] = x
 	return nil
+}
+
+// memberChanged is a compare-and-swap that lost: the role is no longer from.
+func memberChanged(userID, from string) error {
+	if from == "" {
+		from = "none"
+	}
+	return fmt.Errorf("member %s: the role is no longer %s; reload and try again: %w", userID, from, ErrConflict)
 }
 
 func (m *Mem) GetMember(_ context.Context, projectID, userID string) (Member, error) {
@@ -403,12 +416,16 @@ func (m *Mem) ListMembers(_ context.Context, projectID string) ([]Member, error)
 	return out, nil
 }
 
-func (m *Mem) DeleteMember(_ context.Context, projectID, userID string) error {
+func (m *Mem) DeleteMember(_ context.Context, projectID, userID, from string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	k := flowKey(projectID, userID)
-	if _, ok := m.members[k]; !ok {
+	old, ok := m.members[k]
+	if !ok {
 		return notFound("member", userID)
+	}
+	if old.Role != from {
+		return memberChanged(userID, from)
 	}
 	delete(m.members, k)
 	return nil

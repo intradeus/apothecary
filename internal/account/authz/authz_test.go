@@ -117,12 +117,14 @@ var workshopMatrix = map[Action][5]Outcome{
 	ProjectRead:    {A, A, A, A, H},
 	ProjectWrite:   {A, A, R, R, H},
 	ProjectMembers: {A, A, R, R, H},
-	ProjectDelete:  {A, R, R, R, H},
-	RunRead:        {A, A, A, A, H},
-	RunOperate:     {A, A, A, R, H},
-	RunShell:       {A, A, R, R, H},
-	TicketRead:     {A, A, A, A, H},
-	TicketWrite:    {A, A, A, R, H},
+	// Leaving is a member's: the owner deletes its workshop instead.
+	ProjectLeave:  {R, A, A, A, H},
+	ProjectDelete: {A, R, R, R, H},
+	RunRead:       {A, A, A, A, H},
+	RunOperate:    {A, A, A, R, H},
+	RunShell:      {A, A, R, R, H},
+	TicketRead:    {A, A, A, A, H},
+	TicketWrite:   {A, A, A, R, H},
 }
 
 // instanceMatrix is the spec of the routes with no resource in their path:
@@ -135,6 +137,7 @@ var instanceMatrix = map[Action][3]Outcome{
 	ProjectRead:      {A, A, A},
 	ProjectWrite:     {A, A, A},
 	ProjectMembers:   {A, A, A},
+	ProjectLeave:     {R, R, R},
 	ProjectDelete:    {R, R, R},
 	RunRead:          {A, A, A},
 	RunOperate:       {A, A, A},
@@ -342,17 +345,26 @@ func TestTokenIsAnIntersection(t *testing.T) {
 		}
 	})
 
-	t.Run("never account:manage", func(t *testing.T) {
-		// Past the mint's validation, the policies still refuse it.
-		tok := withToken(person("viewer", auth.RoleAdmin), []string{"account:manage", "account:read"}, nil)
+	t.Run("never account:manage, never project:leave", func(t *testing.T) {
+		// Past the mint's validation, the policies still refuse them.
+		tok := withToken(person("viewer", auth.RoleAdmin), []string{"account:manage", "account:read", "project:leave", "project:read"}, nil)
 		if got := decide(t, a, tok, AccountManage, nil); got != R {
 			t.Errorf("a scoped token managing its account = %v", got)
 		}
 		if got := decide(t, a, tok, AccountRead, nil); got != A {
 			t.Errorf("reading it = %v", got)
 		}
-		if err := ValidateGrant([]string{"account:manage"}); err == nil {
-			t.Error("account:manage was grantable")
+		shared := &Resource{Kind: KindProject, ID: "P", Owner: "owner", ProjectID: "P"}
+		if got := decide(t, a, tok, ProjectLeave, shared); got != R {
+			t.Errorf("a scoped token leaving a workshop = %v", got)
+		}
+		if got := decide(t, a, tok, ProjectRead, shared); got != A {
+			t.Errorf("seeing it = %v", got)
+		}
+		for _, act := range []string{"account:manage", "project:leave"} {
+			if err := ValidateGrant([]string{act}); err == nil {
+				t.Errorf("%s was grantable", act)
+			}
 		}
 	})
 
@@ -426,9 +438,9 @@ func TestAccess(t *testing.T) {
 		want []Action
 	}{
 		{"owner", RoleOwner, []Action{ProjectRead, ProjectWrite, ProjectMembers, ProjectDelete, RunRead, RunOperate, RunShell, TicketRead, TicketWrite}},
-		{"maintainer", RoleMaintainer, []Action{ProjectRead, ProjectWrite, ProjectMembers, RunRead, RunOperate, RunShell, TicketRead, TicketWrite}},
-		{"operator", RoleOperator, []Action{ProjectRead, RunRead, RunOperate, TicketRead, TicketWrite}},
-		{"viewer", RoleViewer, []Action{ProjectRead, RunRead, TicketRead}},
+		{"maintainer", RoleMaintainer, []Action{ProjectRead, ProjectWrite, ProjectMembers, ProjectLeave, RunRead, RunOperate, RunShell, TicketRead, TicketWrite}},
+		{"operator", RoleOperator, []Action{ProjectRead, ProjectLeave, RunRead, RunOperate, TicketRead, TicketWrite}},
+		{"viewer", RoleViewer, []Action{ProjectRead, ProjectLeave, RunRead, TicketRead}},
 		{"none", "", nil},
 	} {
 		role, acts, err := a.Access(ctx, person(tc.who, auth.RoleMember), "P")

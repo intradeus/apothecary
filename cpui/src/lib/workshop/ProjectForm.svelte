@@ -65,7 +65,12 @@
 	const initFlows = untrack(() => flows);
 	const byPort = (port: string) => untrack(() => integrations).filter((i) => i.port === port);
 	const repoAccounts = byPort('repository');
-	const harnesses = byPort('harness');
+	// A workshop shared with the caller runs on its owner's harnesses: the
+	// caller's list holds none of them (they are the owner's to see), and the
+	// engine takes no one else's. They are kept as they are and none of the
+	// caller's own is offered.
+	const shared = !!init && init.access.role !== 'owner';
+	const harnesses = shared ? [] : byPort('harness');
 	const ticketSources = byPort('ticketsource');
 	const flowNames = initFlows.map((f) => f.name);
 	const ownFlows = initFlows.filter((f) => !f.builtin);
@@ -87,8 +92,10 @@
 	let harnessIds = $state<string[]>(
 		init?.harnessIds?.length ? [...init.harnessIds] : harnesses[0] ? [harnesses[0].id] : []
 	);
-	// Dedup by kind (one per kind), preserving selection order.
+	// Dedup by kind (one per kind), preserving selection order; one no
+	// longer there is dropped. A shared workshop's are its owner's, kept.
 	function harnessSet(): string[] {
+		if (shared) return [...harnessIds];
 		const ids: string[] = [];
 		const seen = new Set<string>();
 		for (const id of harnessIds) {
@@ -404,7 +411,7 @@
 		>
 			<TicketSourceSection sources={ticketSources} bind:ticketSourceId />
 		</WorkshopSection>
-		<ExecutionSection {harnesses} bind:harnessIds />
+		<ExecutionSection {harnesses} {shared} bind:harnessIds />
 		<WorkspaceSection
 			{blockedDomains}
 			bind:egressMode

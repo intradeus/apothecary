@@ -10232,7 +10232,7 @@ paths:
         - projects
       x-apothecary-action: project:read
     post:
-      description: role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself.
+      description: role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself; 409 when the account's role there changed while this was decided (reload and retry).
       operationId: addMember
       parameters:
         - in: path
@@ -10286,7 +10286,7 @@ paths:
       x-apothecary-action: project:members
   /api/projects/{id}/members/{uid}:
     delete:
-      description: Only the owner removes a maintainer.
+      description: Only the owner removes a maintainer. 409 when the role changed while this was decided (reload and retry).
       operationId: removeMember
       parameters:
         - in: path
@@ -10334,7 +10334,7 @@ paths:
         - projects
       x-apothecary-action: project:members
     put:
-      description: Only the owner makes or unmakes a maintainer.
+      description: Only the owner makes or unmakes a maintainer. 409 when the role changed while this was decided (reload and retry).
       operationId: updateMember
       parameters:
         - in: path
@@ -10393,6 +10393,7 @@ paths:
       x-apothecary-action: project:members
   /api/projects/{id}/members/me:
     delete:
+      description: 'project:leave: every member holds it, the owner does not (it deletes the project instead), and a limited token never does.'
       operationId: leaveProject
       parameters:
         - in: path
@@ -10433,7 +10434,7 @@ paths:
       summary: Leave a project shared with one
       tags:
         - projects
-      x-apothecary-action: project:read
+      x-apothecary-action: project:leave
   /api/projects/{id}/mrs:
     get:
       description: 'The repository''s open merge requests, newest first: each with its author and head, and the runs that went through it here — how many have it in their data (started on it, or opened it) and the newest. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.'
@@ -14060,7 +14061,7 @@ paths:
       x-apothecary-action: run:read
   /api/runs/{id}/workspace/path/file:
     get:
-      description: Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
+      description: Read as the workspace's remote user, the terminal's reach (run:shell); path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
       operationId: getWorkspacePathFile
       parameters:
         - in: path
@@ -14106,10 +14107,10 @@ paths:
       summary: One file anywhere in the workspace, by absolute or ~ path
       tags:
         - workspace
-      x-apothecary-action: run:read
+      x-apothecary-action: run:shell
   /api/runs/{id}/workspace/path/tree:
     get:
-      description: 'Read as the workspace''s remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace''s sidecar predates this route (restart or rebuild the workspace).'
+      description: 'Read as the workspace''s remote user, the same reach as its terminal, so it takes the terminal''s run:shell: nothing that user can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace''s sidecar predates this route (restart or rebuild the workspace).'
       operationId: getWorkspacePathTree
       parameters:
         - in: path
@@ -14158,7 +14159,7 @@ paths:
       summary: One directory level anywhere in the workspace, by absolute or ~ path
       tags:
         - workspace
-      x-apothecary-action: run:read
+      x-apothecary-action: run:shell
   /api/runs/{id}/workspace/repos:
     get:
       operationId: getWorkspaceRepos
@@ -14207,7 +14208,7 @@ paths:
       x-apothecary-action: run:read
   /api/runs/{id}/workspace/resolve:
     get:
-      description: A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
+      description: 'A relative path is tried in the checkout repo names first, then in the run''s other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. Outside the checkouts is the terminal''s reach: 403 without run:shell, whether or not something is there. 404 when nothing exists, 501 when the workspace''s sidecar predates this route.'
       operationId: resolveWorkspacePath
       parameters:
         - in: path
@@ -14261,7 +14262,7 @@ paths:
       x-apothecary-action: run:read
   /api/runs/{id}/workspace/stat:
     post:
-      description: 'What the Files pane polls to notice changes: each item is a checkout''s (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace''s sidecar predates this route.'
+      description: 'What the Files pane polls to notice changes: each item is a checkout''s (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch — an absolute one without run:shell (the terminal''s reach) among them. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace''s sidecar predates this route.'
       operationId: statWorkspacePaths
       parameters:
         - in: path

@@ -16,7 +16,7 @@
 <script lang="ts">
 	// Members tab: who else works in this workshop. The owner heads the list;
 	// a caller holding project:members adds, re-roles and removes members
-	// (maintainers only by the owner); a member may leave.
+	// (maintainers only by the owner); a member may leave (project:leave).
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
@@ -52,6 +52,7 @@
 
 	const owner = $derived(project.access.role === 'owner');
 	const manage = $derived(projectCan(project, 'project:members'));
+	const mayLeave = $derived(projectCan(project, 'project:leave'));
 	const ownerHandle = $derived(project.ownerHandle ?? session.user?.handle ?? '');
 	const ownerName = $derived(project.ownerHandle ? '' : (session.user?.name ?? ''));
 	const roleOptions = $derived(
@@ -144,7 +145,7 @@
 </script>
 
 <p class="lede">{t('workshop.members.lede')}</p>
-{#if !owner}
+{#if mayLeave}
 	<div class="leave">
 		<button class="btn-sm btn-danger" onclick={leave}>{t('workshop.members.leave')}</button>
 	</div>

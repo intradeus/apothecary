@@ -45,6 +45,7 @@ export type ProjectAction =
 	| 'project:read'
 	| 'project:write'
 	| 'project:members'
+	| 'project:leave'
 	| 'project:delete'
 	| 'run:read'
 	| 'run:operate'

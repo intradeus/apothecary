@@ -54,7 +54,8 @@ when { resource has project && principal in resource.project.maintainers };
 forbid (principal, action, resource)
 when { context.token.scoped && !context.token.actions.contains(action) };
 
-// A scoped token cannot change the account: no password, no wider token.
+// A scoped token cannot change the account: no password, no wider token,
+// no leaving a workshop.
 @id("token-self")
 forbid (principal, action in Action::"manageself", resource)
 when { context.token.scoped };

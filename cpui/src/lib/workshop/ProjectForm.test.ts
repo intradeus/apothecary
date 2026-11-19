@@ -263,6 +263,32 @@ describe('ProjectForm, draft()', () => {
 		expect((await save()).harnessIds).toEqual(['h-a']);
 	});
 
+	it('keeps a shared workshop’s harnesses, its owner’s, through an unrelated edit', async () => {
+		// The caller maintains someone else's workshop: its harness is the
+		// owner's, absent from the caller's own integrations.
+		edit({
+			harnessIds: ['owners-claude'],
+			ownerId: 'u2',
+			ownerHandle: 'ada',
+			access: {
+				role: 'maintainer',
+				actions: ['project:read', 'project:write', 'project:members', 'project:leave']
+			}
+		});
+		expect(
+			screen.getByText(
+				'It runs on 1 harness integration of its owner’s, kept as it is: only the owner changes it.'
+			)
+		).toBeInTheDocument();
+		// None of the caller's own is offered: the engine takes only the owner's.
+		expect(screen.queryByRole('checkbox', { name: /Claude A/ })).toBeNull();
+		expect(step(/Execution/)).toHaveTextContent('1 harness');
+
+		await retype('Workshop name', 'acme');
+		expect(await save()).toMatchObject({ name: 'acme', harnessIds: ['owners-claude'] });
+		expect(screen.queryByText('Couldn’t save this setup')).toBeNull();
+	});
+
 	it('survives a project with no workspace policy set', async () => {
 		edit({
 			workspace: {

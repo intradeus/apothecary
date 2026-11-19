@@ -64,4 +64,16 @@ describe('ExecutionSection', () => {
 			screen.getByRole('heading', { name: 'Harness integrations' }).nextElementSibling
 		).toHaveTextContent('2');
 	});
+
+	it('keeps a shared workshop’s harnesses, offering none of the caller’s', () => {
+		const props = setup({ harnessIds: ['owners', 'owners-2'], shared: true });
+		expect(screen.queryByRole('checkbox')).toBeNull();
+		expect(screen.queryByRole('link')).toBeNull();
+		expect(
+			screen.getByText(
+				'It runs on 2 harness integrations of its owner’s, kept as they are: only the owner changes them.'
+			)
+		).toBeInTheDocument();
+		expect(props.harnessIds).toEqual(['owners', 'owners-2']);
+	});
 });

@@ -38,7 +38,7 @@ const maintained: Project = aViewerProject({
 	name: 'Apothecary',
 	access: {
 		role: 'maintainer',
-		actions: PROJECT_ACTIONS.filter((a) => a !== 'project:delete')
+		actions: [...PROJECT_ACTIONS.filter((a) => a !== 'project:delete'), 'project:leave']
 	}
 });
 const viewed = aViewerProject({ id: 'p1', name: 'Apothecary' });

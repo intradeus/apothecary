@@ -448,6 +448,10 @@ export default {
 	'form.project.kindTakenTag': 'kind taken',
 	'form.project.noHarness':
 		'No harness integrations yet — add one under <a class="link" href="{href}">Integrations</a>.',
+	'form.project.ownersHarnesses_one':
+		'It runs on {count} harness integration of its owner’s, kept as it is: only the owner changes it.',
+	'form.project.ownersHarnesses_other':
+		'It runs on {count} harness integrations of its owner’s, kept as they are: only the owner changes them.',
 	'form.project.workspaceHead': 'Workspace',
 	'form.project.workspaceSub':
 		'the repo’s own <code>.devcontainer</code>, behind this workshop’s egress gateway',

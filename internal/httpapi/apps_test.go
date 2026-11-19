@@ -153,7 +153,7 @@ func TestAppGrantFollowsTheMembership(t *testing.T) {
 	for name, revoke := range map[string]func(t *testing.T, x *env){
 		"demoted": func(t *testing.T, x *env) { x.share(t, testProject, "maint", "operator") },
 		"removed": func(t *testing.T, x *env) {
-			if err := x.srv.Conf.DeleteMember(ctx, testProject, "maint"); err != nil {
+			if err := x.srv.Conf.DeleteMember(ctx, testProject, "maint", "maintainer"); err != nil {
 				t.Fatal(err)
 			}
 		},

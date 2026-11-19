@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/confstore/conftest"
 	"apothecary/internal/run/event"
+	"apothecary/internal/workspace/sidecar"
 )
 
 // account makes an account of an instance role with a personal token and
@@ -41,10 +43,14 @@ func bearer(secret string) map[string]string {
 	return map[string]string{"Authorization": "Bearer " + secret}
 }
 
-// share puts an account on testProject at a role.
+// share puts an account on a project at a role, whatever it held before.
 func (x *env) share(t *testing.T, project, user, role string) {
 	t.Helper()
-	if _, err := x.srv.Conf.PutMember(context.Background(), confstore.Member{ProjectID: project, UserID: user, Role: role}); err != nil {
+	from := ""
+	if m, err := x.srv.Conf.GetMember(context.Background(), project, user); err == nil {
+		from = m.Role
+	}
+	if _, err := x.srv.Conf.PutMember(context.Background(), confstore.Member{ProjectID: project, UserID: user, Role: role}, from); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -106,7 +112,7 @@ func TestSharedWorkshop(t *testing.T) {
 		var ps []ProjectView
 		_ = json.Unmarshal(data, &ps)
 		if len(ps) != 1 || ps[0].ID != testProject || ps[0].OwnerHandle != "tester" || ps[0].Access.Role != "viewer" ||
-			!slices.Equal(ps[0].Access.Actions, []string{"project:read", "run:read", "ticket:read"}) {
+			!slices.Equal(ps[0].Access.Actions, []string{"project:read", "project:leave", "run:read", "ticket:read"}) {
 			t.Errorf("projects = %s", data)
 		}
 		x.expect(t, "viewer", viewer, "GET", runPath, nil, 200)
@@ -171,6 +177,71 @@ func TestSharedWorkshop(t *testing.T) {
 	})
 }
 
+// Past its checkouts, a workspace is the terminal's reach: the owner's
+// injected credentials live there. A viewer reads the run's checkouts and
+// nothing else; a maintainer (run:shell) reaches what the terminal does.
+func TestWorkspaceBeyondTheCheckoutsIsTheShells(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	var seen []string
+	side := fakeSidecar(t, &seen)
+	x.res.Envp = &workspaceEnv{EnvProvisioner: x.envp, sidecarAddr: strings.TrimPrefix(side.URL, "http://")}
+	x.seedLiveRun(t, "r1")
+	viewer := x.account(t, "viewer", auth.RoleMember)
+	maintainer := x.account(t, "maintainer", auth.RoleMember)
+	x.share(t, testProject, "viewer", confstore.MemberViewer)
+	x.share(t, testProject, "maintainer", confstore.MemberMaintainer)
+	base := "/api/runs/r1/workspace"
+	const secret = "/home/owner/.git-credentials"
+	stat := func(who string, hdr map[string]string, items ...sidecar.StatItem) []sidecar.StatResult {
+		t.Helper()
+		return decode[WorkspaceStatResponse](t, x.expect(t, who, hdr, "POST", base+"/stat", WorkspaceStatRequest{Items: items}, 200)).Items
+	}
+
+	t.Run("a viewer", func(t *testing.T) {
+		x.expect(t, "viewer", viewer, "GET", base+"/file?path=main.go", nil, 200)
+		if got := decode[sidecar.Resolved](t, x.expect(t, "viewer", viewer, "GET", base+"/resolve?path=/work/repo/main.go", nil, 200)); got != (sidecar.Resolved{Path: "main.go"}) {
+			t.Errorf("an absolute path in the checkout = %+v", got)
+		}
+		// Refused alike, there or not.
+		for _, path := range []string{"/path/file?path=" + secret, "/path/tree?path=~", "/resolve?path=" + secret, "/resolve?path=/gone"} {
+			if data := x.expect(t, "viewer", viewer, "GET", base+path, nil, 403); !strings.Contains(string(data), "run:shell") {
+				t.Errorf("%s refused without naming run:shell: %s", path, data)
+			}
+		}
+		got := stat("viewer", viewer, sidecar.StatItem{Path: "a.go"}, sidecar.StatItem{Abs: secret})
+		if len(got) != 2 || !got[0].Exists || got[1].Exists || !strings.Contains(got[1].Error, "run:shell") {
+			t.Errorf("stat = %+v", got)
+		}
+		before := len(seen)
+		if got := stat("viewer", viewer, sidecar.StatItem{Abs: secret}); len(got) != 1 || !strings.Contains(got[0].Error, "run:shell") {
+			t.Errorf("an absolute batch = %+v", got)
+		}
+		if len(seen) != before {
+			t.Errorf("a batch of refused items reached the sidecar: %v", seen[before:])
+		}
+		for _, s := range seen {
+			if strings.HasPrefix(s, "/fs/abs/") || strings.HasPrefix(s, "/fs/stat") && strings.Contains(s, "git-credentials") {
+				t.Errorf("the sidecar read past the checkouts for a viewer: %s", s)
+			}
+		}
+	})
+
+	t.Run("a maintainer", func(t *testing.T) {
+		if f := decode[sidecar.File](t, x.expect(t, "maintainer", maintainer, "GET", base+"/path/file?path="+secret, nil, 200)); f.Path != secret {
+			t.Errorf("file = %+v", f)
+		}
+		x.expect(t, "maintainer", maintainer, "GET", base+"/path/tree?path=~", nil, 200)
+		if got := decode[sidecar.Resolved](t, x.expect(t, "maintainer", maintainer, "GET", base+"/resolve?path="+secret, nil, 200)); got.Abs != secret {
+			t.Errorf("resolve = %+v", got)
+		}
+		x.expect(t, "maintainer", maintainer, "GET", base+"/resolve?path=/gone", nil, 404)
+		stat("maintainer", maintainer, sidecar.StatItem{Path: "a.go"}, sidecar.StatItem{Abs: secret})
+		if last := seen[len(seen)-1]; !strings.Contains(last, `{"abs":"`+secret+`"}`) {
+			t.Errorf("the sidecar was asked %s", last)
+		}
+	})
+}
+
 func TestMembersRoutes(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	maint := x.account(t, "maint", auth.RoleMember)
@@ -208,10 +279,74 @@ func TestMembersRoutes(t *testing.T) {
 	// A member leaves; the owner cannot.
 	x.expect(t, "member", member, "DELETE", path+"/me", nil, 204)
 	x.expect(t, "member", member, "GET", path, nil, 404)
-	x.expect(t, "owner", nil, "DELETE", path+"/me", nil, 400)
+	if data := x.expect(t, "owner", nil, "DELETE", path+"/me", nil, 403); !strings.Contains(string(data), "project:leave") {
+		t.Errorf("the owner leaving refused without naming project:leave: %s", data)
+	}
 	if got := ids(t, x.expect(t, "owner", nil, "GET", path, nil, 200), "user_id"); !slices.Equal(got, []string{"maint"}) {
 		t.Errorf("members at the end = %v", got)
 	}
+}
+
+// staleMember is a store whose GetMember, once armed, lets a write land
+// right after its read: the owner's change between a handler's read of a
+// member and its write.
+type staleMember struct {
+	confstore.DB
+	meanwhile func()
+}
+
+func (s *staleMember) GetMember(ctx context.Context, projectID, userID string) (confstore.Member, error) {
+	m, err := s.DB.GetMember(ctx, projectID, userID)
+	if f := s.meanwhile; f != nil {
+		s.meanwhile = nil
+		f()
+	}
+	return m, err
+}
+
+// A maintainer's request read an operator, and the owner promoted it
+// before the write: the stale request changes nothing (409), and the
+// maintainer the owner made stays one.
+func TestMemberChangesFromAStaleRole(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	ctx := context.Background()
+	maint := x.account(t, "maint", auth.RoleMember)
+	x.account(t, "op", auth.RoleMember)
+	x.share(t, testProject, "maint", confstore.MemberMaintainer)
+	db := &staleMember{DB: x.srv.Conf.DB()}
+	x.srv.Conf = confstore.New(db, secretsKey(t))
+	az, err := authz.New(x.srv.Conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.srv.Authz = az
+	promote := func() {
+		if _, err := x.srv.Conf.PutMember(ctx, confstore.Member{ProjectID: testProject, UserID: "op", Role: confstore.MemberMaintainer}, confstore.MemberOperator); err != nil {
+			t.Error(err)
+		}
+	}
+	path := "/api/projects/" + testProject + "/members"
+	for _, c := range []struct {
+		name, method, path string
+		body               any
+	}{
+		{"demote", "PUT", path + "/op", MemberRoleRequest{Role: "viewer"}},
+		{"remove", "DELETE", path + "/op", nil},
+		{"share again", "POST", path, MemberRequest{Login: "op", Role: "viewer"}},
+	} {
+		x.share(t, testProject, "op", confstore.MemberOperator)
+		db.meanwhile = promote
+		x.expect(t, c.name, maint, c.method, c.path, c.body, http.StatusConflict)
+		if db.meanwhile != nil {
+			t.Errorf("%s never read the member", c.name)
+		}
+		if m, err := x.srv.Conf.GetMember(ctx, testProject, "op"); err != nil || m.Role != confstore.MemberMaintainer {
+			t.Errorf("%s: after the stale request = %+v, %v", c.name, m, err)
+		}
+	}
+	// Unraced, the same request goes through.
+	x.share(t, testProject, "op", confstore.MemberOperator)
+	x.expect(t, "demote", maint, "PUT", path+"/op", MemberRoleRequest{Role: "viewer"}, 200)
 }
 
 func TestGuestRole(t *testing.T) {
@@ -271,6 +406,7 @@ func TestScopedTokenLifecycle(t *testing.T) {
 		"both":                {Name: "x", FullAccess: true, Actions: []string{"run:read"}},
 		"unknown action":      {Name: "x", Actions: []string{"run:fly"}},
 		"account:manage":      {Name: "x", Actions: []string{"account:manage"}},
+		"project:leave":       {Name: "x", Actions: []string{"project:read", "project:leave"}},
 		"full, but workshops": {Name: "x", FullAccess: true, ProjectIDs: []string{testProject}},
 	} {
 		x.expect(t, name, nil, "POST", "/api/me/tokens", body, 400)
@@ -308,8 +444,25 @@ func TestScopedTokenLifecycle(t *testing.T) {
 	for _, p := range perms {
 		grantable[p.Action] = p.Grantable
 	}
-	if len(perms) < 20 || !grantable["run:read"] || grantable["account:manage"] {
+	if len(perms) < 20 || !grantable["run:read"] || grantable["account:manage"] || grantable["project:leave"] {
 		t.Errorf("permissions = %+v", perms)
+	}
+
+	// A member's token that sees its workshops cannot take the account off
+	// one: leaving is the account's, never a limited token's.
+	x.account(t, "member", auth.RoleMember)
+	x.share(t, testProject, "member", confstore.MemberViewer)
+	secret, _, err := x.srv.Auth.NewToken(ctx, "member", "sees", nil, auth.Grant{Actions: []string{"project:read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sees := bearer(secret)
+	x.expect(t, "member's token", sees, "GET", "/api/projects/"+testProject, nil, 200)
+	if data := x.expect(t, "member's token", sees, "DELETE", "/api/projects/"+testProject+"/members/me", nil, 403); !strings.Contains(string(data), "project:leave") {
+		t.Errorf("leaving refused without naming project:leave: %s", data)
+	}
+	if m, err := x.srv.Conf.GetMember(ctx, testProject, "member"); err != nil || m.Role != confstore.MemberViewer {
+		t.Errorf("after the token's leave = %+v, %v", m, err)
 	}
 
 	// A ticket record of its own is reached through a workshop on its

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"apothecary/internal/account/auth"
@@ -272,10 +273,37 @@ func (s *Server) statWorkspacePaths(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := c.Stat(r.Context(), req.Items)
-	if err != nil {
-		sidecarErr(w, err)
-		return
+	// An absolute path is the terminal's reach: without run:shell its item
+	// is refused on its own and the sidecar never looks at it.
+	ask := req.Items
+	shell := !slices.ContainsFunc(req.Items, func(it sidecar.StatItem) bool { return it.Abs != "" }) || s.holdsShell(r)
+	if !shell {
+		ask = make([]sidecar.StatItem, 0, len(req.Items))
+		for _, it := range req.Items {
+			if it.Abs == "" {
+				ask = append(ask, it)
+			}
+		}
+	}
+	var items []sidecar.StatResult
+	if shell || len(ask) > 0 {
+		var err error
+		if items, err = c.Stat(r.Context(), ask); err != nil {
+			sidecarErr(w, err)
+			return
+		}
+	}
+	if !shell {
+		got := items
+		items = make([]sidecar.StatResult, 0, len(req.Items))
+		for _, it := range req.Items {
+			switch {
+			case it.Abs != "":
+				items = append(items, sidecar.StatResult{Error: refusal(authz.RunShell)})
+			case len(got) > 0:
+				items, got = append(items, got[0]), got[1:]
+			}
+		}
 	}
 	if items == nil {
 		items = []sidecar.StatResult{}
@@ -288,12 +316,29 @@ func (s *Server) resolveWorkspacePath(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := c.Resolve(r.Context(), co.Name, r.URL.Query().Get("path"))
+	path := r.URL.Query().Get("path")
+	res, err := c.Resolve(r.Context(), co.Name, path)
+	// Inside a checkout is run:read's; anywhere else is the terminal's
+	// reach, refused alike whether or not something is there.
+	abs := strings.HasPrefix(path, "/") || path == "~" || strings.HasPrefix(path, "~/")
+	var se *sidecar.Error
+	outside := (err == nil && res.Abs != "") || (abs && errors.As(err, &se) && se.Status >= 400 && se.Status < 500)
+	if outside && !s.holdsShell(r) {
+		writeErr(w, http.StatusForbidden, refusal(authz.RunShell))
+		return
+	}
 	if err != nil {
 		sidecarErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// holdsShell reports whether the caller holds run:shell on the path's run:
+// what reaching past its checkouts takes.
+func (s *Server) holdsShell(r *http.Request) bool {
+	p, _ := auth.PrincipalFrom(r.Context())
+	return s.mayShell(r.Context(), p, r.PathValue("id"))
 }
 
 // serveTerminal upgrades to a WebSocket terminal in the run's workspace,
@@ -385,21 +430,21 @@ func (s *Server) workspaceRoutes() []Route {
 			Handler: s.getWorkspaceDiff, Returns: sidecar.FileDiff{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/path/tree", ID: "getWorkspacePathTree", Tag: tagWorkspace,
 			Summary: "One directory level anywhere in the workspace, by absolute or ~ path",
-			Doc:     "Read as the workspace's remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).",
+			Doc:     "Read as the workspace's remote user, the same reach as its terminal, so it takes the terminal's run:shell: nothing that user can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).",
 			Query:   []Param{{Name: "path", Doc: "absolute directory, or ~ / ~/… for the remote user's home"}},
-			Handler: s.getWorkspacePathTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun, Action: authz.RunRead},
+			Handler: s.getWorkspacePathTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/path/file", ID: "getWorkspacePathFile", Tag: tagWorkspace,
 			Summary: "One file anywhere in the workspace, by absolute or ~ path",
-			Doc:     "Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.",
+			Doc:     "Read as the workspace's remote user, the terminal's reach (run:shell); path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.",
 			Query:   []Param{{Name: "path", Doc: "absolute file, or ~/… under the remote user's home"}},
-			Handler: s.getWorkspacePathFile, Returns: sidecar.File{}, Scope: ScopeRun, Action: authz.RunRead},
+			Handler: s.getWorkspacePathFile, Returns: sidecar.File{}, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "POST", Path: "/api/runs/{id}/workspace/stat", ID: "statWorkspacePaths", Tag: tagWorkspace,
 			Summary: "Whether each of a batch of workspace paths exists, with its size and mtime",
-			Doc:     "What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.",
+			Doc:     "What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch — an absolute one without run:shell (the terminal's reach) among them. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.",
 			Handler: s.statWorkspacePaths, Body: WorkspaceStatRequest{}, Returns: WorkspaceStatResponse{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/resolve", ID: "resolveWorkspacePath", Tag: tagWorkspace,
 			Summary: "Where a path mentioned in the run lives: a checkout's file or an absolute one",
-			Doc:     "A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo \"\"), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.",
+			Doc:     "A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo \"\"), otherwise it is answered as abs. Outside the checkouts is the terminal's reach: 403 without run:shell, whether or not something is there. 404 when nothing exists, 501 when the workspace's sidecar predates this route.",
 			Query:   []Param{{Name: "path", Doc: "repo-relative, absolute or ~/… path"}, {Name: "repo", Doc: "checkout tried first (default: the primary)"}},
 			Handler: s.resolveWorkspacePath, Returns: sidecar.Resolved{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/resources", ID: "getRunResources", Tag: tagWorkspace,

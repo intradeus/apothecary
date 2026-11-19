@@ -38,6 +38,7 @@ const (
 	ProjectRead    Action = "project:read"
 	ProjectWrite   Action = "project:write"
 	ProjectMembers Action = "project:members"
+	ProjectLeave   Action = "project:leave"
 	ProjectDelete  Action = "project:delete"
 
 	RunRead    Action = "run:read"
@@ -79,8 +80,9 @@ const (
 type Spec struct {
 	Action Action
 	Kind   Kind
-	// Grantable: a scoped token may hold it. account:manage is not, so a
-	// token can never mint a wider one or change the password.
+	// Grantable: a scoped token may hold it. account:manage and
+	// project:leave are not: a token never mints a wider one, changes the
+	// password, or takes its account off a workshop.
 	Grantable bool
 	Doc       string
 
@@ -100,11 +102,12 @@ var vocabulary = []Spec{
 	{ProjectRead, KindProject, true, "See workshops: settings, flows, automations, members", []string{b, own, groupViewer}},
 	{ProjectWrite, KindProject, true, "Change a workshop's settings, flows, automations and secrets", []string{b, own, groupMaintainer}},
 	{ProjectMembers, KindProject, true, "Share a workshop: add, change and remove members", []string{b, own, groupMaintainer}},
+	{ProjectLeave, KindProject, false, "Leave a workshop shared with one", []string{groupViewer, groupManageSelf}},
 	{ProjectDelete, KindProject, true, "Delete a workshop", []string{own}},
 
-	{RunRead, KindRun, true, "See runs: logs, files, workspace contents, pings", []string{b, own, groupViewer}},
+	{RunRead, KindRun, true, "See runs: logs, checkout files, pings", []string{b, own, groupViewer}},
 	{RunOperate, KindRun, true, "Start, abort, retry and archive runs; answer pings; ask and take over", []string{b, own, groupOperator}},
-	{RunShell, KindRun, true, "Open a run's terminal, editor, ports and SSH", []string{b, own, groupMaintainer}},
+	{RunShell, KindRun, true, "Open a run's terminal, editor, ports, SSH and files outside its checkouts", []string{b, own, groupMaintainer}},
 
 	{TicketRead, KindTicket, true, "See tickets", []string{b, own, groupViewer}},
 	{TicketWrite, KindTicket, true, "Create and change tickets", []string{b, own, groupOperator}},

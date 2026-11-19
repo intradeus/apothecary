@@ -18,22 +18,25 @@ func TestMembers(t *testing.T) {
 	ctx := context.Background()
 	p := seedProject(t, svc)
 
-	if _, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: "owner"}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: "owner"}, ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("role owner = %v", err)
 	}
-	if _, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: p.UserID, Role: MemberViewer}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: p.UserID, Role: MemberViewer}, ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("the owner as a member = %v", err)
 	}
-	if _, err := svc.PutMember(ctx, Member{ProjectID: "nope", UserID: "bob", Role: MemberViewer}); !errors.Is(err, ErrNotFound) {
+	if _, err := svc.PutMember(ctx, Member{ProjectID: "nope", UserID: "bob", Role: MemberViewer}, ""); !errors.Is(err, ErrNotFound) {
 		t.Errorf("no project = %v", err)
 	}
-	first, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: MemberViewer})
+	first, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: MemberViewer}, "")
 	if err != nil || first.CreatedAt.IsZero() {
 		t.Fatalf("share = %+v, %v", first, err)
 	}
-	again, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: MemberMaintainer})
+	again, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: MemberMaintainer}, MemberViewer)
 	if err != nil || again.Role != MemberMaintainer || !again.CreatedAt.Equal(first.CreatedAt) {
 		t.Errorf("share again = %+v, %v", again, err)
+	}
+	if _, err := svc.PutMember(ctx, Member{ProjectID: p.ID, UserID: "bob", Role: MemberOperator}, MemberViewer); !errors.Is(err, ErrConflict) {
+		t.Errorf("a change from a stale role = %v", err)
 	}
 	if m, err := svc.GetMember(ctx, p.ID, "bob"); err != nil || m.Role != MemberMaintainer {
 		t.Errorf("get = %+v, %v", m, err)
@@ -63,7 +66,10 @@ func TestMembers(t *testing.T) {
 		t.Errorf("visible = %+v, %v", ps, err)
 	}
 
-	if err := svc.DeleteMember(ctx, p.ID, "bob"); err != nil {
+	if err := svc.DeleteMember(ctx, p.ID, "bob", MemberViewer); !errors.Is(err, ErrConflict) {
+		t.Errorf("a removal from a stale role = %v", err)
+	}
+	if err := svc.DeleteMember(ctx, p.ID, "bob", MemberMaintainer); err != nil {
 		t.Fatal(err)
 	}
 	if ws, err := svc.Workshops(ctx, "bob"); err != nil || len(ws) != 0 {
