@@ -12,7 +12,7 @@
 	import { goto } from '$app/navigation';
 	import { t } from '$lib/i18n/index.svelte';
 	import { api } from '$lib/api';
-	import type { Flow, MergeRequestRow, Project } from '$lib/domain';
+	import { projectCan, type Flow, type MergeRequestRow, type Project } from '$lib/domain';
 	import { ago, fmtAbs } from '$lib/core/format';
 	import { to } from '$lib/core/urls';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -26,6 +26,9 @@
 	import MrMeta from '$lib/mrs/MrMeta.svelte';
 
 	let { project, flows }: { project: Project; flows: Flow[] | null } = $props();
+
+	/** Starting a run on a merge request needs run:operate. */
+	const canOperate = $derived(projectCan(project, 'run:operate'));
 
 	let rows = $state<MergeRequestRow[] | null>(null);
 	let error = $state('');
@@ -137,9 +140,13 @@
 					<span class="acts">
 						<button
 							class="btn-sm"
-							disabled={!starts.length || busy !== null}
+							disabled={!canOperate || !starts.length || busy !== null}
 							aria-busy={busy === row.mr.iid}
-							title={starts.length ? '' : t('workshop.mrs.noFlow')}
+							title={!canOperate
+								? t('common.needsPermission')
+								: starts.length
+									? ''
+									: t('workshop.mrs.noFlow')}
 							onclick={(ev) => pick(row, ev)}
 							><TransportIcon kind="play" /> {t('workshop.mrs.start')}</button
 						>

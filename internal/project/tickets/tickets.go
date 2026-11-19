@@ -56,11 +56,12 @@ func (f *Factory) log() *slog.Logger {
 }
 
 // Create writes a ticket on its owner's internal tracker (in.UserID: the
-// workshop owner) and claims its uploads for the TICKET rather than any run.
+// workshop owner) and claims by's uploads for the TICKET rather than any run
+// (by: the person writing it, who need not be its owner).
 // It lands in the tracker's first status and the type of its change type,
 // unless given others (confstore validates them). A base branch not given
 // stays empty: each run names it by its own workshop's branch format.
-func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
+func (f *Factory) Create(ctx context.Context, in confstore.Ticket, by string, attachmentIDs []string) (confstore.Ticket, error) {
 	in.ChangeType = normalType(in.ChangeType)
 	if in.ChangeType == "" {
 		in.ChangeType = trackerport.ChangeFeat
@@ -69,19 +70,19 @@ func (f *Factory) Create(ctx context.Context, in confstore.Ticket, attachmentIDs
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t, attachmentIDs)
+	f.claim(ctx, t, by, attachmentIDs)
 	return t, nil
 }
 
-// Update saves an edit and claims any newly-attached uploads (already-claimed
+// Update saves an edit and claims by's newly-attached uploads (already-claimed
 // ids are a no-op, so re-sending the full list is safe). A record takes only
 // its base branch.
-func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket, attachmentIDs []string) (confstore.Ticket, error) {
+func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket, by string, attachmentIDs []string) (confstore.Ticket, error) {
 	t, err := f.Conf.UpdateTicket(ctx, id, upd)
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t, attachmentIDs)
+	f.claim(ctx, t, by, attachmentIDs)
 	return t, nil
 }
 
@@ -300,14 +301,15 @@ func copyAttachment(ctx context.Context, store *filestore.Attachments, owner str
 	return att.ID, nil
 }
 
-// claim binds the ticket owner's uploads to the TICKET: shared by every run of
-// it, out of the unclaimed state so the GC can't sweep them. One-shot per
+// claim binds by's uploads to the TICKET: shared by every run of it, out of
+// the unclaimed state so the GC can't sweep them. by is who attached them,
+// who need not own the ticket; another's ids stay theirs. One-shot per
 // attachment, so re-sending a full list on update is safe.
-func (f *Factory) claim(ctx context.Context, t confstore.Ticket, ids []string) {
+func (f *Factory) claim(ctx context.Context, t confstore.Ticket, by string, ids []string) {
 	if f.Attachments == nil || len(ids) == 0 {
 		return
 	}
-	if err := f.Attachments.ClaimForTicket(ctx, t.UserID, ids, t.ID); err != nil {
+	if err := f.Attachments.ClaimForTicket(ctx, by, ids, t.ID); err != nil {
 		f.log().Warn("claim ticket attachments", "ticket", t.ID, "err", err)
 	}
 }

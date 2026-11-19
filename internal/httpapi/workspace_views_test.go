@@ -172,7 +172,17 @@ func fakeSidecar(t *testing.T, seen *[]string) *httptest.Server {
 				_, _ = io.WriteString(w, `{"items":[{"exists":true,"dir":false,"size":3,"mtime":"9"},{"exists":false,"dir":false,"size":0,"mtime":"","error":"permission denied"}]}`)
 			}
 		case r.URL.Path == "/fs/resolve":
-			_ = json.NewEncoder(w).Encode(sidecar.Resolved{Repo: "lib", Path: q.Get("path")})
+			switch p := q.Get("path"); {
+			case p == "/gone":
+				w.WriteHeader(http.StatusNotFound)
+				_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such file or directory"})
+			case strings.HasPrefix(p, "/work/repo/"): // inside the primary checkout
+				_ = json.NewEncoder(w).Encode(sidecar.Resolved{Path: strings.TrimPrefix(p, "/work/repo/")})
+			case strings.HasPrefix(p, "/"):
+				_ = json.NewEncoder(w).Encode(sidecar.Resolved{Abs: p})
+			default:
+				_ = json.NewEncoder(w).Encode(sidecar.Resolved{Repo: "lib", Path: p})
+			}
 		case r.URL.Path == "/term":
 			_, _ = io.WriteString(w, "terminal for "+q.Get("repo"))
 		default:

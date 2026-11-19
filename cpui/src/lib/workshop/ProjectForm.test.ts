@@ -7,6 +7,7 @@ import type { Project, ProjectDraft } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aFlow, anIntegration, aWorkshop, choose } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
+import { aViewerProject } from '$test/fixtures';
 import ProjectForm from './ProjectForm.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -260,6 +261,72 @@ describe('ProjectForm, draft()', () => {
 		edit({ harnessIds: ['gone', 'h-a'] });
 		await userEvent.click(envcheck());
 		expect((await save()).harnessIds).toEqual(['h-a']);
+	});
+
+	it('keeps a shared workshop’s harnesses, its owner’s, through an unrelated edit', async () => {
+		// The caller maintains someone else's workshop: its harness is the
+		// owner's, absent from the caller's own integrations.
+		edit({
+			harnessIds: ['owners-claude'],
+			ownerId: 'u2',
+			ownerHandle: 'ada',
+			access: {
+				role: 'maintainer',
+				actions: ['project:read', 'project:write', 'project:members', 'project:leave']
+			}
+		});
+		expect(
+			screen.getByText(
+				'It runs on 1 harness integration of its owner’s, kept as it is: only the owner changes it.'
+			)
+		).toBeInTheDocument();
+		// None of the caller's own is offered: the engine takes only the owner's.
+		expect(screen.queryByRole('checkbox', { name: /Claude A/ })).toBeNull();
+		expect(step(/Execution/)).toHaveTextContent('1 harness');
+
+		await retype('Workshop name', 'acme');
+		expect(await save()).toMatchObject({ name: 'acme', harnessIds: ['owners-claude'] });
+		expect(screen.queryByText('Couldn’t save this setup')).toBeNull();
+	});
+
+	it('keeps a shared workshop’s repository account and ticket source, its owner’s, and offers none of the caller’s', async () => {
+		// Both ids are the owner's, absent from the caller's own integrations.
+		edit({
+			repoAccountId: 'owners-gitlab',
+			ticketSourceId: 'owners-jira',
+			harnessIds: ['owners-claude'],
+			ownerId: 'u2',
+			ownerHandle: 'ada',
+			access: {
+				role: 'maintainer',
+				actions: ['project:read', 'project:write', 'project:members', 'project:leave']
+			}
+		});
+		expect(
+			screen.getByText(
+				'The workshop reaches its repositories through its owner’s account, kept as it is: only the owner changes it.'
+			)
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(
+				'Its tickets come from its owner’s ticket source, kept as it is: only the owner changes it.'
+			)
+		).toBeInTheDocument();
+		// No selector offers the caller's own accounts or sources, and the
+		// owner's account is not browsed.
+		expect(screen.queryByLabelText('Repository account')).toBeNull();
+		expect(screen.queryByLabelText('Ticket source')).toBeNull();
+		expect(screen.queryByRole('button', { name: 'Browse repositories' })).toBeNull();
+		expect(screen.queryByText(/No repository integration/)).toBeNull();
+
+		await retype('Workshop name', 'acme');
+		expect(await save()).toMatchObject({
+			name: 'acme',
+			repoAccountId: 'owners-gitlab',
+			ticketSourceId: 'owners-jira',
+			harnessIds: ['owners-claude']
+		});
+		expect(screen.queryByText('Couldn’t save this setup')).toBeNull();
 	});
 
 	it('survives a project with no workspace policy set', async () => {
@@ -750,5 +817,15 @@ describe('ProjectForm, the step rail', () => {
 		expect(step(/Repository/)).not.toHaveTextContent(tick);
 		await userEvent.type(screen.getByLabelText('Locator'), '1');
 		expect(step(/Repository/)).toHaveTextContent(tick);
+	});
+});
+
+describe('ProjectForm, without project:write', () => {
+	it('shows the setup read-only: no save, disabled fields, no secrets listed', () => {
+		edit({ access: aViewerProject().access });
+		expect(screen.queryByRole('button', { name: 'Save setup' })).not.toBeInTheDocument();
+		expect(screen.getAllByText('Your role in this workshop does not allow this')).toHaveLength(2);
+		expect(screen.getByLabelText('Locator')).toBeDisabled();
+		expect(api.projects.secrets).not.toHaveBeenCalled();
 	});
 });

@@ -7,7 +7,7 @@ import { fleet } from '$lib/app/fleet.svelte';
 import { to } from '$lib/core/urls';
 import type { EgressAuditRow, EgressPolicy } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aProject, aRun } from '$test/fixtures';
+import { aProject, aRun, aViewerProject } from '$test/fixtures';
 import { NOW, aLiveRun, aPolicy, anAuditRow, aViewStore } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
 import EgressView from './EgressView.svelte';
@@ -154,6 +154,19 @@ describe('EgressView', () => {
 			await tick();
 
 			expect(screen.queryByRole('radiogroup', { name: /^Rule for/ })).not.toBeInTheDocument();
+		});
+
+		it('holds the rule from a viewer of the workshop, saying why', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			await open(
+				[anAuditRow({ host: 'api.test' })],
+				aPolicy({ domains: ['api.test'] }),
+				aViewStore(aLiveRun({ projectId: 'p1' }))
+			);
+			expect(ruleRadio('api.test', 'allow')).toBeDisabled();
+			expect(
+				screen.getByTitle('Your role in this workshop does not allow this')
+			).toBeInTheDocument();
 		});
 	});
 

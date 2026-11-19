@@ -1,11 +1,12 @@
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { fleet } from '$lib/app/fleet.svelte';
 import { api } from '$lib/api';
 import type { Ping, PingField } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
-import { aPing } from '$test/fixtures';
+import { aPing, aRun, aViewerProject } from '$test/fixtures';
 import { aComment, aPingFile, select, serveSnapshots, stubGeometry } from '$test/fixtures/review';
 import { deferred } from '$test/helpers';
 import DocReview from './DocReview.svelte';
@@ -105,6 +106,24 @@ describe('DocReview', () => {
 		vi.mocked(api.files.limits).mockResolvedValue(null as never);
 		localStorage.clear();
 		window.getSelection()?.removeAllRanges();
+	});
+
+	describe('for a viewer of the run’s workshop', () => {
+		afterEach(() => {
+			fleet.projects = [];
+			fleet.runs = [];
+		});
+		it('holds every answer and says why', async () => {
+			fleet.projects = [aViewerProject({ id: 'wp' })];
+			fleet.runs = [aRun({ id: 'rv', projectId: 'wp' })];
+			await mount(aGate({ runId: 'rv' }));
+			await userEvent.type(summary(), 'No.');
+			expect(approve()).toBeDisabled();
+			expect(reject()).toBeDisabled();
+			expect(
+				screen.getByText('Your role in this workshop does not allow this')
+			).toBeInTheDocument();
+		});
 	});
 
 	describe('loading', () => {

@@ -32,9 +32,18 @@ type Compiled struct {
 	Limit    int
 }
 
-// builder accumulates the bound arguments; $1 is always the user.
+// builder accumulates the bound arguments; $1 is always the visible projects.
 type builder struct {
 	args []any
+}
+
+// newBuilder binds projects as $1; nil binds an empty array, never NULL, so
+// no projects means no rows.
+func newBuilder(projects []string) *builder {
+	if projects == nil {
+		projects = []string{}
+	}
+	return &builder{args: []any{projects}}
 }
 
 func (b *builder) bind(v any) string {
@@ -42,9 +51,9 @@ func (b *builder) bind(v any) string {
 	return "$" + strconv.Itoa(len(b.args))
 }
 
-// Compile checks q against the catalog and builds its SQL, with userID bound
-// as $1 — the only way analytics SQL is ever built.
-func Compile(q Query, userID string) (Compiled, error) {
+// Compile checks q against the catalog and builds its SQL, with the caller's
+// visible project ids bound as $1 — the only way analytics SQL is ever built.
+func Compile(q Query, projects []string) (Compiled, error) {
 	g, ok := grainOf(q.Grain)
 	if !ok {
 		return Compiled{}, invalidf("unknown grain %q", q.Grain)
@@ -58,7 +67,7 @@ func Compile(q Query, userID string) (Compiled, error) {
 	if q.Limit < 0 {
 		return Compiled{}, invalidf("limit %d is negative", q.Limit)
 	}
-	b := &builder{args: []any{userID}}
+	b := newBuilder(projects)
 	var cols, fs []Field
 	var sel []string
 
@@ -239,7 +248,7 @@ func orderBy(q Query, cols []Field, dims, measures int) (string, error) {
 }
 
 // compileValues is a dimension's distinct values over the time range.
-func compileValues(g Grain, fieldID string, t TimeRange, userID string) (Compiled, error) {
+func compileValues(g Grain, fieldID string, t TimeRange, projects []string) (Compiled, error) {
 	gr, ok := grainOf(g)
 	if !ok {
 		return Compiled{}, invalidf("unknown grain %q", g)
@@ -248,7 +257,7 @@ func compileValues(g Grain, fieldID string, t TimeRange, userID string) (Compile
 	if !ok {
 		return Compiled{}, invalidf("unknown dimension %q on grain %s", fieldID, g)
 	}
-	b := &builder{args: []any{userID}}
+	b := newBuilder(projects)
 	conds, err := where(gr, b, nil, TimeRange{From: t.From, To: t.To})
 	if err != nil {
 		return Compiled{}, err
@@ -264,7 +273,7 @@ const drillCols = `f.run_id, coalesce(r.ticket_title, ''), f.flow_name, f.flow_h
 
 // compileDrill is the runs behind a group: every run a matching row of the
 // grain belongs to, newest first.
-func compileDrill(g Grain, filters []Filter, t TimeRange, userID string) (Compiled, error) {
+func compileDrill(g Grain, filters []Filter, t TimeRange, projects []string) (Compiled, error) {
 	gr, ok := grainOf(g)
 	if !ok {
 		return Compiled{}, invalidf("unknown grain %q", g)
@@ -272,13 +281,13 @@ func compileDrill(g Grain, filters []Filter, t TimeRange, userID string) (Compil
 	if gr.runID == "" {
 		return Compiled{}, invalidf("grain %s has no runs to drill into", g)
 	}
-	b := &builder{args: []any{userID}}
+	b := newBuilder(projects)
 	conds, err := where(gr, b, filters, TimeRange{From: t.From, To: t.To})
 	if err != nil {
 		return Compiled{}, err
 	}
 	sql := fmt.Sprintf(`SELECT %s FROM run_facts f LEFT JOIN runs r ON r.run_id = f.run_id
-WHERE f.user_id = $1 AND f.run_id IN (SELECT DISTINCT %s FROM %s WHERE %s)
+WHERE f.project_id = ANY($1) AND f.run_id IN (SELECT DISTINCT %s FROM %s WHERE %s)
 ORDER BY f.created_at DESC LIMIT %d`,
 		drillCols, gr.runID, gr.from, strings.Join(conds, " AND "), drillRows)
 	return Compiled{SQL: sql, Args: b.args, Limit: drillRows}, nil

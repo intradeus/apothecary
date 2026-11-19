@@ -155,7 +155,7 @@ func TestSkillsAreTheOwners(t *testing.T) {
 	if err := x.users.CreateUser(context.Background(), auth.User{ID: "usr-other", Handle: "other", Email: "other@example.test", Name: "Other", CreatedAt: now, UpdatedAt: now}); err != nil {
 		t.Fatal(err)
 	}
-	other, _, err := x.srv.Auth.NewToken(context.Background(), "usr-other", "t", nil)
+	other, _, err := x.srv.Auth.NewToken(context.Background(), "usr-other", "t", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,8 @@ import { render, screen, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aRun, aViewerProject } from '$test/fixtures';
 import type { MergeRequestLive, RunPhase } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aLiveMr, aPhase } from '$test/fixtures/run-components';
@@ -365,5 +367,14 @@ describe('PhasesCard', () => {
 
 			expect(api.runs.phases).toHaveBeenCalledTimes(1);
 		});
+	});
+
+	it('holds Run now for a viewer of the run’s workshop', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		fleet.runs = [aRun({ id: 'r1', projectId: 'p1' })];
+		await show([aPhase({ id: 'fix' })]);
+		expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled();
+		fleet.projects = [];
+		fleet.runs = [];
 	});
 });

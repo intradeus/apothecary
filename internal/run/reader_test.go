@@ -3,6 +3,7 @@ package run
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -126,22 +127,28 @@ func TestReaderListScopesToTheOwnerNewestFirst(t *testing.T) {
 		f    ListFilter
 		want []string
 	}{
-		{ListFilter{UserID: "u1"}, []string{"a3", "a2", "a1"}},
-		{ListFilter{UserID: "u1", ProjectID: "p1"}, []string{"a3", "a1"}},
-		{ListFilter{UserID: "u1", TicketID: "t2"}, []string{"a3", "a2"}},
-		{ListFilter{UserID: "u2"}, []string{"b1"}},
-		{ListFilter{UserID: "nobody"}, []string{}},
+		{ListFilter{Seen: Seen{UserID: "u1"}}, []string{"a3", "a2", "a1"}},
+		{ListFilter{Seen: Seen{UserID: "u1"}, ProjectID: "p1"}, []string{"a3", "a1"}},
+		{ListFilter{Seen: Seen{UserID: "u1"}, TicketID: "t2"}, []string{"a3", "a2"}},
+		{ListFilter{Seen: Seen{UserID: "u2"}}, []string{"b1"}},
+		{ListFilter{Seen: Seen{UserID: "nobody"}}, []string{}},
+		// A workshop shared with u2: its runs join u2's own, whoever's.
+		{ListFilter{Seen: Seen{UserID: "u2", ProjectIDs: []string{"p2"}}}, []string{"a2", "b1"}},
+		// A token limited to p2: no own runs by owner, only the workshop's.
+		{ListFilter{Seen: Seen{ProjectIDs: []string{"p2"}}}, []string{"a2"}},
+		{ListFilter{}, []string{}},
 	} {
 		if got := ids(c.f); !slices.Equal(got, c.want) {
 			t.Errorf("List(%+v) = %v, want %v", c.f, got, c.want)
 		}
 	}
-	if _, err := (&Reader{Store: &failingStore{Store: st, ids: errors.New("db down")}}).List(ctx, ListFilter{UserID: "u1"}); err == nil {
+	if _, err := (&Reader{Store: &failingStore{Store: st, ids: errors.New("db down")}}).List(ctx, ListFilter{Seen: Seen{UserID: "u1"}}); err == nil {
 		t.Error("List on a failing store = nil error")
 	}
 	ls := &listerStore{Store: st}
-	vs, err := (&Reader{Store: ls}).List(ctx, ListFilter{UserID: "u1", ProjectID: "p"})
-	if err != nil || len(vs) != 1 || vs[0].RunID != "from-store" || ls.got != (ListFilter{UserID: "u1", ProjectID: "p"}) {
+	want := ListFilter{Seen: Seen{UserID: "u1", ProjectIDs: []string{"q"}}, ProjectID: "p"}
+	vs, err := (&Reader{Store: ls}).List(ctx, want)
+	if err != nil || len(vs) != 1 || vs[0].RunID != "from-store" || !reflect.DeepEqual(ls.got, want) {
 		t.Errorf("List via ViewLister = %+v, %v (filter %+v)", vs, err, ls.got)
 	}
 }

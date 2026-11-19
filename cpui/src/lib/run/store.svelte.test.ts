@@ -36,7 +36,7 @@ vi.mock('$lib/api', () => ({
 		pings: { answer: vi.fn() }
 	}
 }));
-vi.mock('$lib/app/fleet.svelte', () => ({ fleet: { refresh: vi.fn() } }));
+vi.mock('$lib/app/fleet.svelte', () => ({ fleet: { refresh: vi.fn(), can: vi.fn() } }));
 
 /** A ticket's record, shown through the given workshops. */
 const aRecord = (workshops: string[] = []): TicketRecord => ({
@@ -890,6 +890,18 @@ describe('the derived state', () => {
 		]
 	])('offers a pause or not for %s', (_, over, want) => {
 		expect(store(aRun(over)).canPause).toBe(want);
+	});
+
+	it('asks the run’s workshop what the caller may do', () => {
+		vi.mocked(fleet.can).mockImplementation((pid, action) => !pid || action === 'run:read');
+		const viewed = store(aRun({ projectId: 'p1' }));
+		expect(viewed.canOperate).toBe(false);
+		expect(viewed.canShell).toBe(false);
+		expect(fleet.can).toHaveBeenCalledWith('p1', 'run:operate');
+		expect(fleet.can).toHaveBeenCalledWith('p1', 'run:shell');
+		const own = store(aRun());
+		expect(own.canOperate).toBe(true);
+		expect(own.canShell).toBe(true);
 	});
 
 	it('has no workspace and is not terminal before the run loads', () => {

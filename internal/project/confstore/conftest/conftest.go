@@ -17,9 +17,11 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/account/providers"
 	"apothecary/internal/flow/builtin"
 	"apothecary/internal/ports/trackerport"
@@ -33,6 +35,7 @@ func RunDBContract(t *testing.T, open func(t *testing.T) confstore.DB) {
 	t.Run("integrations", func(t *testing.T) { integrations(t, open) })
 	t.Run("projects", func(t *testing.T) { projects(t, open) })
 	t.Run("project deletion", func(t *testing.T) { projectDeletion(t, open) })
+	t.Run("members", func(t *testing.T) { members(t, open) })
 	t.Run("tickets", func(t *testing.T) { tickets(t, open) })
 	t.Run("trackers", func(t *testing.T) { trackers(t, open) })
 	t.Run("flows", func(t *testing.T) { flows(t, open) })
@@ -830,6 +833,204 @@ func projectDeletion(t *testing.T, open opener) {
 		ok(t, s.UpsertProject(ctx, plainProject("p2", "u1", "web", 1)))
 		ok(t, s.DeleteProject(ctx, "p2"))
 		ok(t, s.DeleteIntegration(ctx, "i1"))
+	})
+}
+
+// withUsers makes the accounts a member row names, where the store keeps
+// accounts (Postgres's project_members.user_id is a foreign key; Mem holds
+// no accounts to check).
+func withUsers(t *testing.T, s store, ids ...string) {
+	t.Helper()
+	us, ok := s.DB.(interface {
+		CreateUser(context.Context, auth.User) error
+	})
+	if !ok {
+		return
+	}
+	for _, id := range ids {
+		if err := us.CreateUser(ctx, auth.User{ID: id, Handle: id, Email: id + "@x", Name: id, CreatedAt: at(0), UpdatedAt: at(0)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func member(project, user, role string, n int) confstore.Member {
+	return confstore.Member{ProjectID: project, UserID: user, Role: role, CreatedAt: at(n)}
+}
+
+func memberRoles(s store, project string) []string {
+	s.t.Helper()
+	ms, err := s.ListMembers(ctx, project)
+	ok(s.t, err)
+	out := []string{}
+	for _, m := range ms {
+		out = append(out, m.UserID+"="+m.Role)
+	}
+	return out
+}
+
+func members(t *testing.T, open opener) {
+	t.Run("put, read, list, upsert, delete", func(t *testing.T) {
+		s := seeded(t, open)
+		withUsers(t, s, "u2", "u3")
+		same(t, "none yet", memberRoles(s, "p1"), []string{})
+		ok(t, s.PutMember(ctx, member("p1", "u3", confstore.MemberViewer, 2), ""))
+		ok(t, s.PutMember(ctx, member("p1", "u2", confstore.MemberOperator, 1), ""))
+		same(t, "by created_at", memberRoles(s, "p1"), []string{"u2=operator", "u3=viewer"})
+		got, err := s.GetMember(ctx, "p1", "u2")
+		ok(t, err)
+		same(t, "roundtrip", got, member("p1", "u2", confstore.MemberOperator, 1))
+
+		// A second put is the role changing: one row, the role new, created_at kept.
+		ok(t, s.PutMember(ctx, member("p1", "u2", confstore.MemberMaintainer, 9), confstore.MemberOperator))
+		same(t, "changed", memberRoles(s, "p1"), []string{"u2=maintainer", "u3=viewer"})
+		got, err = s.GetMember(ctx, "p1", "u2")
+		ok(t, err)
+		same(t, "created_at kept", got.CreatedAt, at(1))
+
+		ok(t, s.DeleteMember(ctx, "p1", "u3", confstore.MemberViewer))
+		same(t, "after delete", memberRoles(s, "p1"), []string{"u2=maintainer"})
+		is(t, "delete again", s.DeleteMember(ctx, "p1", "u3", confstore.MemberViewer), confstore.ErrNotFound)
+		_, err = s.GetMember(ctx, "p1", "u3")
+		is(t, "gone", err, confstore.ErrNotFound)
+	})
+
+	t.Run("a role outside the three and a missing project are refused", func(t *testing.T) {
+		s := seeded(t, open)
+		withUsers(t, s, "u2")
+		is(t, "owner role", s.PutMember(ctx, member("p1", "u2", "owner", 0), ""), confstore.ErrInvalid)
+		is(t, "no project", s.PutMember(ctx, member("nope", "u2", confstore.MemberViewer, 0), ""), confstore.ErrNotFound)
+		is(t, "no project, a change", s.PutMember(ctx, member("nope", "u2", confstore.MemberViewer, 0), confstore.MemberOperator), confstore.ErrNotFound)
+		same(t, "nothing written", memberRoles(s, "p1"), []string{})
+	})
+
+	// Every write names the role it read: one that changed meanwhile wins
+	// over the stale request, which writes nothing. The owner-only rule on
+	// maintainers rests on it — a maintainer that read an operator must not
+	// demote or remove the maintainer the owner made of it in between.
+	t.Run("a write from a stale role writes nothing", func(t *testing.T) {
+		s := seeded(t, open)
+		withUsers(t, s, "u2")
+		ok(t, s.PutMember(ctx, member("p1", "u2", confstore.MemberOperator, 0), ""))
+		// The maintainer reads operator; the owner promotes; the maintainer writes.
+		ok(t, s.PutMember(ctx, member("p1", "u2", confstore.MemberMaintainer, 0), confstore.MemberOperator))
+		is(t, "stale demotion", s.PutMember(ctx, member("p1", "u2", confstore.MemberViewer, 0), confstore.MemberOperator), confstore.ErrConflict)
+		is(t, "stale removal", s.DeleteMember(ctx, "p1", "u2", confstore.MemberOperator), confstore.ErrConflict)
+		is(t, "stale add", s.PutMember(ctx, member("p1", "u2", confstore.MemberViewer, 0), ""), confstore.ErrConflict)
+		same(t, "still the owner's maintainer", memberRoles(s, "p1"), []string{"u2=maintainer"})
+		// Gone meanwhile: a change from its old role finds nothing to change.
+		ok(t, s.DeleteMember(ctx, "p1", "u2", confstore.MemberMaintainer))
+		is(t, "a change after removal", s.PutMember(ctx, member("p1", "u2", confstore.MemberOperator, 0), confstore.MemberMaintainer), confstore.ErrConflict)
+		same(t, "not re-added", memberRoles(s, "p1"), []string{})
+	})
+
+	t.Run("two writes from the same role: one wins, the other changes nothing", func(t *testing.T) {
+		s := seeded(t, open)
+		withUsers(t, s, "u2")
+		for round := range 20 {
+			ok(t, s.PutMember(ctx, member("p1", "u2", confstore.MemberOperator, 0), ""))
+			// The owner promotes while a maintainer demotes (even rounds) or
+			// removes (odd), both having read operator.
+			errs := make([]error, 2)
+			var wg sync.WaitGroup
+			start := make(chan struct{})
+			wg.Add(2)
+			go func() {
+				defer wg.Done()
+				<-start
+				errs[0] = s.PutMember(ctx, member("p1", "u2", confstore.MemberMaintainer, 0), confstore.MemberOperator)
+			}()
+			go func() {
+				defer wg.Done()
+				<-start
+				if round%2 == 0 {
+					errs[1] = s.PutMember(ctx, member("p1", "u2", confstore.MemberViewer, 0), confstore.MemberOperator)
+				} else {
+					errs[1] = s.DeleteMember(ctx, "p1", "u2", confstore.MemberOperator)
+				}
+			}()
+			close(start)
+			wg.Wait()
+			promoted, other := errs[0] == nil, errs[1] == nil
+			if promoted == other {
+				t.Fatalf("round %d: promote %v, the other %v; want exactly one to win", round, errs[0], errs[1])
+			}
+			loser := errs[0]
+			if promoted {
+				loser = errs[1]
+			}
+			// Whichever lost found the row changed (or removed) under it.
+			if !errors.Is(loser, confstore.ErrConflict) {
+				t.Fatalf("round %d: the loser = %v, want ErrConflict", round, loser)
+			}
+			want := []string{"u2=maintainer"}
+			switch {
+			case !promoted && round%2 == 0:
+				want = []string{"u2=viewer"}
+			case !promoted:
+				want = []string{}
+			}
+			got := memberRoles(s, "p1")
+			same(t, fmt.Sprintf("round %d", round), got, want)
+			if len(got) == 1 {
+				ok(t, s.DeleteMember(ctx, "p1", "u2", strings.TrimPrefix(got[0], "u2=")))
+			}
+		}
+	})
+
+	t.Run("access and reach: owned, shared, neither", func(t *testing.T) {
+		s := seeded(t, open)
+		withUsers(t, s, "u1", "u2", "u3")
+		ok(t, s.UpsertProject(ctx, plainProject("p2", "u2", "api", 1)))
+		ok(t, s.UpsertProject(ctx, plainProject("p3", "u3", "ops", 2)))
+		ok(t, s.PutMember(ctx, member("p2", "u1", confstore.MemberOperator, 0), ""))
+		for _, tc := range []struct{ project, user, owner, role string }{
+			{"p1", "u1", "u1", confstore.RoleOwner},
+			{"p2", "u1", "u2", confstore.MemberOperator},
+			{"p3", "u1", "u3", ""},
+		} {
+			owner, role, err := s.ProjectAccess(ctx, tc.project, tc.user)
+			ok(t, err)
+			same(t, tc.project+" owner", owner, tc.owner)
+			same(t, tc.project+" role", role, tc.role)
+		}
+		_, _, err := s.ProjectAccess(ctx, "nope", "u1")
+		is(t, "missing project", err, confstore.ErrNotFound)
+
+		reach, err := s.ProjectsOf(ctx, "u1")
+		ok(t, err)
+		same(t, "reach", reach, []confstore.Reach{
+			{ProjectID: "p1", OwnerID: "u1", Role: confstore.RoleOwner},
+			{ProjectID: "p2", OwnerID: "u2", Role: confstore.MemberOperator},
+		})
+		none, err := s.ProjectsOf(ctx, "nobody")
+		ok(t, err)
+		same(t, "nobody's reach", len(none), 0)
+
+		vis, err := s.ListVisibleProjects(ctx, "u1", []string{"p2", "nope"})
+		ok(t, err)
+		ids := []string{}
+		for _, p := range vis {
+			ids = append(ids, p.ID)
+		}
+		same(t, "own and listed", ids, []string{"p1", "p2"})
+		vis, err = s.ListVisibleProjects(ctx, "", []string{"p3"})
+		ok(t, err)
+		same(t, "no owner matches nothing by owner", len(vis), 1)
+		vis, err = s.ListVisibleProjects(ctx, "", nil)
+		ok(t, err)
+		same(t, "nothing", len(vis), 0)
+	})
+
+	t.Run("go with their project", func(t *testing.T) {
+		s := seeded(t, open)
+		withUsers(t, s, "u2")
+		ok(t, s.UpsertProject(ctx, plainProject("p2", "u1", "api", 1)))
+		ok(t, s.PutMember(ctx, member("p1", "u2", confstore.MemberViewer, 0), ""))
+		ok(t, s.PutMember(ctx, member("p2", "u2", confstore.MemberViewer, 0), ""))
+		ok(t, s.DeleteProject(ctx, "p1"))
+		same(t, "deleted project's", memberRoles(s, "p1"), []string{})
+		same(t, "other project's", memberRoles(s, "p2"), []string{"u2=viewer"})
 	})
 }
 

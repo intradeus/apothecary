@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/account/logins"
 	"apothecary/internal/analytics"
 	"apothecary/internal/engine"
@@ -85,6 +86,10 @@ type Server struct {
 	// answers every user route 503 — a server without it is misconfigured,
 	// never open.
 	Auth *auth.Service
+	// Authz decides what a signed-in request may do (internal/account/authz):
+	// every user route's action, on the resource its path names. nil
+	// answers every user route 503, like Auth.
+	Authz *authz.Authorizer
 	// SSH is the engine's SSH door (TODO 46), for the run page's connection
 	// facts and for ending a disabled account's sessions; nil = no door.
 	SSH SSHAccess

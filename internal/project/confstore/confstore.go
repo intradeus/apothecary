@@ -297,7 +297,29 @@ type DB interface {
 	// owner: the CLI's envcheck and dev seeding).
 	GetProjectByName(ctx Ctx, userID, name string) (Project, error)
 	ListProjects(ctx Ctx, userID string) ([]Project, error)
+	// ListVisibleProjects is userID's projects ("" matches no owner, unlike
+	// ListProjects) and those whose id is in projectIDs, oldest first.
+	ListVisibleProjects(ctx Ctx, userID string, projectIDs []string) ([]Project, error)
+	// DeleteProject takes its members with it.
 	DeleteProject(ctx Ctx, id string) error
+
+	// Members: a workshop shared with other accounts. Both writes are a
+	// compare-and-swap on the account's role there, from ("" = not yet a
+	// member): a role changed meanwhile is ErrConflict and nothing is
+	// written, which holds the owner-only rule on maintainers against a
+	// stale read. PutMember inserts or changes the role (created_at kept; a
+	// missing project is ErrNotFound, a role outside MemberRoles
+	// ErrInvalid); DeleteMember of one that is not there is ErrNotFound.
+	PutMember(ctx Ctx, m Member, from string) error
+	GetMember(ctx Ctx, projectID, userID string) (Member, error)
+	ListMembers(ctx Ctx, projectID string) ([]Member, error) // oldest first
+	DeleteMember(ctx Ctx, projectID, userID, from string) error
+	// ProjectAccess is a project's owner and userID's role on it (RoleOwner,
+	// a member role, or ""); a missing project is ErrNotFound.
+	ProjectAccess(ctx Ctx, projectID, userID string) (owner, role string, err error)
+	// ProjectsOf is every project userID owns (RoleOwner) or is a member of,
+	// by project id.
+	ProjectsOf(ctx Ctx, userID string) ([]Reach, error)
 
 	// Ticket writes check the ticket's status and type rows exist
 	// (ErrInvalid), not that they are its tracker's — that is the Service's.

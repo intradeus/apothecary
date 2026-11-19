@@ -15,7 +15,8 @@
 		type Flow,
 		type Integration,
 		type Project,
-		type ProjectDraft
+		type ProjectDraft,
+		projectCan
 	} from '$lib/domain';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -63,9 +64,14 @@
 	const init = untrack(() => $state.snapshot(existing) as Project | null);
 	const initFlows = untrack(() => flows);
 	const byPort = (port: string) => untrack(() => integrations).filter((i) => i.port === port);
-	const repoAccounts = byPort('repository');
-	const harnesses = byPort('harness');
-	const ticketSources = byPort('ticketsource');
+	// A workshop shared with the caller runs on its owner's integrations: its
+	// repository account, ticket source and harnesses. The caller's list holds
+	// none of them (they are the owner's to see), and the engine takes no one
+	// else's. They are kept as they are and none of the caller's own is offered.
+	const shared = !!init && init.access.role !== 'owner';
+	const repoAccounts = shared ? [] : byPort('repository');
+	const harnesses = shared ? [] : byPort('harness');
+	const ticketSources = shared ? [] : byPort('ticketsource');
 	const flowNames = initFlows.map((f) => f.name);
 	const ownFlows = initFlows.filter((f) => !f.builtin);
 	const templateFlows = initFlows.filter((f) => f.builtin);
@@ -86,8 +92,10 @@
 	let harnessIds = $state<string[]>(
 		init?.harnessIds?.length ? [...init.harnessIds] : harnesses[0] ? [harnesses[0].id] : []
 	);
-	// Dedup by kind (one per kind), preserving selection order.
+	// Dedup by kind (one per kind), preserving selection order; one no
+	// longer there is dropped. A shared workshop's are its owner's, kept.
 	function harnessSet(): string[] {
+		if (shared) return [...harnessIds];
 		const ids: string[] = [];
 		const seen = new Set<string>();
 		for (const id of harnessIds) {
@@ -341,6 +349,9 @@
 				]
 			: [])
 	]);
+	/** Without project:write the setup is shown, not edited: every control is
+	 *  disabled and the save bar gives way to a notice. */
+	const readonly = $derived(!!existing && !projectCan(existing, 'project:write'));
 	let active = $state<StepId>('repository');
 	let formEl = $state<HTMLFormElement | null>(null);
 
@@ -377,9 +388,10 @@
 		onselect={(id) => jump(id as StepId)}
 	/>
 
-	<div class="secs">
+	<fieldset class="secs" disabled={readonly}>
 		<RepositorySection
 			{repoAccounts}
+			{shared}
 			bind:repoAccountId
 			bind:repoURL
 			bind:locator
@@ -398,9 +410,9 @@
 			bind:defaultFlow
 			bind:commandRows
 		>
-			<TicketSourceSection sources={ticketSources} bind:ticketSourceId />
+			<TicketSourceSection sources={ticketSources} {shared} bind:ticketSourceId />
 		</WorkshopSection>
-		<ExecutionSection {harnesses} bind:harnessIds />
+		<ExecutionSection {harnesses} {shared} bind:harnessIds />
 		<WorkspaceSection
 			{blockedDomains}
 			bind:egressMode
@@ -414,33 +426,37 @@
 		<ServicesSection bind:rows={serviceList} issues={svcIssues} strict={svcStrict} />
 		<BrowserSection bind:enabled={browserEnabled} projectId={existing?.id} {savedAt} />
 		{#if existing}
-			<SecretsSection projectId={existing.id} />
+			<SecretsSection projectId={existing.id} canEdit={!readonly} />
 		{/if}
 
 		{@render after?.()}
 
 		{#if error}<ErrorCard cause={t('form.project.saveFail')} detail={error} />{/if}
 
-		<!-- The bar's Save is the form's submit button (SaveBar `submit`): the
-		     native required-field checks run, then submit() saves. -->
-		<SaveBar
-			{dirty}
-			{busy}
-			{savedAt}
-			note={existing ? t('form.project.noteEdit') : t('form.project.noteCreate')}
-			saveLabel={existing ? t('form.project.saveSetup') : t('form.project.createWorkshop')}
-			submit
-		>
-			{#snippet extra()}
-				<Toggle
-					bind:checked={runEnvcheck}
-					label={t('form.project.envcheck')}
-					title={t('form.project.envcheckTitle')}
-				/>
-				<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
-			{/snippet}
-		</SaveBar>
-	</div>
+		{#if readonly}
+			<p class="help">{t('common.needsPermission')}</p>
+		{:else}
+			<!-- The bar's Save is the form's submit button (SaveBar `submit`): the
+			     native required-field checks run, then submit() saves. -->
+			<SaveBar
+				{dirty}
+				{busy}
+				{savedAt}
+				note={existing ? t('form.project.noteEdit') : t('form.project.noteCreate')}
+				saveLabel={existing ? t('form.project.saveSetup') : t('form.project.createWorkshop')}
+				submit
+			>
+				{#snippet extra()}
+					<Toggle
+						bind:checked={runEnvcheck}
+						label={t('form.project.envcheck')}
+						title={t('form.project.envcheckTitle')}
+					/>
+					<button type="button" class="btn-ghost" onclick={oncancel}>{t('common.cancel')}</button>
+				{/snippet}
+			</SaveBar>
+		{/if}
+	</fieldset>
 </form>
 
 <style>
@@ -455,6 +471,9 @@
 		display: flex;
 		flex-direction: column;
 		gap: 14px;
+		border: 0;
+		padding: 0;
+		margin: 0;
 		min-width: 0;
 	}
 	@media (max-width: 1000px) {

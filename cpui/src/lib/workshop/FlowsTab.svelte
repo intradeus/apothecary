@@ -8,7 +8,7 @@
 	// one workshop.
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { Flow, Project } from '$lib/domain';
+	import { projectCan, type Flow, type Project } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to } from '$lib/core/urls';
 	import { ago, fmtAbs } from '$lib/core/format';
@@ -53,7 +53,15 @@
 		void project.id;
 		void loadBindings();
 	});
-	const projects = $derived(fleet.projects.length ? fleet.projects : [project]);
+	// Creating, binding and copying a flow into a workshop need project:write
+	// there; a copy only offers the workshops that allow it.
+	const canWrite = $derived(projectCan(project, 'project:write'));
+	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
+	const projects = $derived(
+		(fleet.projects.length ? fleet.projects : [project]).filter((p) =>
+			projectCan(p, 'project:write')
+		)
+	);
 	const projectName = (id: string) => fleet.projectById.get(id)?.name ?? project.name;
 
 	async function create(name: string) {
@@ -65,8 +73,11 @@
 </script>
 
 <HeaderAction>
-	<button class="btn-primary btn-lg" onclick={() => (creating = true)}
-		>{I.add} {t('workshop.flows.new')}</button
+	<button
+		class="btn-primary btn-lg"
+		disabled={!canWrite}
+		title={deny}
+		onclick={() => (creating = true)}>{I.add} {t('workshop.flows.new')}</button
 	>
 </HeaderAction>
 
@@ -113,12 +124,16 @@
 								>
 								<button
 									class="btn-sm"
-									title={t('workshop.flows.configureTitle')}
+									disabled={!canWrite}
+									title={deny ?? t('workshop.flows.configureTitle')}
 									onclick={() => (configuring = f)}>{t('workshop.flows.configure')}</button
 								>
 								<button
 									class="btn-sm"
-									title={t('workshop.flows.copyTitle')}
+									disabled={!projects.length}
+									title={projects.length
+										? t('workshop.flows.copyTitle')
+										: t('common.needsPermission')}
 									onclick={() => (copying = { flow: f })}
 									>{I.copy} {t('workshop.flows.copy')}</button
 								>
@@ -132,8 +147,11 @@
 					title={t('workshop.flows.emptyTitle')}
 					text={t('workshop.flows.emptyText', { flow: project.defaultFlow })}
 				>
-					<button class="btn-primary" onclick={() => (creating = true)}
-						>{I.add} {t('workshop.flows.new')}</button
+					<button
+						class="btn-primary"
+						disabled={!canWrite}
+						title={deny}
+						onclick={() => (creating = true)}>{I.add} {t('workshop.flows.new')}</button
 					>
 				</EmptyState>
 			{/if}
@@ -169,12 +187,14 @@
 								>
 								<button
 									class="btn-sm btn-sel"
-									title={t('workshop.flows.configureTitle')}
+									disabled={!canWrite}
+									title={deny ?? t('workshop.flows.configureTitle')}
 									onclick={() => (configuring = tpl)}>{t('workshop.flows.configure')}</button
 								>
 								<button
 									class="btn-sm"
-									title={t('workshop.flows.useTitle')}
+									disabled={!canWrite}
+									title={deny ?? t('workshop.flows.useTitle')}
 									onclick={() => (copying = { flow: tpl, target: project.id })}
 									>{t('workshop.flows.use')}</button
 								>

@@ -2279,6 +2279,43 @@ components:
         - methods
         - user
       type: object
+    Member:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        handle:
+          type: string
+        name:
+          type: string
+        role:
+          type: string
+        user_id:
+          type: string
+      required:
+        - created_at
+        - handle
+        - name
+        - role
+        - user_id
+      type: object
+    MemberRequest:
+      properties:
+        login:
+          type: string
+        role:
+          type: string
+      required:
+        - login
+        - role
+      type: object
+    MemberRoleRequest:
+      properties:
+        role:
+          type: string
+      required:
+        - role
+      type: object
     Message:
       properties:
         at:
@@ -2552,6 +2589,22 @@ components:
         - paste
         - provider
         - url
+      type: object
+    Permission:
+      properties:
+        action:
+          type: string
+        doc:
+          type: string
+        grantable:
+          type: boolean
+        kind:
+          type: string
+      required:
+        - action
+        - doc
+        - grantable
+        - kind
       type: object
     PhaseInfo:
       properties:
@@ -2891,60 +2944,18 @@ components:
         name:
           type: string
       type: object
-    Project:
+    ProjectAccess:
       properties:
-        commands:
-          additionalProperties:
-            type: string
-          nullable: true
-          type: object
-        created_at:
-          format: date-time
-          type: string
-        default_flow:
-          type: string
-        harness_ids:
+        actions:
           items:
             type: string
           nullable: true
           type: array
-        id:
+        role:
           type: string
-        name:
-          type: string
-        provisioner_id:
-          type: string
-        repo:
-          $ref: '#/components/schemas/RepoConfig'
-        repo_account_id:
-          type: string
-        repos:
-          items:
-            $ref: '#/components/schemas/ExtraRepo'
-          type: array
-        ticket_source_id:
-          type: string
-        updated_at:
-          format: date-time
-          type: string
-        user_id:
-          type: string
-        workspace:
-          $ref: '#/components/schemas/WorkspaceConfig'
       required:
-        - commands
-        - created_at
-        - default_flow
-        - harness_ids
-        - id
-        - name
-        - provisioner_id
-        - repo
-        - repo_account_id
-        - ticket_source_id
-        - updated_at
-        - user_id
-        - workspace
+        - actions
+        - role
       type: object
     ProjectRequest:
       properties:
@@ -3004,6 +3015,55 @@ components:
           type: string
       required:
         - value
+      type: object
+    ProjectView:
+      properties:
+        access:
+          $ref: '#/components/schemas/ProjectAccess'
+        commands:
+          additionalProperties:
+            type: string
+          nullable: true
+          type: object
+        created_at:
+          format: date-time
+          type: string
+        default_flow:
+          type: string
+        harness_ids:
+          items:
+            type: string
+          nullable: true
+          type: array
+        id:
+          type: string
+        name:
+          type: string
+        owner_handle:
+          type: string
+        provisioner_id:
+          type: string
+        repo:
+          $ref: '#/components/schemas/RepoConfig'
+        repo_account_id:
+          type: string
+        repos:
+          items:
+            $ref: '#/components/schemas/ExtraRepo'
+          type: array
+        ticket_source:
+          $ref: '#/components/schemas/TicketSourceView'
+        ticket_source_id:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+        workspace:
+          $ref: '#/components/schemas/WorkspaceConfig'
+      required:
+        - access
       type: object
     ProviderCredential:
       properties:
@@ -4686,6 +4746,18 @@ components:
         - kind
         - name
       type: object
+    TicketSourceView:
+      properties:
+        home:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+      required:
+        - kind
+        - name
+      type: object
     TicketStatusRequest:
       properties:
         status:
@@ -4695,6 +4767,10 @@ components:
       type: object
     Token:
       properties:
+        actions:
+          items:
+            type: string
+          type: array
         created_at:
           format: date-time
           type: string
@@ -4712,6 +4788,10 @@ components:
           type: string
         prefix:
           type: string
+        project_ids:
+          items:
+            type: string
+          type: array
       required:
         - created_at
         - id
@@ -4730,11 +4810,21 @@ components:
       type: object
     TokenRequest:
       properties:
+        actions:
+          items:
+            type: string
+          type: array
         expires_at:
           format: date-time
           type: string
+        full_access:
+          type: boolean
         name:
           type: string
+        project_ids:
+          items:
+            type: string
+          type: array
       required:
         - name
       type: object
@@ -4890,8 +4980,6 @@ components:
       type: object
     User:
       properties:
-        admin:
-          type: boolean
         created_at:
           format: date-time
           type: string
@@ -4909,22 +4997,22 @@ components:
           type: string
         name:
           type: string
+        role:
+          type: string
         updated_at:
           format: date-time
           type: string
       required:
-        - admin
         - created_at
         - email
         - handle
         - id
         - name
+        - role
         - updated_at
       type: object
     UserCreateRequest:
       properties:
-        admin:
-          type: boolean
         email:
           type: string
         handle:
@@ -4933,6 +5021,8 @@ components:
           type: string
         password:
           type: string
+        role:
+          type: string
       required:
         - email
         - handle
@@ -4940,9 +5030,6 @@ components:
       type: object
     UserUpdateRequest:
       properties:
-        admin:
-          nullable: true
-          type: boolean
         disabled:
           nullable: true
           type: boolean
@@ -4951,6 +5038,8 @@ components:
         handle:
           type: string
         name:
+          type: string
+        role:
           type: string
       type: object
     ValidateFlowRequest:
@@ -5276,7 +5365,7 @@ components:
 info:
   description: The engine's whole surface. The control-plane UI talks only to this API, and its client is generated from this document.
   title: Apothecary engine API
-  version: 1.2.0
+  version: 2.0.0
 openapi: 3.0.3
 paths:
   /api/actions:
@@ -5300,6 +5389,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -5310,6 +5403,7 @@ paths:
       summary: Actions an `action` stage may name
       tags:
         - system
+      x-apothecary-action: project:read
   /api/analytics/catalog:
     get:
       operationId: getAnalyticsCatalog
@@ -5328,6 +5422,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -5338,6 +5436,7 @@ paths:
       summary: Every grain, dimension and measure a query may name
       tags:
         - analytics
+      x-apothecary-action: analytics:read
   /api/analytics/dashboards:
     get:
       operationId: listDashboards
@@ -5359,6 +5458,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -5369,6 +5472,7 @@ paths:
       summary: The built-in dashboards, then one's own
       tags:
         - analytics
+      x-apothecary-action: analytics:read
     post:
       operationId: createDashboard
       requestBody:
@@ -5392,6 +5496,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -5406,6 +5514,7 @@ paths:
       summary: Create a dashboard
       tags:
         - analytics
+      x-apothecary-action: analytics:write
   /api/analytics/dashboards/{id}:
     delete:
       operationId: deleteDashboard
@@ -5423,6 +5532,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -5444,6 +5557,7 @@ paths:
       summary: Delete a dashboard (409 on a built-in)
       tags:
         - analytics
+      x-apothecary-action: analytics:write
     get:
       operationId: getDashboard
       parameters:
@@ -5467,6 +5581,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5481,6 +5599,7 @@ paths:
       summary: One dashboard
       tags:
         - analytics
+      x-apothecary-action: analytics:read
     put:
       operationId: updateDashboard
       parameters:
@@ -5510,6 +5629,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5528,6 +5651,7 @@ paths:
       summary: Replace a dashboard's name, filters and panels (409 on a built-in)
       tags:
         - analytics
+      x-apothecary-action: analytics:write
   /api/analytics/drill:
     post:
       operationId: drillAnalytics
@@ -5555,6 +5679,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -5569,6 +5697,7 @@ paths:
       summary: The runs behind a group (at most 200, newest first)
       tags:
         - analytics
+      x-apothecary-action: analytics:read
   /api/analytics/query:
     post:
       description: A whitelisted shape — grain, measures, group-by, filters, time range — checked against the catalog. At most 8 measures, 3 group-by dimensions, 10 filters and 500 rows; 422 when it runs longer than 5s.
@@ -5594,6 +5723,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -5608,6 +5741,7 @@ paths:
       summary: Run a query over one's own runs
       tags:
         - analytics
+      x-apothecary-action: analytics:read
   /api/analytics/scorecards:
     get:
       operationId: listScorecards
@@ -5629,6 +5763,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -5639,6 +5777,7 @@ paths:
       summary: The built-in scorecards, then one's own
       tags:
         - analytics
+      x-apothecary-action: analytics:read
     post:
       operationId: createScorecard
       requestBody:
@@ -5662,6 +5801,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -5676,6 +5819,7 @@ paths:
       summary: Create a scorecard
       tags:
         - analytics
+      x-apothecary-action: analytics:write
   /api/analytics/scorecards/{id}:
     delete:
       operationId: deleteScorecard
@@ -5693,6 +5837,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -5714,6 +5862,7 @@ paths:
       summary: Delete a scorecard (409 on a built-in)
       tags:
         - analytics
+      x-apothecary-action: analytics:write
     get:
       operationId: getScorecard
       parameters:
@@ -5737,6 +5886,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5751,6 +5904,7 @@ paths:
       summary: One scorecard
       tags:
         - analytics
+      x-apothecary-action: analytics:read
     put:
       operationId: updateScorecard
       parameters:
@@ -5780,6 +5934,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5798,6 +5956,7 @@ paths:
       summary: Replace a scorecard's name and terms (409 on a built-in)
       tags:
         - analytics
+      x-apothecary-action: analytics:write
   /api/analytics/values:
     post:
       operationId: analyticsValues
@@ -5825,6 +5984,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -5839,6 +6002,7 @@ paths:
       summary: One dimension's distinct values (at most 200), labelled
       tags:
         - analytics
+      x-apothecary-action: analytics:read
   /api/attachments:
     post:
       operationId: uploadAttachments
@@ -5869,6 +6033,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -5883,6 +6051,7 @@ paths:
       summary: Upload files to attach to a ticket, a goal or an answer
       tags:
         - files
+      x-apothecary-action: run:operate
   /api/attachments/{id}:
     get:
       operationId: downloadAttachment
@@ -5908,6 +6077,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -5922,6 +6095,7 @@ paths:
       summary: Download one uploaded file
       tags:
         - files
+      x-apothecary-action: run:read
   /api/attachments/limits:
     get:
       operationId: getAttachmentLimits
@@ -5940,6 +6114,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -5950,6 +6128,7 @@ paths:
       summary: 'Upload policy: size cap and accepted types'
       tags:
         - files
+      x-apothecary-action: run:read
   /api/auth/login:
     post:
       description: method is password unless the instance offers another; login is a handle or an email; proof the password. Repeated failures for one account from one address are throttled (429).
@@ -5997,6 +6176,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6011,6 +6194,7 @@ paths:
       summary: End the browser session
       tags:
         - auth
+      x-apothecary-action: account:read
   /api/auth/setup:
     post:
       description: Only while no account exists (409 after).
@@ -6087,6 +6271,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -6097,6 +6285,7 @@ paths:
       summary: One's notification channels (secrets masked)
       tags:
         - channels
+      x-apothecary-action: channel:read
     post:
       operationId: addChannel
       requestBody:
@@ -6122,6 +6311,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6136,6 +6329,7 @@ paths:
       summary: Add a notification channel
       tags:
         - channels
+      x-apothecary-action: channel:write
   /api/channels/{id}:
     delete:
       operationId: deleteChannel
@@ -6153,6 +6347,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -6174,6 +6372,7 @@ paths:
       summary: Remove a notification channel
       tags:
         - channels
+      x-apothecary-action: channel:write
   /api/cli/logins:
     post:
       description: The CLI keeps device_code secret and prints user_code with verification_url, where a signed-in person approves it. Then it polls POST /api/cli/logins/token every interval seconds until expires_in passes. 503 when too many sign-ins are waiting.
@@ -6232,6 +6431,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6246,6 +6449,7 @@ paths:
       summary: A terminal sign-in waiting for approval, by its user code
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/cli/logins/{code}/approve:
     post:
       description: Mints a personal token named after the sign-in, refused after the deployment's inactivity window without use. 404 when expired or unknown; 409 when already answered.
@@ -6267,6 +6471,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6285,6 +6493,7 @@ paths:
       summary: 'Approve a terminal sign-in: it signs in as you'
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/cli/logins/{code}/deny:
     post:
       description: 404 when expired or unknown; 409 when already answered.
@@ -6306,6 +6515,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6324,6 +6537,7 @@ paths:
       summary: Deny a terminal sign-in
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/cli/logins/token:
     post:
       description: '202 {status: pending} until approved; 200 {status: approved, token, token_id, handle} once, then the sign-in is gone; 403 when it was denied; 410 when it expired or is unknown; 429 when polled faster than the interval. The token is refused after the deployment''s inactivity window (APOTHECARY_CLI_TOKEN_IDLE) without use; each use slides it.'
@@ -6378,6 +6592,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -6388,6 +6606,7 @@ paths:
       summary: One's model provider credentials (metadata only, never a key or a token)
       tags:
         - integrations
+      x-apothecary-action: credential:read
     post:
       operationId: createCredential
       requestBody:
@@ -6411,6 +6630,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6425,6 +6648,7 @@ paths:
       summary: Add an API key for a provider
       tags:
         - integrations
+      x-apothecary-action: credential:write
   /api/credentials/{id}:
     delete:
       operationId: deleteCredential
@@ -6442,6 +6666,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -6463,6 +6691,7 @@ paths:
       summary: Delete a credential no harness integration uses
       tags:
         - integrations
+      x-apothecary-action: credential:write
     get:
       operationId: getCredential
       parameters:
@@ -6486,6 +6715,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6500,6 +6733,7 @@ paths:
       summary: One credential (metadata only)
       tags:
         - integrations
+      x-apothecary-action: credential:read
     put:
       operationId: renameCredential
       parameters:
@@ -6529,6 +6763,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6547,6 +6785,7 @@ paths:
       summary: Rename a credential
       tags:
         - integrations
+      x-apothecary-action: credential:write
   /api/credentials/{id}/test:
     post:
       operationId: testCredential
@@ -6571,6 +6810,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6589,6 +6832,7 @@ paths:
       summary: Check a credential against its provider, without spending tokens
       tags:
         - integrations
+      x-apothecary-action: credential:write
   /api/credentials/import:
     post:
       description: codex's or opencode's auth.json, CLIProxyAPI login JSON, or KEY=VALUE lines. Every entry that is not a provider apothecary manages is refused and listed.
@@ -6614,6 +6858,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6628,6 +6876,7 @@ paths:
       summary: Import a credential file a harness CLI wrote
       tags:
         - integrations
+      x-apothecary-action: credential:write
   /api/credentials/signin:
     post:
       description: Returns the provider page to open and, for a device sign-in, the code to type there. The tokens come back to the engine, never to a laptop CLI.
@@ -6653,6 +6902,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -6667,6 +6920,7 @@ paths:
       summary: Start signing in to a provider from apothecary
       tags:
         - integrations
+      x-apothecary-action: credential:write
   /api/credentials/signin/{sid}/complete:
     post:
       description: 'A device sign-in answers 202 {pending: true} until the person approves; a paste sign-in exchanges what was pasted. 201 with the new credential when done.'
@@ -6698,6 +6952,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6716,6 +6974,7 @@ paths:
       summary: Finish a sign-in
       tags:
         - integrations
+      x-apothecary-action: credential:write
   /api/egress-defaults:
     get:
       operationId: getEgressDefaults
@@ -6734,6 +6993,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -6744,6 +7007,7 @@ paths:
       summary: The built-in allowlist every project starts from
       tags:
         - egress
+      x-apothecary-action: project:read
   /api/envchecks/{id}:
     delete:
       description: The check stops at its next step and still destroys its workspace.
@@ -6765,6 +7029,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6783,6 +7051,7 @@ paths:
       summary: Cancel a running workspace check
       tags:
         - projects
+      x-apothecary-action: project:write
     get:
       operationId: getEnvCheck
       parameters:
@@ -6806,6 +7075,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6820,6 +7093,7 @@ paths:
       summary: Poll a workspace check
       tags:
         - projects
+      x-apothecary-action: project:read
   /api/flow-templates:
     get:
       operationId: listFlowTemplates
@@ -6841,6 +7115,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -6851,6 +7129,7 @@ paths:
       summary: The compiled-in flow templates a project can adopt or copy
       tags:
         - flows
+      x-apothecary-action: project:read
   /api/flow-templates/{name}/copy:
     post:
       description: 'A template belongs to no project, so it is copied from here rather than from under one. Copying it under its own name adopts it: the project gets its own editable document, which shadows the template from then on.'
@@ -6882,6 +7161,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -6900,6 +7183,7 @@ paths:
       summary: Copy a compiled-in template into a project
       tags:
         - flows
+      x-apothecary-action: project:write
   /api/flows:
     get:
       operationId: listAllFlows
@@ -6921,6 +7205,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -6931,6 +7219,7 @@ paths:
       summary: Every flow of one's projects, for the cross-project overview
       tags:
         - flows
+      x-apothecary-action: project:read
   /api/flows/schema:
     get:
       description: 'The YAML with its shorthand, for an editor to validate, complete and document as a person types; its lists (stage types, signals, actions and their inputs) come from the registries. The parser stays the authority: validate a document for the rules a schema cannot say.'
@@ -6952,6 +7241,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -6962,6 +7255,7 @@ paths:
       summary: The JSON Schema of a flow document as it is written
       tags:
         - flows
+      x-apothecary-action: project:read
   /api/flows/validate:
     post:
       description: 'Project-independent: the parser checks the document itself, and a flow carries its own agents.'
@@ -6987,6 +7281,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -7001,6 +7299,7 @@ paths:
       summary: Validate a flow document without saving it
       tags:
         - flows
+      x-apothecary-action: project:read
   /api/harness-options:
     get:
       operationId: listHarnessOptions
@@ -7022,6 +7321,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7032,6 +7335,7 @@ paths:
       summary: Options an agent stage's harness_options may set, per harness kind
       tags:
         - system
+      x-apothecary-action: project:read
   /api/integrations:
     get:
       operationId: listIntegrations
@@ -7053,6 +7357,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7063,6 +7371,7 @@ paths:
       summary: One's integrations (secrets masked)
       tags:
         - integrations
+      x-apothecary-action: integration:read
     post:
       description: Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.
       operationId: createIntegration
@@ -7087,6 +7396,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -7101,6 +7414,7 @@ paths:
       summary: Configure an integration
       tags:
         - integrations
+      x-apothecary-action: integration:write
   /api/integrations/{id}:
     delete:
       description: One a workshop uses — its repository account, provisioner, harness or ticket source — is refused with 409 naming the workshops. A deleted ticket source's records stay, and their runs. The internal tracker cannot be deleted (400).
@@ -7122,6 +7436,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7140,6 +7458,7 @@ paths:
       summary: Delete an integration
       tags:
         - integrations
+      x-apothecary-action: integration:write
     get:
       operationId: getIntegration
       parameters:
@@ -7163,6 +7482,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7177,6 +7500,7 @@ paths:
       summary: One integration
       tags:
         - integrations
+      x-apothecary-action: integration:read
     put:
       operationId: updateIntegration
       parameters:
@@ -7206,6 +7530,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7224,6 +7552,7 @@ paths:
       summary: 'Change an integration (secrets merge: present replaces, "" deletes, absent keeps)'
       tags:
         - integrations
+      x-apothecary-action: integration:write
   /api/integrations/{id}/models:
     get:
       operationId: listIntegrationModels
@@ -7251,6 +7580,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7265,6 +7598,7 @@ paths:
       summary: Models a harness integration's credentials can reach
       tags:
         - integrations
+      x-apothecary-action: integration:read
   /api/integrations/{id}/repos:
     get:
       operationId: listIntegrationRepos
@@ -7292,6 +7626,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7306,6 +7644,7 @@ paths:
       summary: Repositories a repository integration (GitLab, GitHub) can see
       tags:
         - integrations
+      x-apothecary-action: integration:read
   /api/integrations/{id}/statuses:
     get:
       description: 'The internal tracker''s rows, edited here; a remote tracker''s list read live from it, read_only (is_done: its done category). A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.'
@@ -7338,6 +7677,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7352,6 +7695,7 @@ paths:
       summary: A ticket source's statuses, in order
       tags:
         - integrations
+      x-apothecary-action: integration:read
     put:
       description: A row with no id is new, a missing one is deleted, names are unique, the order given is kept. Deleting a status tickets use needs replace_with[id] (409 without). A remote tracker's statuses are its own (400).
       operationId: putTrackerStatuses
@@ -7382,6 +7726,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7400,6 +7748,7 @@ paths:
       summary: Save the internal tracker's statuses
       tags:
         - integrations
+      x-apothecary-action: integration:write
   /api/integrations/{id}/test:
     post:
       operationId: testIntegration
@@ -7424,6 +7773,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7442,6 +7795,7 @@ paths:
       summary: Check an integration's credentials against the real service
       tags:
         - integrations
+      x-apothecary-action: integration:write
   /api/integrations/{id}/types:
     get:
       description: A remote tracker's are read from it first, a type not listed yet added with its change type guessed from its name.
@@ -7474,6 +7828,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7488,6 +7846,7 @@ paths:
       summary: A ticket source's issue types, in order
       tags:
         - integrations
+      x-apothecary-action: integration:read
     put:
       description: A remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). Deleting a type tickets use needs replace_with[id] (409 without).
       operationId: putTrackerTypes
@@ -7518,6 +7877,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -7536,6 +7899,7 @@ paths:
       summary: Save a ticket source's issue types
       tags:
         - integrations
+      x-apothecary-action: integration:write
   /api/kinds:
     get:
       operationId: listKinds
@@ -7557,6 +7921,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7567,6 +7935,7 @@ paths:
       summary: Every port kind this build carries, with its config fields
       tags:
         - system
+      x-apothecary-action: integration:read
   /api/limits:
     get:
       operationId: getLimits
@@ -7585,6 +7954,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7595,6 +7968,7 @@ paths:
       summary: 'The instance''s capacity caps (-1: no cap)'
       tags:
         - system
+      x-apothecary-action: account:read
     put:
       operationId: setLimits
       requestBody:
@@ -7636,6 +8010,7 @@ paths:
       summary: 'Set the instance''s capacity caps (admin; -1: no cap)'
       tags:
         - system
+      x-apothecary-action: instance:admin
   /api/me:
     get:
       operationId: getMe
@@ -7654,6 +8029,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7664,6 +8043,7 @@ paths:
       summary: The signed-in user
       tags:
         - auth
+      x-apothecary-action: account:read
     put:
       operationId: updateMe
       requestBody:
@@ -7687,6 +8067,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -7701,6 +8085,7 @@ paths:
       summary: Change one's own handle, email or name
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/me/password:
     put:
       description: Every other session is signed out; this one continues.
@@ -7722,6 +8107,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -7736,6 +8125,7 @@ paths:
       summary: Change one's own password
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/me/ssh-keys:
     get:
       operationId: listMySshKeys
@@ -7757,6 +8147,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7767,6 +8161,7 @@ paths:
       summary: 'One''s SSH public keys: what the SSH door lets into one''s workspaces'
       tags:
         - auth
+      x-apothecary-action: account:read
     post:
       description: The contents of a .pub file. A key registered on one account cannot be registered on another. Disabling the account keeps its keys and ends their sessions; re-enabling it restores access.
       operationId: addMySshKey
@@ -7791,6 +8186,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -7805,6 +8204,7 @@ paths:
       summary: Register an SSH public key
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/me/ssh-keys/{id}:
     delete:
       operationId: deleteMySshKey
@@ -7822,6 +8222,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -7843,6 +8247,7 @@ paths:
       summary: Remove an SSH public key
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/me/tokens:
     get:
       operationId: listMyTokens
@@ -7864,6 +8269,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7874,8 +8283,9 @@ paths:
       summary: One's personal API tokens (never their secrets)
       tags:
         - auth
+      x-apothecary-action: account:read
     post:
-      description: 'The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.'
+      description: 'The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token. A token is full_access (the account itself) or limited to actions (GET /api/permissions) and, optionally, to some workshops (project_ids); a limited token never does more than its account may at the time, and cannot hold account:manage.'
       operationId: createMyToken
       requestBody:
         content:
@@ -7898,6 +8308,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -7912,6 +8326,7 @@ paths:
       summary: Mint a personal API token
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/me/tokens/{id}:
     delete:
       operationId: deleteMyToken
@@ -7929,6 +8344,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -7950,6 +8369,7 @@ paths:
       summary: Revoke a personal API token
       tags:
         - auth
+      x-apothecary-action: account:manage
   /api/notices:
     get:
       operationId: listNotices
@@ -7971,6 +8391,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -7981,6 +8405,7 @@ paths:
       summary: One's undismissed notices, newest first
       tags:
         - notices
+      x-apothecary-action: notice:read
   /api/notices/{id}/dismiss:
     post:
       operationId: dismissNotice
@@ -7998,6 +8423,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -8019,6 +8448,7 @@ paths:
       summary: Dismiss a notice
       tags:
         - notices
+      x-apothecary-action: notice:write
   /api/notices/dismiss:
     post:
       operationId: dismissAllNotices
@@ -8030,6 +8460,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -8047,6 +8481,7 @@ paths:
       summary: Dismiss all of one's notices
       tags:
         - notices
+      x-apothecary-action: notice:write
   /api/observability:
     get:
       description: '`grafana_url` is APOTHECARY_GRAFANA_URL; empty when not configured.'
@@ -8080,6 +8515,43 @@ paths:
       summary: Where the platform dashboards live (admin)
       tags:
         - system
+      x-apothecary-action: instance:admin
+  /api/permissions:
+    get:
+      operationId: listPermissions
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Permission'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The actions a route or a limited token can name, and which a token may hold
+      tags:
+        - auth
+      x-apothecary-action: account:read
   /api/pings:
     get:
       operationId: listPings
@@ -8116,6 +8588,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -8126,6 +8602,7 @@ paths:
       summary: 'The inbox: one''s questions waiting on a human'
       tags:
         - pings
+      x-apothecary-action: run:read
   /api/pings/{pid}:
     get:
       operationId: getPing
@@ -8150,6 +8627,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8164,6 +8645,7 @@ paths:
       summary: One question with its answer, if it has one
       tags:
         - pings
+      x-apothecary-action: run:read
   /api/pings/{pid}/answer:
     post:
       operationId: answerPing
@@ -8194,6 +8676,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8212,6 +8698,7 @@ paths:
       summary: Answer a question
       tags:
         - pings
+      x-apothecary-action: run:operate
   /api/pings/{pid}/curation:
     get:
       description: 'Each shown file of a review type (review_threads, review_replies, mr_threads) from its raise-time snapshot: what the curation page lists item by item. A file not captured lists with the reason and can only be approved as written.'
@@ -8237,6 +8724,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8251,6 +8742,7 @@ paths:
       summary: A question's review documents, decoded as the gate showed them
       tags:
         - pings
+      x-apothecary-action: run:read
   /api/pings/{pid}/files:
     get:
       operationId: getPingFiles
@@ -8275,6 +8767,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8289,6 +8785,7 @@ paths:
       summary: The files a question attached, as captured when it was raised
       tags:
         - pings
+      x-apothecary-action: run:read
   /api/projects:
     get:
       operationId: listProjects
@@ -8298,7 +8795,7 @@ paths:
             application/json:
               schema:
                 items:
-                  $ref: '#/components/schemas/Project'
+                  $ref: '#/components/schemas/ProjectView'
                 nullable: true
                 type: array
           description: OK
@@ -8310,6 +8807,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -8317,9 +8818,10 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: One's projects
+      summary: 'The projects one sees: one''s own and those shared with one, each with one''s access'
       tags:
         - projects
+      x-apothecary-action: project:read
     post:
       operationId: createProject
       requestBody:
@@ -8333,13 +8835,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Project'
+                $ref: '#/components/schemas/ProjectView'
           description: Created
         "400":
           content:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -8357,6 +8863,7 @@ paths:
       summary: Create a project
       tags:
         - projects
+      x-apothecary-action: project:create
   /api/projects/{id}:
     delete:
       operationId: deleteProject
@@ -8374,6 +8881,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -8395,6 +8906,7 @@ paths:
       summary: Delete a project
       tags:
         - projects
+      x-apothecary-action: project:delete
     get:
       operationId: getProject
       parameters:
@@ -8408,13 +8920,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Project'
+                $ref: '#/components/schemas/ProjectView'
           description: OK
         "400":
           content:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -8429,9 +8945,10 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: One project
+      summary: One project, with one's access
       tags:
         - projects
+      x-apothecary-action: project:read
     put:
       operationId: updateProject
       parameters:
@@ -8451,13 +8968,17 @@ paths:
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Project'
+                $ref: '#/components/schemas/ProjectView'
           description: OK
         "400":
           content:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -8479,6 +9000,7 @@ paths:
       summary: Replace a project
       tags:
         - projects
+      x-apothecary-action: project:write
   /api/projects/{id}/automations:
     get:
       operationId: listAutomations
@@ -8506,6 +9028,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8520,6 +9046,7 @@ paths:
       summary: 'The project''s automations: how runs begin without a person'
       tags:
         - automations
+      x-apothecary-action: project:read
     post:
       description: 'Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise — or nothing for a cron automation, which then takes no ticket_id: each slot starts a run of its own, skipped while the previous one is still going), the params are ones it accepts.'
       operationId: createAutomation
@@ -8550,6 +9077,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8568,6 +9099,7 @@ paths:
       summary: Create an automation
       tags:
         - automations
+      x-apothecary-action: project:write
   /api/projects/{id}/automations/{aid}:
     delete:
       operationId: deleteAutomation
@@ -8593,6 +9125,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8611,6 +9147,7 @@ paths:
       summary: Delete an automation (the tickets it recorded and their runs stay)
       tags:
         - automations
+      x-apothecary-action: project:write
     get:
       operationId: getAutomation
       parameters:
@@ -8639,6 +9176,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8653,6 +9194,7 @@ paths:
       summary: One automation, with what the watcher last did with it
       tags:
         - automations
+      x-apothecary-action: project:read
     put:
       operationId: updateAutomation
       parameters:
@@ -8687,6 +9229,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8705,6 +9251,7 @@ paths:
       summary: Replace an automation (its last poll, firing and error are kept)
       tags:
         - automations
+      x-apothecary-action: project:write
   /api/projects/{id}/branches:
     get:
       operationId: listProjectBranches
@@ -8732,6 +9279,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8746,6 +9297,7 @@ paths:
       summary: Branches of the project's repository
       tags:
         - projects
+      x-apothecary-action: project:read
   /api/projects/{id}/browser:
     get:
       description: One container per project, a Chromium per agent session (the builtin browser MCP server). The toggle is the project's workspace.browser.enabled; this says whether the container runs, with what image, and how many sessions use it.
@@ -8771,6 +9323,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8785,6 +9341,7 @@ paths:
       summary: 'The project''s browser: its toggle and its container'
       tags:
         - projects
+      x-apothecary-action: project:read
   /api/projects/{id}/build-cache:
     delete:
       description: 'Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.'
@@ -8806,6 +9363,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8824,6 +9385,7 @@ paths:
       summary: Empty the project's build cache
       tags:
         - projects
+      x-apothecary-action: project:write
     get:
       description: The cache is per project and outlives its runs — it is what stops every run rebuilding the image into its own throwaway daemon.
       operationId: getBuildCache
@@ -8848,6 +9410,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8862,6 +9428,7 @@ paths:
       summary: What the project's devcontainer build cache holds
       tags:
         - projects
+      x-apothecary-action: project:read
   /api/projects/{id}/egress-audit:
     get:
       operationId: getProjectEgressAudit
@@ -8907,6 +9474,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8921,6 +9492,7 @@ paths:
       summary: Everything this project's workspaces reached or were blocked from
       tags:
         - egress
+      x-apothecary-action: project:read
   /api/projects/{id}/envcheck:
     get:
       description: Running or finished — what a page opened mid-check follows.
@@ -8946,6 +9518,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -8960,6 +9536,7 @@ paths:
       summary: The project's most recent workspace check
       tags:
         - projects
+      x-apothecary-action: project:read
     post:
       description: 'Starting a check cancels the project''s running one, if any: the newest check is the one that matters.'
       operationId: startEnvCheck
@@ -8990,6 +9567,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9008,6 +9589,7 @@ paths:
       summary: Prove the project's workspace actually builds (throwaway provision)
       tags:
         - projects
+      x-apothecary-action: project:write
   /api/projects/{id}/flow-bindings:
     get:
       operationId: listFlowBindings
@@ -9035,6 +9617,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9049,6 +9635,7 @@ paths:
       summary: The project's parameter bindings, one per configured flow
       tags:
         - flows
+      x-apothecary-action: project:read
   /api/projects/{id}/flow-versions/{hash}:
     get:
       operationId: getFlowVersion
@@ -9078,6 +9665,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9092,6 +9683,7 @@ paths:
       summary: One flow version by content hash
       tags:
         - flows
+      x-apothecary-action: project:read
   /api/projects/{id}/flows:
     get:
       operationId: listFlows
@@ -9119,6 +9711,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9133,6 +9729,7 @@ paths:
       summary: A project's flows, with the templates it has not adopted
       tags:
         - flows
+      x-apothecary-action: project:read
     post:
       operationId: createFlow
       parameters:
@@ -9162,6 +9759,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9180,6 +9781,7 @@ paths:
       summary: Create a flow in a project
       tags:
         - flows
+      x-apothecary-action: project:write
   /api/projects/{id}/flows/{name}:
     delete:
       operationId: deleteFlow
@@ -9205,6 +9807,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9223,6 +9829,7 @@ paths:
       summary: Delete a project's flow (resets to the template, when there is one)
       tags:
         - flows
+      x-apothecary-action: project:write
     get:
       description: Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.
       operationId: getFlow
@@ -9252,6 +9859,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9266,6 +9877,7 @@ paths:
       summary: One of a project's flows
       tags:
         - flows
+      x-apothecary-action: project:read
     put:
       description: Saving a built-in template's name for the first time creates this project's own copy of it.
       operationId: updateFlow
@@ -9301,6 +9913,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9319,6 +9935,7 @@ paths:
       summary: Replace one of a project's flows
       tags:
         - flows
+      x-apothecary-action: project:write
   /api/projects/{id}/flows/{name}/binding:
     delete:
       operationId: deleteFlowBinding
@@ -9344,6 +9961,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9362,6 +9983,7 @@ paths:
       summary: Put the project back to the flow's declared defaults
       tags:
         - flows
+      x-apothecary-action: project:write
     get:
       description: '404 when the project bound nothing: the flow runs on its declared defaults. A template is configurable without being copied.'
       operationId: getFlowBinding
@@ -9391,6 +10013,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9405,6 +10031,7 @@ paths:
       summary: The project's values for a flow's parameters
       tags:
         - flows
+      x-apothecary-action: project:read
     put:
       description: Replaces the binding. Every key must be a parameter the flow declares (the engine-known names included) and every value one it accepts — checked the way a run checks them; an empty value unbinds. A binding left with no values is removed. The document itself is untouched.
       operationId: putFlowBinding
@@ -9440,6 +10067,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9458,6 +10089,7 @@ paths:
       summary: Bind values to a flow's parameters for this project
       tags:
         - flows
+      x-apothecary-action: project:write
   /api/projects/{id}/flows/{name}/copy:
     post:
       operationId: copyFlow
@@ -9493,6 +10125,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9511,6 +10147,7 @@ paths:
       summary: Copy a flow into another project
       tags:
         - flows
+      x-apothecary-action: project:write
   /api/projects/{id}/flows/{name}/versions:
     get:
       operationId: listFlowVersions
@@ -9543,6 +10180,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9557,6 +10198,257 @@ paths:
       summary: A flow's version history within its project
       tags:
         - flows
+      x-apothecary-action: project:read
+  /api/projects/{id}/members:
+    get:
+      operationId: listMembers
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/Member'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The accounts a project is shared with, and their roles
+      tags:
+        - projects
+      x-apothecary-action: project:read
+    post:
+      description: role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself; 409 when the account's role there changed while this was decided (reload and retry).
+      operationId: addMember
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+          description: Created
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Share a project with an account, by handle or email
+      tags:
+        - projects
+      x-apothecary-action: project:members
+  /api/projects/{id}/members/{uid}:
+    delete:
+      description: Only the owner removes a maintainer. 409 when the role changed while this was decided (reload and retry).
+      operationId: removeMember
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Stop sharing a project with a member
+      tags:
+        - projects
+      x-apothecary-action: project:members
+    put:
+      description: Only the owner makes or unmakes a maintainer. 409 when the role changed while this was decided (reload and retry).
+      operationId: updateMember
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: uid
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MemberRoleRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Member'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Change a member's role
+      tags:
+        - projects
+      x-apothecary-action: project:members
+  /api/projects/{id}/members/me:
+    delete:
+      description: 'project:leave: every member holds it, the owner does not (it deletes the project instead), and a limited token never does.'
+      operationId: leaveProject
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Leave a project shared with one
+      tags:
+        - projects
+      x-apothecary-action: project:leave
   /api/projects/{id}/mrs:
     get:
       description: 'The repository''s open merge requests, newest first: each with its author and head, and the runs that went through it here — how many have it in their data (started on it, or opened it) and the newest. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.'
@@ -9590,6 +10482,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9604,6 +10500,7 @@ paths:
       summary: Open merge requests of a project's repository, with the runs on each
       tags:
         - projects
+      x-apothecary-action: project:read
   /api/projects/{id}/mrs/{iid}:
     get:
       operationId: getProjectMR
@@ -9638,6 +10535,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9652,6 +10553,7 @@ paths:
       summary: One merge request, with its description and the runs on it
       tags:
         - projects
+      x-apothecary-action: project:read
   /api/projects/{id}/mrs/{iid}/runs:
     post:
       description: 'Starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project''s default flow unless the body names another), given its title and description as its work. No ticket is made. 409 while another run is still working on it.'
@@ -9688,6 +10590,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9706,6 +10612,7 @@ paths:
       summary: Start a run of a flow on a merge request
       tags:
         - projects
+      x-apothecary-action: run:operate
   /api/projects/{id}/preflight:
     post:
       operationId: preflightProject
@@ -9730,6 +10637,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9748,6 +10659,7 @@ paths:
       summary: Check a project is ready to run, step by step
       tags:
         - projects
+      x-apothecary-action: project:write
   /api/projects/{id}/runs:
     post:
       description: 'Starts a run of a flow whose runs are started on nothing (operates_on: nothing; the project''s default flow unless the body names another): 400 for a flow started on a ticket or a merge request. Everything in the body is optional: a title ("manual run - " and the time when left out), the branch to start from (the repository''s default), new_branch to name the fresh branch forked from it (named after the run when left out), or on_branch to work on the branch itself, with nothing forked. Any number may run at once, up to the environment cap (409).'
@@ -9779,6 +10691,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9797,6 +10713,7 @@ paths:
       summary: 'Start a run on nothing: a workspace on a branch, with no ticket or merge request'
       tags:
         - projects
+      x-apothecary-action: run:operate
   /api/projects/{id}/secrets:
     get:
       description: What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.
@@ -9825,6 +10742,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9839,6 +10760,7 @@ paths:
       summary: The project's secrets, by name
       tags:
         - projects
+      x-apothecary-action: project:write
   /api/projects/{id}/secrets/{name}:
     delete:
       description: A flow that reads it is refused at its next run's creation.
@@ -9865,6 +10787,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9883,6 +10809,7 @@ paths:
       summary: Remove one project secret
       tags:
         - projects
+      x-apothecary-action: project:write
     put:
       description: Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.
       operationId: setProjectSecret
@@ -9918,6 +10845,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -9936,6 +10867,109 @@ paths:
       summary: Set one project secret
       tags:
         - projects
+      x-apothecary-action: project:write
+  /api/projects/{id}/ticket-statuses:
+    get:
+      description: 'Its ticket source''s list, as listTrackerStatuses gives it, read by anyone who reads the workshop''s tickets: the source is its owner''s. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.'
+      operationId: listWorkshopTicketStatuses
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 1 = read the tracker now rather than the cached copy
+          in: query
+          name: refresh
+          schema:
+            enum:
+              - "1"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerStatusList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The statuses a workshop's tickets move through, in order
+      tags:
+        - tickets
+      x-apothecary-action: ticket:read
+  /api/projects/{id}/ticket-types:
+    get:
+      description: 'Its ticket source''s list, as listTrackerTypes gives it, read by anyone who reads the workshop''s tickets: the source is its owner''s.'
+      operationId: listWorkshopTicketTypes
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 1 = read the tracker now rather than the cached copy
+          in: query
+          name: refresh
+          schema:
+            enum:
+              - "1"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TrackerTypeList'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The issue types of a workshop's tickets, in order
+      tags:
+        - tickets
+      x-apothecary-action: ticket:read
   /api/projects/{id}/tickets:
     get:
       description: Each row carries its local record's id, base branch and active run (in any workshop) when the issue has a record. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.
@@ -9992,6 +11026,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10006,6 +11044,7 @@ paths:
       summary: One page of a workshop's tickets, read live from its ticket source
       tags:
         - tickets
+      x-apothecary-action: ticket:read
     post:
       description: A workshop reading a remote tracker creates its tickets there (400).
       operationId: createWorkshopTicket
@@ -10036,6 +11075,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10054,6 +11097,7 @@ paths:
       summary: Create a ticket on a workshop's internal tracker
       tags:
         - tickets
+      x-apothecary-action: ticket:write
   /api/projects/{id}/tickets/{key}:
     delete:
       description: A remote issue is its tracker's (400).
@@ -10080,6 +11124,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10098,6 +11146,7 @@ paths:
       summary: Delete an internal ticket
       tags:
         - tickets
+      x-apothecary-action: ticket:write
     get:
       description: Read live; a record takes what the issue shows now. An issue the tracker does not have is 404.
       operationId: getWorkshopTicket
@@ -10134,6 +11183,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10148,6 +11201,7 @@ paths:
       summary: One ticket of a workshop's source, by its key
       tags:
         - tickets
+      x-apothecary-action: ticket:read
     put:
       description: An internal ticket takes title, goal, base_branch, change_type, type_id and attachment_ids. A remote issue takes base_branch only (the rest is its tracker's), its record made when it has none.
       operationId: updateWorkshopTicket
@@ -10183,6 +11237,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10201,6 +11259,7 @@ paths:
       summary: Edit a ticket
       tags:
         - tickets
+      x-apothecary-action: ticket:write
   /api/projects/{id}/tickets/{key}/attachments:
     get:
       operationId: getWorkshopTicketAttachments
@@ -10230,6 +11289,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10244,6 +11307,7 @@ paths:
       summary: 'Files of a ticket: its record''s, and the remote issue''s'
       tags:
         - tickets
+      x-apothecary-action: ticket:read
   /api/projects/{id}/tickets/{key}/comments:
     get:
       description: A remote issue's are read live.
@@ -10284,6 +11348,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10298,6 +11366,7 @@ paths:
       summary: A ticket's comments, oldest first
       tags:
         - tickets
+      x-apothecary-action: ticket:read
     post:
       description: Answers with the ticket's comments.
       operationId: addWorkshopTicketComment
@@ -10336,6 +11405,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10354,6 +11427,7 @@ paths:
       summary: Comment on a ticket, on its tracker
       tags:
         - tickets
+      x-apothecary-action: ticket:write
   /api/projects/{id}/tickets/{key}/labels:
     put:
       operationId: setWorkshopTicketLabels
@@ -10389,6 +11463,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10407,6 +11485,7 @@ paths:
       summary: Replace a ticket's labels on its tracker
       tags:
         - tickets
+      x-apothecary-action: ticket:write
   /api/projects/{id}/tickets/{key}/runs:
     post:
       description: 'The issue''s record is made first when it has none; an issue that has one starts from it even while its tracker cannot be read. A ticket has at most one active (non-terminal) run across workshops: while one is going the start is refused with 409, the error''s run_id naming it.'
@@ -10443,6 +11522,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10461,6 +11544,7 @@ paths:
       summary: Start one attempt on a ticket, in this workshop
       tags:
         - tickets
+      x-apothecary-action: run:operate
   /api/projects/{id}/tickets/{key}/status:
     post:
       description: A status the issue cannot reach is 400, naming those it can; the remote tracker failing 502.
@@ -10497,6 +11581,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10515,6 +11603,7 @@ paths:
       summary: Move a ticket to a status of its tracker, by name
       tags:
         - tickets
+      x-apothecary-action: ticket:write
   /api/providers:
     get:
       description: 'The closed set: what each takes (an API key, a login) and which harnesses use it. harness narrows it to one harness kind.'
@@ -10543,6 +11632,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -10553,6 +11646,7 @@ paths:
       summary: The model providers apothecary manages credentials for
       tags:
         - integrations
+      x-apothecary-action: credential:read
   /api/provisioner:
     get:
       description: Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).
@@ -10572,6 +11666,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -10582,6 +11680,7 @@ paths:
       summary: The instance's provisioner (secrets masked)
       tags:
         - integrations
+      x-apothecary-action: project:read
     put:
       description: An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.
       operationId: updateProvisioner
@@ -10624,6 +11723,7 @@ paths:
       summary: 'Change the instance''s provisioner (admin; secrets merge: present replaces, "" deletes, absent keeps)'
       tags:
         - integrations
+      x-apothecary-action: instance:admin
   /api/provisioner/test:
     post:
       operationId: testProvisioner
@@ -10660,6 +11760,7 @@ paths:
       summary: Check the instance's provisioner reaches its cluster (admin)
       tags:
         - integrations
+      x-apothecary-action: instance:admin
   /api/runs:
     get:
       operationId: listRuns
@@ -10692,6 +11793,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -10702,6 +11807,7 @@ paths:
       summary: List one's runs, newest first
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}:
     get:
       operationId: getRun
@@ -10726,6 +11832,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10740,6 +11850,7 @@ paths:
       summary: One run with the tail of its event log
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/abort:
     post:
       operationId: abortRun
@@ -10757,6 +11868,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -10778,6 +11893,7 @@ paths:
       summary: Stop a run for good
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/archive:
     post:
       description: The destroy outlives the request. One that fails is recorded on the run (env_destroy_failed, env_destroy_error) and retried by the reaper; archiving an archived run that still has a workspace retries it now, and answers 409 with the reason when it fails again.
@@ -10799,6 +11915,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10817,6 +11937,7 @@ paths:
       summary: Archive a finished run and destroy its workspace
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/ask:
     get:
       description: 'A flow with an ask: section gives the run read-only sessions (threads) beside its stages that answer questions about the code; a run holds any number of them, each with its own harness session, model and messages. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.'
@@ -10842,6 +11963,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10856,6 +11981,7 @@ paths:
       summary: 'The Ask pane: its threads, their conversations and models, and whether it is on'
       tags:
         - runs
+      x-apothecary-action: run:read
     post:
       description: 'The question is recorded in the thread named by thread_id (none: the run''s latest, opened when the run has none) and returned at once; the answer arrives on the pane''s stream. A question may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/ask/ and the question names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.'
       operationId: askRun
@@ -10886,6 +12012,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10904,6 +12034,7 @@ paths:
       summary: Ask one of the run's read-only sessions a question
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/ask/model:
     put:
       description: 'Picks the model of the thread named by thread_id (none: the run''s latest, opened when the run has none); its live session is switched over at its next question. 404 for an unknown thread.'
@@ -10931,6 +12062,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10949,6 +12084,7 @@ paths:
       summary: Pick the model an Ask session answers with
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/ask/stream:
     get:
       description: 'Replays every thread''s messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, a thread''s state as it changes, threads as they open (thread frames). Every frame names its thread_id.'
@@ -10979,6 +12115,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -10993,6 +12133,7 @@ paths:
       summary: Server-sent event stream of the Ask pane
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/ask/threads:
     post:
       description: The thread starts with no messages and the model of the run's latest thread; its harness session opens with its first answer. 409 when the pane is off.
@@ -11018,6 +12159,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11036,6 +12181,7 @@ paths:
       summary: Open a new Ask session in the run
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/auth-broker/{rest...}:
     delete:
       operationId: authBrokerDelete
@@ -11172,6 +12318,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11190,6 +12340,7 @@ paths:
       summary: Unblock a host for a live run and persist it to the project
       tags:
         - egress
+      x-apothecary-action: run:operate
   /api/runs/{id}/egress-audit:
     get:
       operationId: getRunEgressAudit
@@ -11235,6 +12386,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11249,6 +12404,7 @@ paths:
       summary: Everything this run's workspace reached or was blocked from
       tags:
         - egress
+      x-apothecary-action: run:read
   /api/runs/{id}/egress-denials:
     get:
       operationId: listEgressDenials
@@ -11276,6 +12432,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11290,6 +12450,7 @@ paths:
       summary: Hosts the gateway blocked for this run
       tags:
         - egress
+      x-apothecary-action: run:read
   /api/runs/{id}/egress-policy:
     get:
       operationId: getRunEgressPolicy
@@ -11314,6 +12475,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11328,6 +12493,7 @@ paths:
       summary: The firewall policy in force for a run right now
       tags:
         - egress
+      x-apothecary-action: run:read
   /api/runs/{id}/egress-rule:
     post:
       operationId: setEgressRule
@@ -11358,6 +12524,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11376,6 +12546,7 @@ paths:
       summary: Allow or force-block a host for a run
       tags:
         - egress
+      x-apothecary-action: run:operate
   /api/runs/{id}/events:
     get:
       description: Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).
@@ -11406,6 +12577,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11420,6 +12595,7 @@ paths:
       summary: Server-sent event stream of a run's events
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/expose-port:
     post:
       operationId: exposeRunPort
@@ -11450,6 +12626,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11468,6 +12648,7 @@ paths:
       summary: Publish a workspace port and get its browsable URL
       tags:
         - workspace
+      x-apothecary-action: run:shell
   /api/runs/{id}/files:
     get:
       operationId: getRunFiles
@@ -11492,6 +12673,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11506,6 +12691,7 @@ paths:
       summary: 'Everything filed under a run: human uploads and engine captures'
       tags:
         - files
+      x-apothecary-action: run:read
   /api/runs/{id}/files.zip:
     get:
       description: outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is left out and named in MISSING.txt.
@@ -11527,6 +12713,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11541,6 +12731,7 @@ paths:
       summary: Everything on a run's Record, in one zip
       tags:
         - files
+      x-apothecary-action: run:read
   /api/runs/{id}/hold:
     delete:
       description: Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.
@@ -11562,6 +12753,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11580,6 +12775,7 @@ paths:
       summary: Hand the task back to the agent
       tags:
         - runs
+      x-apothecary-action: run:operate
     post:
       description: 'While held, the end of the agent''s turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. force (default true) stops the agent''s turn in flight so it waits on you at once — unless that turn is waiting on the agent''s own question; force false lets the turn finish first. The body is optional. 409 when no agent is running, or someone already holds it.'
       operationId: takeOverRun
@@ -11606,6 +12802,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11624,6 +12824,7 @@ paths:
       summary: Take over the running agent's session
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/journal:
     get:
       description: 'Every decision and note whole and every attempt''s record with its verdict, no logs: one file for the tool to write (run.md).'
@@ -11739,6 +12940,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11753,6 +12958,7 @@ paths:
       summary: A stage's captured log (latest attempt)
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/messages:
     post:
       description: 'Delivered into the agent''s live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.'
@@ -11784,6 +12990,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11802,6 +13012,7 @@ paths:
       summary: Send a message to the agent you took over
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/mrs/status:
     get:
       operationId: getRunMRStatus
@@ -11829,6 +13040,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11843,6 +13058,7 @@ paths:
       summary: 'Each merge request as its repository reports it now: mergeability and pending review threads'
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/observed-ports:
     post:
       operationId: reportObservedPorts
@@ -11910,6 +13126,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11928,6 +13148,7 @@ paths:
       summary: Start code-server in the workspace and get its URL
       tags:
         - workspace
+      x-apothecary-action: run:shell
   /api/runs/{id}/pause:
     post:
       description: 'Works on a run that is parked waiting for an answer too: pausing one says it must not pick up when the answer lands.'
@@ -11949,6 +13170,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -11967,6 +13192,7 @@ paths:
       summary: Park a run; nothing moves until play
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/phases:
     get:
       operationId: getRunPhases
@@ -11994,6 +13220,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12008,6 +13238,7 @@ paths:
       summary: 'Every phase of the run''s flow: what opens it, its runs per merge request, its live run and the signals holding for it'
       tags:
         - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/phases/{phase}/start:
     post:
       description: 'Only while the cursor is at the hub: no chain is running or parked at a wait point. The phase''s signal need not hold — a person''s start is its own decision — and its max still applies. Acts on the named checkout''s merge request, else the run''s single open one, else on none.'
@@ -12040,6 +13271,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12058,6 +13293,7 @@ paths:
       summary: Start a phase now, by hand
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/pings:
     post:
       description: Holds for hold_ms and answers in-band when it can; 204 means not yet — re-poll with X-Ping-ID while the agent's turn waits. key makes a retried raise return the same question.
@@ -12177,6 +13413,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12195,6 +13435,7 @@ paths:
       summary: Continue a paused run where it left off
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/ports:
     get:
       operationId: getRunPorts
@@ -12219,6 +13460,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12233,6 +13478,7 @@ paths:
       summary: Exposed and newly observed workspace ports
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/rebuild:
     post:
       description: no_cache rebuilds the image from scratch — for the staleness a cache key cannot see, like a floating base tag that moved.
@@ -12260,6 +13506,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12278,6 +13528,7 @@ paths:
       summary: Recreate the run's container in place, keeping the checkout
       tags:
         - workspace
+      x-apothecary-action: run:operate
   /api/runs/{id}/rerun:
     post:
       operationId: rerunRun
@@ -12308,6 +13559,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12326,6 +13581,7 @@ paths:
       summary: Run the ticket again as a new run in a fresh workspace
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/resources:
     get:
       operationId: getRunResources
@@ -12350,6 +13606,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12364,6 +13624,7 @@ paths:
       summary: Rolling window of workspace cpu/memory/network samples
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/retry:
     post:
       operationId: retryRun
@@ -12381,6 +13642,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -12402,6 +13667,7 @@ paths:
       summary: 'Try again: re-enter the failed stage in the same workspace'
       tags:
         - runs
+      x-apothecary-action: run:operate
   /api/runs/{id}/services:
     get:
       description: Live state read from the workspace's supervisor on each call — poll it while the pane is open; service_started, service_ready, service_stopped and service_failed also arrive on the run's event stream. A healthy service's ports carry their preview links. workspace is false when the run has none; error says its services could not be read just now.
@@ -12427,6 +13693,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12441,6 +13711,7 @@ paths:
       summary: The project's services and how each stands in the run's workspace
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/services/{name}/logs:
     get:
       operationId: getRunServiceLogs
@@ -12475,6 +13746,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12489,6 +13764,7 @@ paths:
       summary: The last lines of a service's output
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/services/{name}/restart:
     post:
       operationId: restartRunService
@@ -12518,6 +13794,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12536,6 +13816,7 @@ paths:
       summary: Stop a service and start it again
       tags:
         - workspace
+      x-apothecary-action: run:operate
   /api/runs/{id}/services/{name}/start:
     post:
       description: 'Returns once the workspace runs it (already up: left alone); whether it comes up is its state on the services list, and service_ready or service_failed on the event stream. A service started by hand stays up until someone stops it or the workspace goes. 409 when the run has no workspace.'
@@ -12566,6 +13847,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12584,6 +13869,7 @@ paths:
       summary: Start a service by hand
       tags:
         - workspace
+      x-apothecary-action: run:operate
   /api/runs/{id}/services/{name}/stop:
     post:
       operationId: stopRunService
@@ -12613,6 +13899,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12631,6 +13921,7 @@ paths:
       summary: Stop a service, whoever started it
       tags:
         - workspace
+      x-apothecary-action: run:operate
   /api/runs/{id}/ssh:
     get:
       description: The SSH door is the engine's own listener (APOTHECARY_SSH_LISTEN); the username is the workspace, the key one registered on the account. The workspace's sidecar is started on demand, so the first answer may take a moment.
@@ -12656,6 +13947,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12670,6 +13965,7 @@ paths:
       summary: 'How to reach the run''s workspace over SSH: the command, the VS Code link, the door''s fingerprint'
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace-log:
     get:
       description: 'Without from: the last n bytes. With from: up to n bytes from that offset — the end of the last read, to keep up, or a range ending at the start of what is on screen, to go back. A size below the offset kept up to means the log was replaced: read the tail again.'
@@ -12705,6 +14001,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12719,6 +14019,7 @@ paths:
       summary: A range of the workspace's live exec log
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/changes:
     get:
       description: Committed and uncommitted, measured from the merge base with the source branch.
@@ -12749,6 +14050,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12763,6 +14068,7 @@ paths:
       summary: A checkout's changes against the branch it forked from
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/diff:
     get:
       operationId: getWorkspaceDiff
@@ -12797,6 +14103,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12811,6 +14121,7 @@ paths:
       summary: One file's unified diff against the branch the checkout forked from
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/file:
     get:
       operationId: getWorkspaceFile
@@ -12845,6 +14156,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12859,9 +14174,10 @@ paths:
       summary: One file of a run checkout
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/path/file:
     get:
-      description: Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
+      description: Read as the workspace's remote user, the terminal's reach (run:shell); path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
       operationId: getWorkspacePathFile
       parameters:
         - in: path
@@ -12889,6 +14205,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12903,9 +14223,10 @@ paths:
       summary: One file anywhere in the workspace, by absolute or ~ path
       tags:
         - workspace
+      x-apothecary-action: run:shell
   /api/runs/{id}/workspace/path/tree:
     get:
-      description: 'Read as the workspace''s remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace''s sidecar predates this route (restart or rebuild the workspace).'
+      description: 'Read as the workspace''s remote user, the same reach as its terminal, so it takes the terminal''s run:shell: nothing that user can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace''s sidecar predates this route (restart or rebuild the workspace).'
       operationId: getWorkspacePathTree
       parameters:
         - in: path
@@ -12936,6 +14257,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12950,6 +14275,7 @@ paths:
       summary: One directory level anywhere in the workspace, by absolute or ~ path
       tags:
         - workspace
+      x-apothecary-action: run:shell
   /api/runs/{id}/workspace/repos:
     get:
       operationId: getWorkspaceRepos
@@ -12977,6 +14303,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -12991,9 +14321,10 @@ paths:
       summary: The run's checkouts (one per repository)
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/resolve:
     get:
-      description: A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
+      description: 'A relative path is tried in the checkout repo names first, then in the run''s other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. Outside the checkouts is the terminal''s reach: 403 without run:shell, whether or not something is there. 404 when nothing exists, 501 when the workspace''s sidecar predates this route.'
       operationId: resolveWorkspacePath
       parameters:
         - in: path
@@ -13026,6 +14357,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13040,9 +14375,10 @@ paths:
       summary: 'Where a path mentioned in the run lives: a checkout''s file or an absolute one'
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/stat:
     post:
-      description: 'What the Files pane polls to notice changes: each item is a checkout''s (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace''s sidecar predates this route.'
+      description: 'What the Files pane polls to notice changes: each item is a checkout''s (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch — an absolute one without run:shell (the terminal''s reach) among them. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace''s sidecar predates this route.'
       operationId: statWorkspacePaths
       parameters:
         - in: path
@@ -13071,6 +14407,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13089,6 +14429,7 @@ paths:
       summary: Whether each of a batch of workspace paths exists, with its size and mtime
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/runs/{id}/workspace/tree:
     get:
       operationId: getWorkspaceTree
@@ -13126,6 +14467,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13140,6 +14485,7 @@ paths:
       summary: One directory level of a run checkout
       tags:
         - workspace
+      x-apothecary-action: run:read
   /api/settings:
     get:
       operationId: getSettings
@@ -13158,6 +14504,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -13168,6 +14518,7 @@ paths:
       summary: 'One''s policy settings: the reaper and retention windows'
       tags:
         - system
+      x-apothecary-action: settings:read
     put:
       operationId: updateSettings
       requestBody:
@@ -13191,6 +14542,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -13205,6 +14560,7 @@ paths:
       summary: Replace one's policy settings
       tags:
         - system
+      x-apothecary-action: settings:write
   /api/signals:
     get:
       operationId: listSignals
@@ -13226,6 +14582,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -13236,6 +14596,7 @@ paths:
       summary: Signals a `wait` stage or a gate's auto-answer may name
       tags:
         - system
+      x-apothecary-action: project:read
   /api/skills:
     get:
       operationId: listSkills
@@ -13257,6 +14618,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -13267,6 +14632,7 @@ paths:
       summary: One's skills
       tags:
         - skills
+      x-apothecary-action: skill:read
     post:
       description: 'A skill is a folder: SKILL.md (frontmatter name + description) plus any support files. The name must match the frontmatter.'
       operationId: createSkill
@@ -13291,6 +14657,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -13305,6 +14675,7 @@ paths:
       summary: Create a skill from its files
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skills/{id}:
     delete:
       operationId: deleteSkill
@@ -13322,6 +14693,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -13343,6 +14718,7 @@ paths:
       summary: Delete a skill no skillset lists
       tags:
         - skills
+      x-apothecary-action: skill:write
     get:
       operationId: getSkill
       parameters:
@@ -13366,6 +14742,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13380,6 +14760,7 @@ paths:
       summary: One skill, with its file contents
       tags:
         - skills
+      x-apothecary-action: skill:read
     put:
       operationId: updateSkill
       parameters:
@@ -13409,6 +14790,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13427,6 +14812,7 @@ paths:
       summary: Replace a skill's files (every skillset listing it gets a new version if its content changed)
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skills/{id}/refresh:
     post:
       operationId: refreshSkill
@@ -13451,6 +14837,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13469,6 +14859,7 @@ paths:
       summary: Re-download an imported skill
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skills/import:
     post:
       description: A folder holding SKILL.md becomes one skill; a folder of such folders becomes a skillset. Fetched over plain HTTP from the host's public archive — no tokens, public repositories only.
@@ -13494,6 +14885,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -13508,6 +14903,7 @@ paths:
       summary: Import a skill or a folder of skills from a public URL
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skillsets:
     get:
       operationId: listSkillsets
@@ -13529,6 +14925,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -13539,6 +14939,7 @@ paths:
       summary: One's skillsets
       tags:
         - skills
+      x-apothecary-action: skill:read
     post:
       operationId: createSkillset
       requestBody:
@@ -13562,6 +14963,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "409":
           content:
             application/json: {}
@@ -13576,6 +14981,7 @@ paths:
       summary: Create a skillset (cuts v1)
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skillsets/{id}:
     delete:
       operationId: deleteSkillset
@@ -13593,6 +14999,10 @@ paths:
             application/json: {}
           description: error
         "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
           content:
             application/json: {}
           description: error
@@ -13614,6 +15024,7 @@ paths:
       summary: Delete a skillset no live run pins
       tags:
         - skills
+      x-apothecary-action: skill:write
     get:
       operationId: getSkillset
       parameters:
@@ -13637,6 +15048,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13651,6 +15066,7 @@ paths:
       summary: One skillset
       tags:
         - skills
+      x-apothecary-action: skill:read
     put:
       operationId: updateSkillset
       parameters:
@@ -13680,6 +15096,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13698,6 +15118,7 @@ paths:
       summary: Rename a skillset or change its members (a new version if the content changed)
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skillsets/{id}/refresh:
     post:
       operationId: refreshSkillset
@@ -13722,6 +15143,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13740,6 +15165,7 @@ paths:
       summary: Re-download an imported skillset's folder and reconcile its members
       tags:
         - skills
+      x-apothecary-action: skill:write
   /api/skillsets/{id}/versions:
     get:
       operationId: listSkillsetVersions
@@ -13767,6 +15193,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13781,6 +15211,7 @@ paths:
       summary: A skillset's versions, newest first
       tags:
         - skills
+      x-apothecary-action: skill:read
   /api/skillsets/{id}/versions/{seq}:
     get:
       operationId: getSkillsetVersion
@@ -13810,6 +15241,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13824,6 +15259,7 @@ paths:
       summary: One version of a skillset (seq 0 = latest)
       tags:
         - skills
+      x-apothecary-action: skill:read
   /api/snapshots/{id}:
     get:
       operationId: downloadSnapshot
@@ -13849,6 +15285,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13863,6 +15303,7 @@ paths:
       summary: Download one engine-captured record
       tags:
         - files
+      x-apothecary-action: run:read
   /api/swarm:
     get:
       description: 'The war room''s live snapshot: the caller''s non-terminal runs, plus those that ended in the last five minutes, each with its workspace status, newest resource sample and the agent on station with its subagents in flight.'
@@ -13882,6 +15323,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "503":
           content:
             application/json: {}
@@ -13892,6 +15337,7 @@ paths:
       summary: Every sandbox one has in flight, across all one's workshops
       tags:
         - swarm
+      x-apothecary-action: run:read
   /api/tickets/{id}:
     get:
       description: With the key it is opened by, its source (absent once the integration is deleted) and the workshops that read that source.
@@ -13917,6 +15363,10 @@ paths:
           content:
             application/json: {}
           description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
         "404":
           content:
             application/json: {}
@@ -13931,6 +15381,7 @@ paths:
       summary: A ticket record by id, for links from runs
       tags:
         - tickets
+      x-apothecary-action: ticket:read
   /api/users:
     get:
       operationId: listUsers
@@ -13966,6 +15417,7 @@ paths:
       summary: Every account
       tags:
         - users
+      x-apothecary-action: instance:admin
     post:
       operationId: createUser
       requestBody:
@@ -14007,6 +15459,7 @@ paths:
       summary: Create an account with a password
       tags:
         - users
+      x-apothecary-action: instance:admin
   /api/users/{id}:
     put:
       description: Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.
@@ -14057,9 +15510,10 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: 'Change an account: its profile, whether it is an admin, whether it is disabled'
+      summary: 'Change an account: its profile, its role (admin, member, guest), whether it is disabled'
       tags:
         - users
+      x-apothecary-action: instance:admin
   /api/users/{id}/password:
     post:
       description: Signs the account out everywhere.
@@ -14109,6 +15563,7 @@ paths:
       summary: Set an account's password
       tags:
         - users
+      x-apothecary-action: instance:admin
   /healthz:
     get:
       operationId: getHealthz

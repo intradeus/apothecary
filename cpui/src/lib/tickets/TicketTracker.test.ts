@@ -9,8 +9,7 @@ import TicketTracker from './TicketTracker.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		integrations: { statuses: vi.fn() },
-		projects: { ticket: vi.fn() },
+		projects: { ticket: vi.fn(), ticketStatuses: vi.fn() },
 		tickets: { setStatus: vi.fn(), setLabels: vi.fn(), update: vi.fn() }
 	}
 }));
@@ -37,20 +36,38 @@ const setup = (over: Partial<TicketDetail> = {}, branchFormat = '') => {
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	vi.mocked(api.integrations.statuses).mockResolvedValue({
+	vi.mocked(api.projects.ticketStatuses).mockResolvedValue({
 		statuses: [status('To Do', 0), status('Done', 1, true)],
 		readOnly: true
 	});
 });
 
+describe('TicketTracker, read only (no ticket:write)', () => {
+	it('shows status, labels and base branch but changes none of them', async () => {
+		render(TicketTracker, {
+			projectId: 'p1',
+			ticket: aTicketDetail({ key: 'P-1', status: 'To Do', labels: ['api'] }),
+			readonly: true,
+			onchange: vi.fn()
+		});
+		await waitFor(() => expect(api.projects.ticketStatuses).toHaveBeenCalled());
+		const why = 'Your role in this workshop does not allow this';
+		expect(screen.getByRole('button', { name: 'Remove label api' })).toBeDisabled();
+		expect(screen.getByLabelText('Add a label…')).toBeDisabled();
+		expect(screen.getByLabelText('Base branch')).toHaveAttribute('title', why);
+		expect(screen.getByLabelText('Base branch')).toBeDisabled();
+		expect(screen.getByRole('button', { name: /Refresh/ })).toBeEnabled();
+	});
+});
+
 describe('TicketTracker, the status', () => {
-	it("moves the ticket by name through its source's statuses, read-only ones too", async () => {
+	it("moves the ticket by name through its workshop source's statuses, read-only ones too", async () => {
 		const moved = aTicketDetail({ status: 'Done', done: true });
 		vi.mocked(api.tickets.setStatus).mockResolvedValue(moved);
 		const { onchange } = setup();
-		await waitFor(() =>
-			expect(api.integrations.statuses).toHaveBeenCalledWith('01TESTSRC0000000000000ABCD')
-		);
+		// Read through the workshop, not the source: a collaborator does not
+		// read its owner's integration.
+		await waitFor(() => expect(api.projects.ticketStatuses).toHaveBeenCalledWith('p1'));
 		await choose('Change status', /^Done/);
 
 		expect(api.tickets.setStatus).toHaveBeenCalledWith('p1', 'P-1', 'Done');
@@ -58,9 +75,9 @@ describe('TicketTracker, the status', () => {
 	});
 
 	it('keeps the current status pickable when the list fails', async () => {
-		vi.mocked(api.integrations.statuses).mockRejectedValue(new Error('down'));
+		vi.mocked(api.projects.ticketStatuses).mockRejectedValue(new Error('down'));
 		setup({ status: 'Triage' });
-		await waitFor(() => expect(api.integrations.statuses).toHaveBeenCalled());
+		await waitFor(() => expect(api.projects.ticketStatuses).toHaveBeenCalled());
 		await choose('Change status', /^Triage/);
 		expect(api.tickets.setStatus).not.toHaveBeenCalled();
 	});
@@ -68,7 +85,7 @@ describe('TicketTracker, the status', () => {
 	it('shows a refused move next to it', async () => {
 		vi.mocked(api.tickets.setStatus).mockRejectedValue(new Error('reachable: In Progress'));
 		setup();
-		await waitFor(() => expect(api.integrations.statuses).toHaveBeenCalled());
+		await waitFor(() => expect(api.projects.ticketStatuses).toHaveBeenCalled());
 		await choose('Change status', /^Done/);
 		expect(await screen.findByText('reachable: In Progress')).toBeInTheDocument();
 	});

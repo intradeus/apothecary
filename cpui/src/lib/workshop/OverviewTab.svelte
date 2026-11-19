@@ -78,12 +78,7 @@
 			{#if !live.length}
 				<div class="pane-body row">
 					<span class="muted small">{t('workshop.overview.runsStart')}</span>
-					<NewTicketLink
-						{project}
-						{integrations}
-						label={t('workshop.overview.newTicket')}
-						cls="btn-sm"
-					/>
+					<NewTicketLink {project} label={t('workshop.overview.newTicket')} cls="btn-sm" />
 				</div>
 			{/if}
 			{#if finished.length}

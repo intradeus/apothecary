@@ -43,6 +43,9 @@
 	const data = $derived(rs.services);
 	const list = $derived(data?.services ?? []);
 	const canAct = $derived(!!data?.workspace);
+	// Start / restart / stop are run:operate; the forward line is run:shell.
+	const canRun = $derived(canAct && rs.canOperate);
+	const denied = $derived(rs.canOperate ? undefined : t('common.needsPermission'));
 	const upCount = $derived(list.filter((s) => s.state === 'healthy').length);
 	/** What `apothecary forward` is told: the workspace, else the run. */
 	const ws = $derived(rs.run?.envId || rs.runId);
@@ -308,28 +311,29 @@
 							{#if !on}
 								<button
 									class="btn-sm"
-									disabled={!canAct || !!b}
+									disabled={!canRun || !!b}
 									aria-busy={b === 'start'}
-									title={canAct
-										? t('runview.services.start_title')
-										: t('runview.services.no_workspace_short')}
+									title={denied ??
+										(canAct
+											? t('runview.services.start_title')
+											: t('runview.services.no_workspace_short'))}
 									onclick={() => act(s, 'start')}
 									><TransportIcon kind="play" /> {t('runview.services.start')}</button
 								>
 							{:else}
 								<button
 									class="btn-sm"
-									disabled={!canAct || !!b || s.state === 'starting' || s.state === 'stopping'}
+									disabled={!canRun || !!b || s.state === 'starting' || s.state === 'stopping'}
 									aria-busy={b === 'restart'}
-									title={t('runview.services.restart_title')}
+									title={denied ?? t('runview.services.restart_title')}
 									onclick={() => act(s, 'restart')}
 									>{I.retry} {t('runview.services.restart')}</button
 								>
 								<button
 									class="btn-sm"
-									disabled={!canAct || !!b || s.state === 'stopping'}
+									disabled={!canRun || !!b || s.state === 'stopping'}
 									aria-busy={b === 'stop'}
-									title={t('runview.services.stop_title')}
+									title={denied ?? t('runview.services.stop_title')}
 									onclick={() => act(s, 'stop')}
 									><TransportIcon kind="stop" /> {t('runview.services.stop')}</button
 								>
@@ -408,7 +412,7 @@
 							nameHeader={s.ports.some((p) => p.label)
 								? t('runview.services.col_label')
 								: undefined}
-							forward={canAct ? forwardOne : undefined}
+							forward={canAct && rs.canShell ? forwardOne : undefined}
 							links={rs.portLinks}
 						/>
 					{/if}
@@ -446,7 +450,7 @@
 		</div>
 		{#if list.some((s) => s.ports.length)}
 			<div class="hints">
-				{#if canAct}<div class="help">{t('runview.ports.forward_hint')}</div>{/if}
+				{#if canAct && rs.canShell}<div class="help">{t('runview.ports.forward_hint')}</div>{/if}
 				{#if rs.portLinks}<div class="help">{t('runview.ports.web_only')}</div>{/if}
 			</div>
 		{/if}

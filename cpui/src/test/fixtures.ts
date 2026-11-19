@@ -3,6 +3,7 @@
 import { vi } from 'vitest';
 import type { Ping, Project, Run, Ticket, TicketDetail, TicketRow } from '$lib/domain';
 import type { RunStore } from '$lib/run/store.svelte';
+import { fleet } from '$lib/app/fleet.svelte';
 
 const AT = '2026-10-31T12:00:00Z';
 
@@ -57,10 +58,57 @@ export const aProject = (over: Partial<Project> = {}): Project =>
 		commands: {},
 		defaultFlow: 'builder',
 		ticketSourceId: '01TESTSRC0000000000000ABCD',
+		ticketSource: { kind: 'internal', name: 'Internal', home: '' },
+		ownerId: 'u1',
+		access: { role: 'owner', actions: [...PROJECT_ACTIONS] },
 		createdAt: AT,
 		updatedAt: AT,
 		...over
 	}) as Project;
+
+/** What a workshop's owner holds: every workshop action but project:leave
+ *  (an owner deletes its workshop, it never leaves it). */
+export const PROJECT_ACTIONS = [
+	'project:read',
+	'project:write',
+	'project:members',
+	'project:delete',
+	'run:read',
+	'run:operate',
+	'run:shell',
+	'ticket:read',
+	'ticket:write'
+] as const;
+
+/** A workshop shared with the caller as a viewer: it may look, nothing more. */
+export const aViewerProject = (over: Partial<Project> = {}): Project =>
+	aProject({
+		ownerId: 'u2',
+		ownerHandle: 'ada',
+		access: {
+			role: 'viewer',
+			actions: ['project:read', 'project:leave', 'run:read', 'ticket:read']
+		},
+		...over
+	});
+
+/** A workshop shared with the caller as an operator: it runs and writes
+ *  tickets, no shell, no settings. */
+export const anOperatorProject = (over: Partial<Project> = {}): Project =>
+	aViewerProject({
+		access: {
+			role: 'operator',
+			actions: [
+				'project:read',
+				'project:leave',
+				'run:read',
+				'run:operate',
+				'ticket:read',
+				'ticket:write'
+			]
+		},
+		...over
+	});
 
 /** One issue of a workshop's source as its list shows it, with a record. */
 export const aTicketRow = (over: Partial<TicketRow> = {}): TicketRow => ({
@@ -125,6 +173,12 @@ export const aRunStore = (run: Run = aRun(), over: Partial<RunStore> = {}): RunS
 		hasWorkspace: !!run.envId,
 		canRebuild: !!run.envId && !run.archivedAt && (terminal || run.state === 'paused'),
 		canPause: !terminal && run.state !== 'paused' && run.state !== 'pending',
+		get canOperate() {
+			return fleet.can(run.projectId, 'run:operate');
+		},
+		get canShell() {
+			return fleet.can(run.projectId, 'run:shell');
+		},
 		act: vi.fn(async (fn: () => Promise<unknown>) => {
 			try {
 				await fn();

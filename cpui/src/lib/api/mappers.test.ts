@@ -1104,7 +1104,7 @@ describe('tickets', () => {
 
 describe('projects', () => {
 	it('reads a bare project without tripping on what is absent', () => {
-		expect(map.toProject(wire<Wire.Project>({}))).toEqual({
+		expect(map.toProject(wire<Wire.ProjectView>({}))).toEqual({
 			id: '',
 			name: '',
 			repoAccountId: '',
@@ -1128,14 +1128,69 @@ describe('projects', () => {
 			},
 			defaultFlow: '',
 			ticketSourceId: '',
+			ownerId: '',
+			ownerHandle: undefined,
+			access: { role: 'viewer', actions: [] },
 			createdAt: '',
 			updatedAt: ''
 		});
 	});
 
+	it('reads who owns a workshop and what the caller may do in it', () => {
+		const p = map.toProject(
+			wire<Wire.ProjectView>({
+				user_id: 'u1',
+				owner_handle: 'ada',
+				access: { role: 'operator', actions: ['run:read', 'run:operate'] }
+			})
+		);
+		expect(p).toMatchObject({
+			ownerId: 'u1',
+			ownerHandle: 'ada',
+			access: { role: 'operator', actions: ['run:read', 'run:operate'] }
+		});
+		expect(
+			map.toProject(wire<Wire.ProjectView>({ access: { role: 'owner', actions: null } })).access
+		).toEqual({ role: 'owner', actions: [] });
+		expect(
+			map.toProject(wire<Wire.ProjectView>({ access: { role: 'warden', actions: [] } })).access.role
+		).toBe('viewer');
+	});
+
+	it("reads the workshop's ticket source, its address absent on the internal tracker", () => {
+		expect(
+			map.toProject(
+				wire<Wire.ProjectView>({
+					ticket_source: { kind: 'jira', name: 'Jira', home: 'https://acme.atlassian.net' }
+				})
+			).ticketSource
+		).toEqual({ kind: 'jira', name: 'Jira', home: 'https://acme.atlassian.net' });
+		expect(
+			map.toProject(
+				wire<Wire.ProjectView>({ ticket_source: { kind: 'internal', name: 'Internal' } })
+			).ticketSource
+		).toEqual({ kind: 'internal', name: 'Internal', home: '' });
+		expect(map.toProject(wire<Wire.ProjectView>({})).ticketSource).toBeUndefined();
+	});
+
+	it.each<[string, string]>([
+		['maintainer', 'maintainer'],
+		['operator', 'operator'],
+		['viewer', 'viewer'],
+		['owner', 'viewer']
+	])('reads a member whose role is %s', (role, want) => {
+		expect(map.toMember({ user_id: 'u', handle: 'h', name: 'n', role, created_at: AT })).toEqual({
+			userId: 'u',
+			handle: 'h',
+			name: 'n',
+			role: want,
+			createdAt: AT
+		});
+	});
+
 	it('reads a workspace’s policy, services and editor', () => {
 		const p = map.toProject(
-			wire<Wire.Project>({
+			wire<Wire.ProjectView>({
 				workspace: {
 					extra_domains: ['a'],
 					egress_mode: 'deny',
@@ -1214,7 +1269,7 @@ describe('projects', () => {
 
 	it('reads the extra repositories', () => {
 		const p = map.toProject(
-			wire<Wire.Project>({
+			wire<Wire.ProjectView>({
 				repos: [{ name: 'n', url: 'u', locator: '', default_branch: 'main' }]
 			})
 		);
@@ -1675,9 +1730,18 @@ describe('accounts', () => {
 		handle: 'h',
 		email: 'e',
 		name: 'n',
-		admin: true,
+		role: 'admin',
 		created_at: AT
 	};
+
+	it.each<[string, string]>([
+		['admin', 'admin'],
+		['member', 'member'],
+		['guest', 'guest'],
+		['root', 'guest']
+	])('reads an account whose role is %s', (role, want) => {
+		expect(map.toUser(wire<Wire.User>({ ...user, role })).role).toBe(want);
+	});
 
 	it.each<[object, boolean]>([
 		[{}, false],
@@ -1689,7 +1753,7 @@ describe('accounts', () => {
 
 	it('reads who is signed in, and how one may', () => {
 		expect(map.toMe(wire<Wire.Me>({ user, methods: null }))).toMatchObject({
-			user: { id: 'u', handle: 'h', admin: true, createdAt: AT },
+			user: { id: 'u', handle: 'h', role: 'admin', createdAt: AT },
 			methods: []
 		});
 		expect(
@@ -1718,8 +1782,25 @@ describe('accounts', () => {
 			createdAt: AT,
 			lastUsedAt: undefined,
 			expiresAt: undefined,
-			idleSeconds: undefined
+			idleSeconds: undefined,
+			actions: undefined,
+			projectIds: undefined
 		});
+		expect(
+			map.toToken(
+				wire<Wire.Token>({
+					id: 't',
+					name: 'n',
+					prefix: 'p',
+					created_at: AT,
+					actions: ['run:read'],
+					project_ids: ['p1']
+				})
+			)
+		).toMatchObject({ actions: ['run:read'], projectIds: ['p1'] });
+		expect(
+			map.toPermission({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true })
+		).toEqual({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true });
 		expect(
 			map.toToken(
 				wire<Wire.Token>({ id: 't', name: 'n', prefix: 'p', created_at: AT, idle_seconds: 604800 })

@@ -3,7 +3,8 @@
 // seeds runs the way production does, by appending their events, and reads
 // them back through the analytics.Service (and so through Compile): what it
 // proves is that the SQL the compiler writes means what the catalog says,
-// and above all that one person's runs never answer another's query.
+// and above all that a run outside the caller's visible projects never
+// answers their query.
 package analyticstest
 
 import (
@@ -30,7 +31,8 @@ type Fixture struct {
 // store per call.
 func RunContract(t *testing.T, open func(t *testing.T) Fixture) {
 	t.Helper()
-	t.Run("every grain answers only its owner", func(t *testing.T) { runIsolation(t, open(t)) })
+	t.Run("every grain answers only its visible projects", func(t *testing.T) { runIsolation(t, open(t)) })
+	t.Run("a shared workshop counts for every member, nothing outside the list", func(t *testing.T) { runShared(t, open(t)) })
 	t.Run("aggregates mean what the catalog says", func(t *testing.T) { runAggregates(t, open(t)) })
 	t.Run("drill and values", func(t *testing.T) { runDrill(t, open(t)) })
 	t.Run("a ticket counts in every workshop that ran it", func(t *testing.T) { runTicketAcrossWorkshops(t, open(t)) })
@@ -40,11 +42,15 @@ func RunContract(t *testing.T, open func(t *testing.T) Fixture) {
 
 // The seeded people: alice has three runs on one ticket (an abandoned
 // attempt, the one that shipped — archived since —, one after it), bob one
-// run of his own with values alice's never have.
+// run of his own with values alice's never have. Each sees their own
+// workshop: visible is what the caller's authorization hands analytics.
 const (
 	alice = "u-alice"
 	bob   = "u-bob"
+	carol = "u-carol"
 )
+
+var visible = map[string][]string{alice: {"p-a"}, bob: {"p-b"}, carol: {"p-x", "p-y"}}
 
 type seedRun struct {
 	id, user, project, ticket, title, flow, hash string
@@ -110,9 +116,14 @@ func service(f Fixture) *analytics.Service { return &analytics.Service{Store: f.
 
 func query(t *testing.T, s *analytics.Service, user string, q analytics.Query) analytics.Result {
 	t.Helper()
-	res, err := s.Query(context.Background(), user, q)
+	return queryIn(t, s, user, visible[user], q)
+}
+
+func queryIn(t *testing.T, s *analytics.Service, user string, projects []string, q analytics.Query) analytics.Result {
+	t.Helper()
+	res, err := s.Query(context.Background(), user, projects, q)
 	if err != nil {
-		t.Fatalf("%s %+v: %v", user, q, err)
+		t.Fatalf("%s %v %+v: %v", user, projects, q, err)
 	}
 	return res
 }
@@ -168,6 +179,40 @@ func runIsolation(t *testing.T, f Fixture) {
 				t.Errorf("%s filtered to the other's values for %s = %+v", g.grain, who.user, res.Rows)
 			}
 		}
+	}
+}
+
+// Visibility is the project list, not the user: bob, shown alice's
+// workshop as well as his own, counts both; shown only alice's, he counts
+// hers and not his own run, which lies outside the list.
+func runShared(t *testing.T, f Fixture) {
+	seed(t, f)
+	s := service(f)
+	ctx := context.Background()
+	for _, g := range groupDims {
+		if res := queryIn(t, s, bob, []string{"p-a", "p-b"}, analytics.Query{Grain: g.grain}); res.Rows[0].N != g.nAlice+g.nBob {
+			t.Errorf("%s over both workshops = %+v, want n %d", g.grain, res.Rows, g.nAlice+g.nBob)
+		}
+		res := queryIn(t, s, bob, []string{"p-a"}, analytics.Query{Grain: g.grain, GroupBy: []string{g.dim}})
+		var got []string
+		for _, r := range res.Rows {
+			got = append(got, r.Dims[0])
+		}
+		slices.Sort(got)
+		if !slices.Equal(got, g.alice) {
+			t.Errorf("%s by %s over p-a only = %v, want %v", g.grain, g.dim, got, g.alice)
+		}
+	}
+	runs, err := s.Drill(ctx, []string{"p-a"}, analytics.GrainRuns, nil, analytics.TimeRange{})
+	if err != nil || len(runs) != 3 || slices.ContainsFunc(runs, func(r analytics.DrillRun) bool { return r.RunID == "an-b1" }) {
+		t.Errorf("drill over p-a = %+v, %v", runs, err)
+	}
+	vals, err := s.Values(ctx, []string{"p-a"}, analytics.GrainRuns, "flow_name", analytics.TimeRange{})
+	if err != nil || len(vals) != 1 || vals[0].Value != "fa" {
+		t.Errorf("values over p-a = %v, %v", vals, err)
+	}
+	if res := queryIn(t, s, bob, nil, analytics.Query{Grain: analytics.GrainRuns}); res.Rows[0].N != 0 {
+		t.Errorf("no projects = %+v", res.Rows)
 	}
 }
 
@@ -272,11 +317,11 @@ func runAggregates(t *testing.T, f Fixture) {
 		t.Errorf("nobody's spend = %+v", res.Rows)
 	}
 	// Labels: nothing to name for a hash with no version row, and no error.
-	labels, err := f.Store.FlowVersionLabels(context.Background(), alice, []string{"ha1"})
+	labels, err := f.Store.FlowVersionLabels(context.Background(), visible[alice], []string{"ha1"})
 	if err != nil || len(labels) != 0 {
 		t.Errorf("labels = %v, %v", labels, err)
 	}
-	names, err := f.Store.ProjectNames(context.Background(), alice, []string{"p-b"})
+	names, err := f.Store.ProjectNames(context.Background(), visible[alice], []string{"p-b"})
 	if err != nil || len(names) != 0 {
 		t.Errorf("names = %v, %v", names, err)
 	}
@@ -286,7 +331,6 @@ func runAggregates(t *testing.T, f Fixture) {
 // tickets grain counts it once under each workshop's filter, with that
 // workshop's runs, and shipping is per workshop.
 func runTicketAcrossWorkshops(t *testing.T, f Fixture) {
-	const carol = "u-carol"
 	pin := event.SkillsetPin{ID: "ss-c", Name: "lint", Seq: 1, Hash: "z1"}
 	seedOf(t, f, []seedRun{
 		{id: "cn-1", user: carol, project: "p-x", ticket: "t-c", title: "Shared", flow: "fc", hash: "hc1", skillset: pin, cost: 1},
@@ -332,7 +376,7 @@ func runDrill(t *testing.T, f Fixture) {
 		}
 		return out
 	}
-	runs, err := s.Drill(ctx, alice, analytics.GrainRuns,
+	runs, err := s.Drill(ctx, visible[alice], analytics.GrainRuns,
 		[]analytics.Filter{{Field: "flow_hash", Op: analytics.OpEq, Values: []string{"ha1"}}}, analytics.TimeRange{})
 	if err != nil || fmt.Sprint(ids(runs)) != "[an-a2 an-a1]" {
 		t.Fatalf("drill ha1 = %v, %v", ids(runs), err)
@@ -354,23 +398,23 @@ func runDrill(t *testing.T, f Fixture) {
 		{analytics.GrainSkillsets, []analytics.Filter{{Field: "skillset_version", Op: analytics.OpEq, Values: []string{"lint v2"}}}, "[an-a3]"},
 		{analytics.GrainPings, []analytics.Filter{{Field: "answer", Op: analytics.OpEq, Values: []string{"reject"}}}, "[an-a1]"},
 	} {
-		runs, err := s.Drill(ctx, alice, g.grain, g.filters, analytics.TimeRange{})
+		runs, err := s.Drill(ctx, visible[alice], g.grain, g.filters, analytics.TimeRange{})
 		if err != nil || fmt.Sprint(ids(runs)) != g.want {
 			t.Errorf("drill %s = %v, %v, want %s", g.grain, ids(runs), err, g.want)
 		}
 	}
 	// Bob drilling into alice's values finds nothing.
-	runs, err = s.Drill(ctx, bob, analytics.GrainRuns,
+	runs, err = s.Drill(ctx, visible[bob], analytics.GrainRuns,
 		[]analytics.Filter{{Field: "flow_hash", Op: analytics.OpEq, Values: []string{"ha1"}}}, analytics.TimeRange{})
 	if err != nil || len(runs) != 0 {
 		t.Errorf("bob's drill = %v, %v", ids(runs), err)
 	}
 
-	vals, err := s.Values(ctx, alice, analytics.GrainSkillsets, "skillset", analytics.TimeRange{})
+	vals, err := s.Values(ctx, visible[alice], analytics.GrainSkillsets, "skillset", analytics.TimeRange{})
 	if err != nil || len(vals) != 1 || vals[0].Value != "lint" {
 		t.Errorf("alice's skillsets = %v, %v", vals, err)
 	}
-	vals, err = s.Values(ctx, bob, analytics.GrainRuns, "flow_name", analytics.TimeRange{})
+	vals, err = s.Values(ctx, visible[bob], analytics.GrainRuns, "flow_name", analytics.TimeRange{})
 	if err != nil || len(vals) != 1 || vals[0].Value != "fb" {
 		t.Errorf("bob's flows = %v, %v", vals, err)
 	}

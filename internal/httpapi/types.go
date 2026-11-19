@@ -67,8 +67,9 @@ type RerunRequest struct {
 	// MR moves the rerun to another merge request ("" = the one the
 	// original was started on, if it was).
 	MR *runinput.MR `json:"mr,omitempty"`
-	// Skillsets replace the original's (absent = the original's at their
-	// latest version; an empty list = none).
+	// Skillsets are the caller's and replace the original's (absent = the
+	// original's: the caller's at their latest version, anyone else's at the
+	// version the original installed; an empty list = none).
 	Skillsets []skills.Ref `json:"skillsets,omitempty"`
 }
 
@@ -653,10 +654,16 @@ type PasswordChangeRequest struct {
 	Password string `json:"password"`
 }
 
-// TokenRequest mints a personal API token.
+// TokenRequest mints a personal API token: either full access (the
+// account itself) or limited to Actions (GET /api/permissions lists the
+// grantable ones) and, optionally, to the workshops in ProjectIDs. Exactly
+// one of full_access and a non-empty actions list.
 type TokenRequest struct {
-	Name      string     `json:"name"`
-	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	Name       string     `json:"name"`
+	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
+	FullAccess bool       `json:"full_access,omitempty"`
+	Actions    []string   `json:"actions,omitempty"`
+	ProjectIDs []string   `json:"project_ids,omitempty"`
 }
 
 // TokenCreated carries the secret, the one time it is ever shown.
@@ -703,23 +710,87 @@ type RunSSH struct {
 	Keys       int      `json:"keys"`
 }
 
-// UserCreateRequest is an admin creating an account.
+// UserCreateRequest is an admin creating an account. Role is admin, member
+// (the default) or guest.
 type UserCreateRequest struct {
 	Handle   string `json:"handle"`
 	Email    string `json:"email"`
 	Name     string `json:"name,omitempty"`
 	Password string `json:"password"`
-	Admin    bool   `json:"admin,omitempty"`
+	Role     string `json:"role,omitempty"`
 }
 
-// UserUpdateRequest is an admin changing an account: profile fields
-// (absent = keep), the admin flag, and whether it is disabled.
+// UserUpdateRequest is an admin changing an account: profile fields and the
+// role (absent = keep), and whether it is disabled.
 type UserUpdateRequest struct {
 	Handle   string `json:"handle,omitempty"`
 	Email    string `json:"email,omitempty"`
 	Name     string `json:"name,omitempty"`
-	Admin    *bool  `json:"admin,omitempty"`
+	Role     string `json:"role,omitempty"`
 	Disabled *bool  `json:"disabled,omitempty"`
+}
+
+// Permission is one action of the vocabulary (GET /api/permissions): what
+// it is about, and whether a limited token may hold it.
+type Permission struct {
+	Action    string `json:"action"`
+	Kind      string `json:"kind"`
+	Doc       string `json:"doc"`
+	Grantable bool   `json:"grantable"`
+}
+
+// ProjectAccess is what the caller may do in a workshop: its role there
+// (owner, maintainer, operator, viewer) and the actions it holds on the
+// workshop and its runs and tickets — what the UI enables.
+type ProjectAccess struct {
+	Role    string   `json:"role"`
+	Actions []string `json:"actions"`
+}
+
+// ProjectView is a workshop as its reader sees it: the project, whose it
+// is, where its tickets come from, and the reader's access.
+type ProjectView struct {
+	confstore.Project
+	// OwnerHandle is the owner's handle, for a workshop shared with the
+	// reader ("shared by @handle").
+	OwnerHandle string `json:"owner_handle,omitempty"`
+	// TicketSource is the workshop's ticket source as anyone it is shared
+	// with may know it; absent when the integration is gone.
+	TicketSource *TicketSourceView `json:"ticket_source,omitempty"`
+	Access       ProjectAccess     `json:"access"`
+}
+
+// TicketSourceView is a ticket-source integration as a workshop's readers
+// see it — the owner's integration, of which they get no configuration
+// and no credential: its kind (internal: tickets are written here), its
+// name, and where a remote tracker's issues are browsed.
+type TicketSourceView struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	// Home is the tracker's http(s) address for an "open in" link; "" on
+	// the internal tracker or when its configuration names no one place.
+	Home string `json:"home,omitempty"`
+}
+
+// Member is one account a workshop is shared with, as its list shows it.
+type Member struct {
+	UserID    string    `json:"user_id"`
+	Handle    string    `json:"handle"`
+	Name      string    `json:"name"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// MemberRequest shares a workshop with an account, named by handle or
+// email, as viewer, operator or maintainer.
+type MemberRequest struct {
+	Login string `json:"login"`
+	Role  string `json:"role"`
+}
+
+// MemberRoleRequest changes a member's role.
+type MemberRoleRequest struct {
+	Role string `json:"role"`
 }
 
 // PasswordResetRequest is an admin setting an account's password.

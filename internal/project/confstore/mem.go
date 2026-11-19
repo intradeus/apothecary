@@ -35,6 +35,7 @@ type Mem struct {
 	secrets      map[string]StoredProjectSecret // flowKey(project, name)
 	settings     map[string]string
 	credentials  map[string]ProviderCredential
+	members      map[string]Member // flowKey(project, user)
 
 	// BlockingRuns lists non-archived runs of a project (blocks project
 	// deletion); nil = none.
@@ -46,6 +47,7 @@ type Mem struct {
 
 func NewMem() *Mem {
 	return &Mem{
+		members:      map[string]Member{},
 		integrations: map[string]StoredIntegration{},
 		projects:     map[string]Project{},
 		tickets:      map[string]Ticket{},
@@ -339,7 +341,122 @@ func (m *Mem) DeleteProject(_ context.Context, id string) error {
 	maps.DeleteFunc(m.bindings, func(_ string, b FlowBinding) bool { return b.ProjectID == id })
 	maps.DeleteFunc(m.automations, func(_ string, a Automation) bool { return a.ProjectID == id })
 	maps.DeleteFunc(m.secrets, func(key string, _ StoredProjectSecret) bool { return strings.HasPrefix(key, id+"\x00") })
+	maps.DeleteFunc(m.members, func(_ string, x Member) bool { return x.ProjectID == id })
 	return nil
+}
+
+func (m *Mem) ListVisibleProjects(_ context.Context, userID string, projectIDs []string) ([]Project, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Project
+	for _, p := range m.projects {
+		if (userID != "" && p.UserID == userID) || slices.Contains(projectIDs, p.ID) {
+			out = append(out, storedProject(p))
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
+	return out, nil
+}
+
+func (m *Mem) PutMember(_ context.Context, x Member, from string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !slices.Contains(MemberRoles, x.Role) {
+		return fmt.Errorf("member role %q: %w", x.Role, ErrInvalid)
+	}
+	if _, ok := m.projects[x.ProjectID]; !ok {
+		return notFound("project", x.ProjectID)
+	}
+	k := flowKey(x.ProjectID, x.UserID)
+	old, ok := m.members[k]
+	if old.Role != from {
+		return memberChanged(x.UserID, from)
+	}
+	x.CreatedAt = pgTime(x.CreatedAt)
+	if ok {
+		x.CreatedAt = old.CreatedAt // parity with pg: a change is the role only
+	}
+	m.members[k] = x
+	return nil
+}
+
+// memberChanged is a compare-and-swap that lost: the role is no longer from.
+func memberChanged(userID, from string) error {
+	if from == "" {
+		from = "none"
+	}
+	return fmt.Errorf("member %s: the role is no longer %s; reload and try again: %w", userID, from, ErrConflict)
+}
+
+func (m *Mem) GetMember(_ context.Context, projectID, userID string) (Member, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	x, ok := m.members[flowKey(projectID, userID)]
+	if !ok {
+		return Member{}, notFound("member", userID)
+	}
+	return x, nil
+}
+
+func (m *Mem) ListMembers(_ context.Context, projectID string) ([]Member, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Member
+	for _, x := range m.members {
+		if x.ProjectID == projectID {
+			out = append(out, x)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+		return out[i].UserID < out[j].UserID
+	})
+	return out, nil
+}
+
+func (m *Mem) DeleteMember(_ context.Context, projectID, userID, from string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	k := flowKey(projectID, userID)
+	old, ok := m.members[k]
+	if !ok {
+		return notFound("member", userID)
+	}
+	if old.Role != from {
+		return memberChanged(userID, from)
+	}
+	delete(m.members, k)
+	return nil
+}
+
+func (m *Mem) ProjectAccess(_ context.Context, projectID, userID string) (string, string, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.projects[projectID]
+	if !ok {
+		return "", "", notFound("project", projectID)
+	}
+	if p.UserID == userID {
+		return p.UserID, RoleOwner, nil
+	}
+	return p.UserID, m.members[flowKey(projectID, userID)].Role, nil
+}
+
+func (m *Mem) ProjectsOf(_ context.Context, userID string) ([]Reach, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []Reach
+	for _, p := range m.projects {
+		if p.UserID == userID {
+			out = append(out, Reach{ProjectID: p.ID, OwnerID: p.UserID, Role: RoleOwner})
+		} else if x, ok := m.members[flowKey(p.ID, userID)]; ok {
+			out = append(out, Reach{ProjectID: p.ID, OwnerID: p.UserID, Role: x.Role})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProjectID < out[j].ProjectID })
+	return out, nil
 }
 
 func (m *Mem) PutProjectSecret(_ context.Context, projectID string, sec StoredProjectSecret) error {

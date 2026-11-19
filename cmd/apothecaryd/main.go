@@ -5,7 +5,7 @@
 //	apothecaryd validate <flow.yaml>            parse and validate a flow file
 //	apothecaryd rebuild-projections
 //	apothecaryd envcheck -project <name|id>     environment compliance check against the live workspace
-//	apothecaryd user <list|reset-password|set-admin>   accounts, from the terminal (a lockout's way back in)
+//	apothecaryd user <list|reset-password|set-role>    accounts, from the terminal (a lockout's way back in)
 //
 // -dev registers the fake kinds and seeds a dev project so a full flow runs
 // end-to-end with no real workspace/harness/repository host.
@@ -28,6 +28,8 @@ import (
 	"syscall"
 	"time"
 
+	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/adapters/browser"
 	"apothecary/internal/adapters/kube"
 	"apothecary/internal/adapters/pgstore"
@@ -99,7 +101,7 @@ commands:
   validate <flow.yaml>             parse and validate a flow file
   rebuild-projections
   envcheck -project <name|id> [-keep]
-  user list | user reset-password <handle> | user set-admin <handle> [-off]
+  user list | user reset-password <handle> | user set-role <handle> admin|member|guest
   shim-hash                        print the shim source hash (for publishing shim images)
   tools-hash                       print the tools bundle hash (for publishing tools images)
   version`)
@@ -456,5 +458,16 @@ func (s sshTargets) Lookup(ctx context.Context, workspace string) (sshdoor.Targe
 	if err != nil {
 		return sshdoor.Target{}, err
 	}
-	return sshdoor.Target{RunID: tg.RunID, OwnerID: tg.OwnerID, Dial: tg.Dial}, nil
+	return sshdoor.Target{RunID: tg.RunID, OwnerID: tg.OwnerID, ProjectID: tg.ProjectID, Dial: tg.Dial}, nil
+}
+
+// doorAuthz is the SSH door asking the authorizer: may this account open a
+// shell in this run's workspace (run:shell)? The account is the key's,
+// with no token: a key is the account itself.
+type doorAuthz struct{ az *authz.Authorizer }
+
+func (d doorAuthz) MayShell(ctx context.Context, u auth.User, t sshdoor.Target) (bool, error) {
+	dec, err := d.az.Decide(ctx, auth.Principal{User: u}, authz.RunShell,
+		&authz.Resource{Kind: authz.KindRun, ID: t.RunID, Owner: t.OwnerID, ProjectID: t.ProjectID})
+	return err == nil && dec.Allowed(), err
 }

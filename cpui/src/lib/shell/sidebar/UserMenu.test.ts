@@ -12,7 +12,9 @@ import UserMenu from './UserMenu.svelte';
 vi.mock('$lib/api', () => ({ api: { auth: { logout: vi.fn() } } }));
 
 const signIn = (admin = false) => {
-	session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', admin } } as Me;
+	session.me = {
+		user: { id: 'u', handle: 'lu', name: 'Lu', role: admin ? 'admin' : 'member' }
+	} as Me;
 };
 const setup = (onnavigate = vi.fn()) => {
 	const props = bindable({ anchor: document.body, open: true, onnavigate });

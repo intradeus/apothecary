@@ -417,7 +417,7 @@ describe('Composer', () => {
 		const QUOTED = '`run.go:3-4`\n\n```go\na\nb\n```';
 
 		beforeEach(() => {
-			session.me = { user: { id: ME, handle: 'me', name: 'Me', admin: false } } as Me;
+			session.me = { user: { id: ME, handle: 'me', name: 'Me', role: 'member' } } as Me;
 		});
 		afterEach(() => {
 			session.me = null;

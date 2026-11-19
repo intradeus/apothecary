@@ -20,6 +20,10 @@
 	const project = $derived(fleet.projectById.get(ed.projectId));
 	const workshopName = $derived(project?.name ?? '…');
 
+	/** Clone, delete and save need project:write in the flow's workshop. */
+	const canWrite = $derived(ed.canWrite);
+	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
+
 	let validateBtn = $state<HTMLButtonElement | null>(null);
 </script>
 
@@ -87,22 +91,27 @@
 					onclick={() => (ed.showVersions = !ed.showVersions)}
 					>{t('page.flow.versions')} <span class="mono faint">{ed.versions.length}</span></button
 				>
-				<button class="btn-sm" onclick={() => (ed.cloning = true)} disabled={ed.busy}
-					>{t('page.flow.clone')}</button
+				<button
+					class="btn-sm"
+					onclick={() => (ed.cloning = true)}
+					disabled={!canWrite || ed.busy}
+					title={deny}>{t('page.flow.clone')}</button
 				>
 				{#if flow.shadowsBuiltin}
-					<button class="btn-sm btn-danger" onclick={ed.remove}
+					<button class="btn-sm btn-danger" disabled={!canWrite} title={deny} onclick={ed.remove}
 						>{t('page.flow.resetAction')}…</button
 					>
 				{:else if !flow.builtin}
-					<button class="btn-sm btn-danger" onclick={ed.remove}>{t('page.ticket.delete')}</button>
+					<button class="btn-sm btn-danger" disabled={!canWrite} title={deny} onclick={ed.remove}
+						>{t('page.ticket.delete')}</button
+					>
 				{/if}
 				<button
 					class="btn-sm btn-primary"
 					onclick={ed.save}
-					disabled={ed.busy || !ed.dirty}
+					disabled={!canWrite || ed.busy || !ed.dirty}
 					aria-busy={ed.busy}
-					title={flow.builtin ? t('page.flow.saveCopyTitle') : '⌘S'}
+					title={deny ?? (flow.builtin ? t('page.flow.saveCopyTitle') : '⌘S')}
 					>{ed.busy
 						? t('page.flow.saving')
 						: flow.builtin

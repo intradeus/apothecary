@@ -1,8 +1,9 @@
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import { aRun, aRunStore } from '$test/fixtures';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aRun, aRunStore, aViewerProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import { HeaderActions } from './actions.svelte';
 import WorkspaceControls from './WorkspaceControls.svelte';
@@ -17,6 +18,21 @@ const editorBtn = () => screen.getByRole('button', { name: /editor/i });
 describe('WorkspaceControls', () => {
 	beforeEach(() => {
 		vi.spyOn(window, 'open').mockReturnValue(null);
+	});
+	afterEach(() => {
+		fleet.projects = [];
+	});
+
+	it('holds the editor and the rebuild from a viewer of the workshop', () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		const rs = aRunStore(aRun({ state: 'paused', envId: 'env-1', projectId: 'p1' }), {
+			hasWorkspace: true
+		});
+		render(WorkspaceControls, { rs, actions: new HeaderActions(), ...props });
+		for (const b of [editorBtn(), rebuildBtn()]) {
+			expect(b).toBeDisabled();
+			expect(b).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+		}
 	});
 
 	it('offers a rebuild on a paused workspace', () => {

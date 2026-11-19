@@ -11,13 +11,14 @@
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import { prefs } from '$lib/app/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { THEMES } from '$lib/design/themes';
 	import { to } from '$lib/core/urls';
 	import { shortId, stateLabel, stateTab } from '$lib/core/format';
-	import type { Integration, TicketRow } from '$lib/domain';
-	import { isInternal, sourceOf } from '$lib/tickets/tracker';
+	import type { TicketRow } from '$lib/domain';
+	import { isInternal } from '$lib/tickets/tracker';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
 	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
@@ -58,13 +59,9 @@
 	/** The searched workshop's tickets matching the query, as its source answers. */
 	let tickets = $state<{ projectId: string; rows: TicketRow[] }>({ projectId: '', rows: [] });
 	const ticketsFrom = $derived(page.params.workshop ?? fleet.projects[0]?.id ?? '');
-	/** The integrations, read once per opening: "New ticket" is offered only
-	 *  when that workshop's source is the internal tracker. */
-	let integrations = $state<Integration[] | null>(null);
-	const writesHere = $derived.by(() => {
-		const p = fleet.projectById.get(ticketsFrom);
-		return !!p && isInternal(sourceOf(p, integrations));
-	});
+	/** "New ticket" is offered only when that workshop's source is the
+	 *  internal tracker. */
+	const writesHere = $derived(isInternal(fleet.projectById.get(ticketsFrom)?.ticketSource));
 	/** Every workshop's open merge requests, read from their repositories —
 	 *  only once a search is typed, once per opening: they show only in
 	 *  search results, and each workshop is a call to its repository host. */
@@ -79,10 +76,6 @@
 		sel = 0;
 		mrsRead = false;
 		tickets = { projectId: '', rows: [] };
-		api.integrations
-			.list()
-			.then((l) => (integrations = l))
-			.catch(() => {});
 	});
 
 	// One search per pause in typing, its answer dropped once the query moved on.
@@ -178,12 +171,17 @@
 						}
 					]
 				: []),
-			{
-				group: 'do' as const,
-				label: t('shell.palette.newWorkshop'),
-				glyph: I.add,
-				run: go(to.newWorkshop())
-			},
+			// A guest creates no workshop.
+			...(session.guest
+				? []
+				: [
+						{
+							group: 'do' as const,
+							label: t('shell.palette.newWorkshop'),
+							glyph: I.add,
+							run: go(to.newWorkshop())
+						}
+					]),
 			...THEMES.filter((th) => th.id !== prefs.theme).map((th) => ({
 				group: 'do' as const,
 				label: t('shell.palette.useTheme', { theme: th.label.toLowerCase() }),

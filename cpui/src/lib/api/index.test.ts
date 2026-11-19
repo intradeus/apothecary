@@ -119,6 +119,8 @@ describe('a list the engine answers null', () => {
 		['branches', () => projects.branches('p'), 'listProjectBranches'],
 		['merge requests', () => projects.mergeRequests('p'), 'listProjectMrs'],
 		['secrets', () => projects.secrets('p'), 'listProjectSecrets'],
+		['members', () => projects.members('p'), 'listMembers'],
+		['permissions', () => auth.permissions(), 'listPermissions'],
 		['providers', () => credentials.providers(), 'listProviders'],
 		['credentials', () => credentials.list(), 'listCredentials'],
 		['integrations', () => integrations.list(), 'listIntegrations'],
@@ -162,6 +164,18 @@ describe('a list the engine answers null', () => {
 			() => integrations.statuses('i').then((l) => l.statuses),
 			'listTrackerStatuses',
 			{ statuses: null }
+		],
+		[
+			'a workshop’s ticket statuses',
+			() => projects.ticketStatuses('p').then((l) => l.statuses),
+			'listWorkshopTicketStatuses',
+			{ statuses: null }
+		],
+		[
+			'a workshop’s ticket types',
+			() => projects.ticketTypes('p'),
+			'listWorkshopTicketTypes',
+			{ types: null }
 		],
 		['uploads', () => files.upload([]), 'uploadAttachments', { attachments: null }],
 		['egress defaults', () => egress.defaults(), 'getEgressDefaults', { domains: null }]
@@ -285,6 +299,13 @@ describe('what each call sends', () => {
 			{ path: { id: 'i' } }
 		],
 		['a project removal', () => projects.remove('p'), 'deleteProject', { path: { id: 'p' } }],
+		[
+			'a member’s removal',
+			() => projects.removeMember('p', 'u'),
+			'removeMember',
+			{ path: { id: 'p', uid: 'u' } }
+		],
+		['leaving a workshop', () => projects.leave('p'), 'leaveProject', { path: { id: 'p' } }],
 		[
 			'a check’s cancel',
 			() => projects.cancelEnvCheck('c'),
@@ -983,11 +1004,21 @@ describe('what each call sends', () => {
 		});
 
 		it('hands a new token’s secret back once', async () => {
-			reply('createMyToken', answer({ token: { id: 't' }, secret: 's3' }));
-			await expect(auth.createToken('n')).resolves.toMatchObject({
+			const fn = reply('createMyToken', answer({ token: { id: 't' }, secret: 's3' }));
+			await expect(auth.createToken('n', { full: true })).resolves.toMatchObject({
 				token: { id: 't' },
 				secret: 's3'
 			});
+			expect(fn).toHaveBeenCalledWith({ body: { name: 'n', full_access: true } });
+		});
+
+		it.each<[string, string[], object]>([
+			['every workshop', [], { name: 'n', actions: ['run:read'] }],
+			['chosen workshops', ['p1'], { name: 'n', actions: ['run:read'], project_ids: ['p1'] }]
+		])('limits a token to its actions in %s', async (_, projectIds, body) => {
+			const fn = reply('createMyToken', answer({ token: { id: 't' }, secret: 's3' }));
+			await auth.createToken('n', { full: false, actions: ['run:read'], projectIds });
+			expect(fn).toHaveBeenCalledWith({ body });
 		});
 
 		it('leaves a blank key name for the engine to fill', async () => {
@@ -1000,7 +1031,7 @@ describe('what each call sends', () => {
 
 		it('creates a user with exactly what it was given', async () => {
 			const fn = reply('createUser', answer({ id: 'u' }));
-			const d = { handle: 'h', email: 'e', name: 'n', password: 'p', admin: false };
+			const d = { handle: 'h', email: 'e', name: 'n', password: 'p', role: 'guest' as const };
 			await users.create(d);
 			expect(fn).toHaveBeenCalledWith({ body: d });
 		});
@@ -1722,6 +1753,15 @@ describe('trackers', () => {
 		expect(fn).toHaveBeenLastCalledWith({ path: { id: 'i' }, query: { refresh: '1' } });
 	});
 
+	it('reads a workshop’s ticket statuses and types through the workshop', async () => {
+		const st = reply('listWorkshopTicketStatuses', answer({ statuses: [], read_only: false }));
+		await expect(projects.ticketStatuses('p')).resolves.toEqual({ statuses: [], readOnly: false });
+		expect(st).toHaveBeenLastCalledWith({ path: { id: 'p' } });
+		const ty = reply('listWorkshopTicketTypes', answer({ types: [] }));
+		await expect(projects.ticketTypes('p')).resolves.toEqual([]);
+		expect(ty).toHaveBeenLastCalledWith({ path: { id: 'p' } });
+	});
+
 	it('saves the internal tracker’s statuses, replacements only when there are some', async () => {
 		const row = {
 			id: 's',
@@ -2068,10 +2108,24 @@ describe('the rest of the surface', () => {
 		],
 		[
 			'users.update',
-			() => users.update('u', { admin: true }),
+			() => users.update('u', { role: 'admin' }),
 			'updateUser',
 			answer({}),
-			{ path: { id: 'u' }, body: { admin: true } }
+			{ path: { id: 'u' }, body: { role: 'admin' } }
+		],
+		[
+			'projects.addMember',
+			() => projects.addMember('p', 'lu@x.test', 'operator'),
+			'addMember',
+			answer({ user_id: 'u', role: 'operator' }),
+			{ path: { id: 'p' }, body: { login: 'lu@x.test', role: 'operator' } }
+		],
+		[
+			'projects.updateMember',
+			() => projects.updateMember('p', 'u', 'maintainer'),
+			'updateMember',
+			answer({ user_id: 'u', role: 'maintainer' }),
+			{ path: { id: 'p', uid: 'u' }, body: { role: 'maintainer' } }
 		],
 		['skills.get', () => skills.get('s'), 'getSkill', answer({ skill: {} }), { path: { id: 's' } }],
 		[

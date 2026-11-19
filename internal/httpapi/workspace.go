@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/engine/ask"
 	"apothecary/internal/engine/mrs"
@@ -271,10 +273,37 @@ func (s *Server) statWorkspacePaths(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	items, err := c.Stat(r.Context(), req.Items)
-	if err != nil {
-		sidecarErr(w, err)
-		return
+	// An absolute path is the terminal's reach: without run:shell its item
+	// is refused on its own and the sidecar never looks at it.
+	ask := req.Items
+	shell := !slices.ContainsFunc(req.Items, func(it sidecar.StatItem) bool { return it.Abs != "" }) || s.holdsShell(r)
+	if !shell {
+		ask = make([]sidecar.StatItem, 0, len(req.Items))
+		for _, it := range req.Items {
+			if it.Abs == "" {
+				ask = append(ask, it)
+			}
+		}
+	}
+	var items []sidecar.StatResult
+	if shell || len(ask) > 0 {
+		var err error
+		if items, err = c.Stat(r.Context(), ask); err != nil {
+			sidecarErr(w, err)
+			return
+		}
+	}
+	if !shell {
+		got := items
+		items = make([]sidecar.StatResult, 0, len(req.Items))
+		for _, it := range req.Items {
+			switch {
+			case it.Abs != "":
+				items = append(items, sidecar.StatResult{Error: refusal(authz.RunShell)})
+			case len(got) > 0:
+				items, got = append(items, got[0]), got[1:]
+			}
+		}
 	}
 	if items == nil {
 		items = []sidecar.StatResult{}
@@ -287,12 +316,29 @@ func (s *Server) resolveWorkspacePath(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := c.Resolve(r.Context(), co.Name, r.URL.Query().Get("path"))
+	path := r.URL.Query().Get("path")
+	res, err := c.Resolve(r.Context(), co.Name, path)
+	// Inside a checkout is run:read's; anywhere else is the terminal's
+	// reach, refused alike whether or not something is there.
+	abs := strings.HasPrefix(path, "/") || path == "~" || strings.HasPrefix(path, "~/")
+	var se *sidecar.Error
+	outside := (err == nil && res.Abs != "") || (abs && errors.As(err, &se) && se.Status >= 400 && se.Status < 500)
+	if outside && !s.holdsShell(r) {
+		writeErr(w, http.StatusForbidden, refusal(authz.RunShell))
+		return
+	}
 	if err != nil {
 		sidecarErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
+}
+
+// holdsShell reports whether the caller holds run:shell on the path's run:
+// what reaching past its checkouts takes.
+func (s *Server) holdsShell(r *http.Request) bool {
+	p, _ := auth.PrincipalFrom(r.Context())
+	return s.mayShell(r.Context(), p, r.PathValue("id"))
 }
 
 // serveTerminal upgrades to a WebSocket terminal in the run's workspace,
@@ -311,98 +357,98 @@ func (s *Server) workspaceRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/runs/{id}/ports", ID: "getRunPorts", Tag: tagWorkspace,
 			Summary: "Exposed and newly observed workspace ports",
-			Handler: s.getRunPorts, Returns: RunPorts{}, Scope: ScopeRun},
+			Handler: s.getRunPorts, Returns: RunPorts{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/ssh", ID: "getRunSsh", Tag: tagWorkspace,
 			Summary: "How to reach the run's workspace over SSH: the command, the VS Code link, the door's fingerprint",
 			Doc:     "The SSH door is the engine's own listener (APOTHECARY_SSH_LISTEN); the username is the workspace, the key one registered on the account. The workspace's sidecar is started on demand, so the first answer may take a moment.",
-			Handler: s.getRunSSH, Returns: RunSSH{}, Scope: ScopeRun},
+			Handler: s.getRunSSH, Returns: RunSSH{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "POST", Path: "/api/runs/{id}/expose-port", ID: "exposeRunPort", Tag: tagWorkspace,
 			Summary: "Publish a workspace port and get its browsable URL",
-			Handler: s.postExposePort, Body: ExposePortRequest{}, Returns: ExposedPort{}, Scope: ScopeRun},
+			Handler: s.postExposePort, Body: ExposePortRequest{}, Returns: ExposedPort{}, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "POST", Path: "/api/runs/{id}/observed-ports", ID: "reportObservedPorts", Tag: tagWorkspace,
 			Summary: "Report listening ports (in-workspace scanner)",
 			Handler: s.postObservedPorts, Body: ObservedPortsRequest{}, Status: http.StatusNoContent,
 			Auth: AccessRunToken},
 		{Method: "POST", Path: "/api/runs/{id}/open-editor", ID: "openEditor", Tag: tagWorkspace,
 			Summary: "Start code-server in the workspace and get its URL",
-			Handler: s.postOpenEditor, Returns: EditorURL{}, Scope: ScopeRun},
+			Handler: s.postOpenEditor, Returns: EditorURL{}, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "POST", Path: "/api/runs/{id}/messages", ID: "sendRunMessage", Tag: tagRuns,
 			Summary: "Send a message to the agent you took over",
 			Doc:     "Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.",
-			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postMessage, Body: SendMessageRequest{}, Returns: MessageAccepted{}, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/hold", ID: "takeOverRun", Tag: tagRuns,
 			Summary: "Take over the running agent's session",
 			Doc:     "While held, the end of the agent's turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. force (default true) stops the agent's turn in flight so it waits on you at once — unless that turn is waiting on the agent's own question; force false lets the turn finish first. The body is optional. 409 when no agent is running, or someone already holds it.",
-			Handler: s.postHold, Body: TakeOverRequest{}, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postHold, Body: TakeOverRequest{}, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "DELETE", Path: "/api/runs/{id}/hold", ID: "releaseRun", Tag: tagRuns,
 			Summary: "Hand the task back to the agent",
 			Doc:     "Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.",
-			Handler: s.deleteHold, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.deleteHold, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "GET", Path: "/api/runs/{id}/ask", ID: "getAsk", Tag: tagRuns,
 			Summary: "The Ask pane: its threads, their conversations and models, and whether it is on",
 			Doc:     "A flow with an ask: section gives the run read-only sessions (threads) beside its stages that answer questions about the code; a run holds any number of them, each with its own harness session, model and messages. Off (with the reason) when the flow has none, the workspace is gone, or the harness cannot promise a read-only session.",
-			Handler: s.getAsk, Returns: ask.AskState{}, Scope: ScopeRun},
+			Handler: s.getAsk, Returns: ask.AskState{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "POST", Path: "/api/runs/{id}/ask", ID: "askRun", Tag: tagRuns,
 			Summary: "Ask one of the run's read-only sessions a question",
 			Doc:     "The question is recorded in the thread named by thread_id (none: the run's latest, opened when the run has none) and returned at once; the answer arrives on the pane's stream. A question may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/ask/ and the question names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded. 404 for an unknown thread; 409 when the pane is off or an answer is being written in that thread.",
-			Handler: s.postAsk, Body: AskRequest{}, Returns: ask.Message{}, Status: http.StatusAccepted, Scope: ScopeRun},
+			Handler: s.postAsk, Body: AskRequest{}, Returns: ask.Message{}, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/ask/threads", ID: "newAskThread", Tag: tagRuns,
 			Summary: "Open a new Ask session in the run",
 			Doc:     "The thread starts with no messages and the model of the run's latest thread; its harness session opens with its first answer. 409 when the pane is off.",
-			Handler: s.postAskThread, Returns: ask.ThreadState{}, Status: http.StatusCreated, Scope: ScopeRun},
+			Handler: s.postAskThread, Returns: ask.ThreadState{}, Status: http.StatusCreated, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "PUT", Path: "/api/runs/{id}/ask/model", ID: "setAskModel", Tag: tagRuns,
 			Summary: "Pick the model an Ask session answers with",
 			Doc:     "Picks the model of the thread named by thread_id (none: the run's latest, opened when the run has none); its live session is switched over at its next question. 404 for an unknown thread.",
-			Handler: s.putAskModel, Body: AskModelRequest{}, Status: http.StatusNoContent, Scope: ScopeRun},
+			Handler: s.putAskModel, Body: AskModelRequest{}, Status: http.StatusNoContent, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "GET", Path: "/api/runs/{id}/ask/stream", ID: "streamAsk", Tag: tagRuns,
 			Summary: "Server-sent event stream of the Ask pane",
 			Doc:     "Replays every thread's messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, a thread's state as it changes, threads as they open (thread frames). Every frame names its thread_id.",
 			Query:   []Param{{Name: "after_seq", Doc: "resume after this message sequence number", Type: "integer"}},
-			Handler: s.streamAsk, Produces: "text/event-stream", Scope: ScopeRun},
+			Handler: s.streamAsk, Produces: "text/event-stream", Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/mrs/status", ID: "getRunMRStatus", Tag: tagRuns,
 			Summary: "Each merge request as its repository reports it now: mergeability and pending review threads",
-			Handler: s.getRunMRStatus, Returns: []mrs.MRLive{}, Scope: ScopeRun},
+			Handler: s.getRunMRStatus, Returns: []mrs.MRLive{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/repos", ID: "getWorkspaceRepos", Tag: tagWorkspace,
 			Summary: "The run's checkouts (one per repository)",
-			Handler: s.getWorkspaceRepos, Returns: []event.Checkout{}, Scope: ScopeRun},
+			Handler: s.getWorkspaceRepos, Returns: []event.Checkout{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/tree", ID: "getWorkspaceTree", Tag: tagWorkspace,
 			Summary: "One directory level of a run checkout",
 			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative directory (default: the root)"}},
-			Handler: s.getWorkspaceTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun},
+			Handler: s.getWorkspaceTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/file", ID: "getWorkspaceFile", Tag: tagWorkspace,
 			Summary: "One file of a run checkout",
 			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative file"}},
-			Handler: s.getWorkspaceFile, Returns: sidecar.File{}, Scope: ScopeRun},
+			Handler: s.getWorkspaceFile, Returns: sidecar.File{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/changes", ID: "getWorkspaceChanges", Tag: tagWorkspace,
 			Summary: "A checkout's changes against the branch it forked from",
 			Doc:     "Committed and uncommitted, measured from the merge base with the source branch.",
 			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}},
-			Handler: s.getWorkspaceChanges, Returns: sidecar.Changes{}, Scope: ScopeRun},
+			Handler: s.getWorkspaceChanges, Returns: sidecar.Changes{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/diff", ID: "getWorkspaceDiff", Tag: tagWorkspace,
 			Summary: "One file's unified diff against the branch the checkout forked from",
 			Query:   []Param{{Name: "repo", Doc: "checkout name (default: the primary)"}, {Name: "path", Doc: "repo-relative file"}},
-			Handler: s.getWorkspaceDiff, Returns: sidecar.FileDiff{}, Scope: ScopeRun},
+			Handler: s.getWorkspaceDiff, Returns: sidecar.FileDiff{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/path/tree", ID: "getWorkspacePathTree", Tag: tagWorkspace,
 			Summary: "One directory level anywhere in the workspace, by absolute or ~ path",
-			Doc:     "Read as the workspace's remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).",
+			Doc:     "Read as the workspace's remote user, the same reach as its terminal, so it takes the terminal's run:shell: nothing that user can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).",
 			Query:   []Param{{Name: "path", Doc: "absolute directory, or ~ / ~/… for the remote user's home"}},
-			Handler: s.getWorkspacePathTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun},
+			Handler: s.getWorkspacePathTree, Returns: []sidecar.TreeEntry{}, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/path/file", ID: "getWorkspacePathFile", Tag: tagWorkspace,
 			Summary: "One file anywhere in the workspace, by absolute or ~ path",
-			Doc:     "Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.",
+			Doc:     "Read as the workspace's remote user, the terminal's reach (run:shell); path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.",
 			Query:   []Param{{Name: "path", Doc: "absolute file, or ~/… under the remote user's home"}},
-			Handler: s.getWorkspacePathFile, Returns: sidecar.File{}, Scope: ScopeRun},
+			Handler: s.getWorkspacePathFile, Returns: sidecar.File{}, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "POST", Path: "/api/runs/{id}/workspace/stat", ID: "statWorkspacePaths", Tag: tagWorkspace,
 			Summary: "Whether each of a batch of workspace paths exists, with its size and mtime",
-			Doc:     "What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.",
-			Handler: s.statWorkspacePaths, Body: WorkspaceStatRequest{}, Returns: WorkspaceStatResponse{}, Scope: ScopeRun},
+			Doc:     "What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch — an absolute one without run:shell (the terminal's reach) among them. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.",
+			Handler: s.statWorkspacePaths, Body: WorkspaceStatRequest{}, Returns: WorkspaceStatResponse{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/workspace/resolve", ID: "resolveWorkspacePath", Tag: tagWorkspace,
 			Summary: "Where a path mentioned in the run lives: a checkout's file or an absolute one",
-			Doc:     "A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo \"\"), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.",
+			Doc:     "A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo \"\"), otherwise it is answered as abs. Outside the checkouts is the terminal's reach: 403 without run:shell, whether or not something is there. 404 when nothing exists, 501 when the workspace's sidecar predates this route.",
 			Query:   []Param{{Name: "path", Doc: "repo-relative, absolute or ~/… path"}, {Name: "repo", Doc: "checkout tried first (default: the primary)"}},
-			Handler: s.resolveWorkspacePath, Returns: sidecar.Resolved{}, Scope: ScopeRun},
+			Handler: s.resolveWorkspacePath, Returns: sidecar.Resolved{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/resources", ID: "getRunResources", Tag: tagWorkspace,
 			Summary: "Rolling window of workspace cpu/memory/network samples",
-			Handler: s.getRunResources, Returns: RunResources{}, Scope: ScopeRun},
+			Handler: s.getRunResources, Returns: RunResources{}, Scope: ScopeRun, Action: authz.RunRead},
 	}
 }

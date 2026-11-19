@@ -25,6 +25,7 @@ coverage.*
 # image builds the CPUI itself)
 node_modules/
 cpui/.svelte-kit/
+/.svelte-kit/
 cpui/build/
 cpui/vite.config.ts.timestamp-*
 

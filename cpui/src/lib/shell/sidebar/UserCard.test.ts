@@ -10,7 +10,7 @@ vi.mock('$lib/api', () => ({ api: {} }));
 
 const signIn = (over: Partial<Me['user']> = {}) => {
 	session.me = {
-		user: { id: 'u', handle: 'lu', name: 'Lucas Roland', admin: false, ...over }
+		user: { id: 'u', handle: 'lu', name: 'Lucas Roland', role: 'member', ...over }
 	} as Me;
 };
 const trigger = () => screen.getByRole('button', { name: 'Account menu' });
@@ -30,7 +30,7 @@ describe('UserCard', () => {
 	});
 
 	it('says so for an admin', () => {
-		signIn({ admin: true });
+		signIn({ role: 'admin' });
 		render(UserCard, { btn: null, onmenu: vi.fn() });
 		expect(trigger()).toHaveTextContent('admin');
 	});

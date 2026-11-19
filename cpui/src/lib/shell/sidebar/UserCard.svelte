@@ -50,7 +50,7 @@
 			<span class="ut">
 				<span class="un truncate">{user?.name}</span>
 				<span class="ur truncate"
-					>@{user?.handle}{#if user?.admin}
+					>@{user?.handle}{#if session.admin}
 						· {t('shell.sidebar.admin')}{/if}</span
 				>
 			</span>

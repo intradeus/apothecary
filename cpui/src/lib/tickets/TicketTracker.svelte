@@ -17,6 +17,7 @@
 		projectId,
 		ticket,
 		branchFormat = '',
+		readonly = false,
 		onchange
 	}: {
 		/** The workshop the ticket is read through. */
@@ -24,9 +25,13 @@
 		ticket: TicketDetail;
 		/** The workshop's branch format: what an empty base branch becomes. */
 		branchFormat?: string;
+		/** The caller's role may not write the ticket (ticket:write): status,
+		 *  labels and base branch are shown, not changed. */
+		readonly?: boolean;
 		onchange: (tk: TicketDetail) => void;
 	} = $props();
 
+	const deny = $derived(readonly ? t('common.needsPermission') : undefined);
 	let statuses = $state<TrackerStatus[]>([]);
 	let error = $state('');
 	let busy = $state<'' | 'status' | 'labels' | 'branch' | 'refresh'>('');
@@ -34,16 +39,19 @@
 	// svelte-ignore state_referenced_locally
 	let branch = $state(ticket.baseBranch);
 
-	// Reload only when the source changes, not on every update of the ticket.
+	// Reload only when the workshop or its source changes, not on every
+	// update of the ticket. The list is read through the workshop: the source
+	// is its owner's, which a collaborator does not read.
 	const sourceId = $derived(ticket.source.id);
 	$effect(() => {
-		const id = sourceId;
+		const id = projectId;
+		void sourceId;
 		untrack(() => void loadStatuses(id));
 	});
 
 	async function loadStatuses(id: string) {
 		try {
-			statuses = (await api.integrations.statuses(id)).statuses;
+			statuses = (await api.projects.ticketStatuses(id)).statuses;
 		} catch {
 			// The select then offers only the current status: changing it is
 			// what failed, not the ticket.
@@ -122,7 +130,8 @@
 						value={ticket.status}
 						placeholder={t('tickets.setStatus')}
 						label={t('tickets.setStatus')}
-						disabled={busy !== ''}
+						disabled={readonly || busy !== ''}
+						title={deny}
 						onchange={setStatus}
 					/>
 				</span>
@@ -152,7 +161,8 @@
 					<button
 						class="btn-icon bare"
 						aria-label={t('tickets.removeLabel', { label: l })}
-						disabled={busy !== ''}
+						disabled={readonly || busy !== ''}
+						title={deny}
 						onclick={() => setLabels(ticket.labels.filter((x) => x !== l))}>{I.close}</button
 					>
 				</span>
@@ -165,7 +175,8 @@
 					bind:value={newLabel}
 					placeholder={t('tickets.addLabel')}
 					aria-label={t('tickets.addLabel')}
-					disabled={busy !== ''}
+					disabled={readonly || busy !== ''}
+					title={deny}
 				/>
 			</form>
 		</div>
@@ -182,7 +193,8 @@
 					ticket.internal ? '' : ticket.key,
 					ticket.title
 				)}
-				disabled={busy !== ''}
+				disabled={readonly || busy !== ''}
+				title={deny}
 			/>
 			{#if branch.trim() !== ticket.baseBranch}
 				<button class="btn-sm" type="submit" aria-busy={busy === 'branch'} disabled={busy !== ''}

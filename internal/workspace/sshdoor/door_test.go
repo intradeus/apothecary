@@ -19,6 +19,7 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/auth/authtest"
+	"apothecary/internal/account/authz"
 )
 
 // upstream is a fake sidecar SSH server: it records what sessions ask for,
@@ -188,9 +189,10 @@ func (u *upstream) session(nc ssh.NewChannel) {
 
 // keyring is a KeyAuth over an auth.Service and its in-memory DB.
 type keyring struct {
-	svc   *auth.Service
-	alice auth.User
-	bob   auth.User
+	svc    *auth.Service
+	alice  auth.User
+	bob    auth.User
+	shared workshops
 }
 
 func newKeyring(t *testing.T) *keyring {
@@ -202,7 +204,7 @@ func newKeyring(t *testing.T) *keyring {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bob, err := svc.CreateUser(ctx, auth.NewUser{Handle: "bob", Email: "b@x", Name: "Bob", Password: pw, Admin: true})
+	bob, err := svc.CreateUser(ctx, auth.NewUser{Handle: "bob", Email: "b@x", Name: "Bob", Password: pw, Role: auth.RoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,6 +219,32 @@ func (k *keyring) register(t *testing.T, user auth.User) ssh.Signer {
 		t.Fatal(err)
 	}
 	return signer
+}
+
+// workshops are the authorizer's facts for the door: project → owner, and
+// project → member → role.
+type workshops struct {
+	owners  map[string]string
+	members map[string]map[string]authz.ProjectRole
+}
+
+func (w workshops) Workshop(_ context.Context, projectID, userID string) (string, authz.ProjectRole, error) {
+	owner := w.owners[projectID]
+	if owner == userID && owner != "" {
+		return owner, authz.RoleOwner, nil
+	}
+	return owner, w.members[projectID][userID], nil
+}
+
+func (w workshops) Workshops(context.Context, string) ([]authz.Membership, error) { return nil, nil }
+
+// policy is the door asking the real policies, as the daemon wires it.
+type policy struct{ az *authz.Authorizer }
+
+func (p policy) MayShell(ctx context.Context, u auth.User, t Target) (bool, error) {
+	d, err := p.az.Decide(ctx, auth.Principal{User: u}, authz.RunShell,
+		&authz.Resource{Kind: authz.KindRun, ID: t.RunID, Owner: t.OwnerID, ProjectID: t.ProjectID})
+	return err == nil && d.Allowed(), err
 }
 
 // targets is a Targets over a map.
@@ -254,11 +282,19 @@ func newDoorRigWith(t *testing.T, wrap func(KeyAuth) KeyAuth) *doorRig {
 	keys := newKeyring(t)
 	up := newUpstream(t, doorKey.PublicKey())
 	ts := targets{
-		"apo-alice-run": {RunID: "r1", OwnerID: keys.alice.ID, Dial: up.dial},
-		"apo-bob-run":   {RunID: "r2", OwnerID: keys.bob.ID, Dial: up.dial},
-		"apo-broken":    {RunID: "r3", OwnerID: keys.alice.ID, Dial: func(context.Context) (net.Conn, error) { return nil, errors.New("sidecar down") }},
+		"apo-alice-run": {RunID: "r1", OwnerID: keys.alice.ID, ProjectID: "p-alice", Dial: up.dial},
+		"apo-bob-run":   {RunID: "r2", OwnerID: keys.bob.ID, ProjectID: "p-bob", Dial: up.dial},
+		"apo-broken":    {RunID: "r3", OwnerID: keys.alice.ID, ProjectID: "p-alice", Dial: func(context.Context) (net.Conn, error) { return nil, errors.New("sidecar down") }},
 	}
-	door, err := New(Config{HostKey: hostKey, DoorKey: doorKey, Keys: wrap(keys.svc), Targets: ts, Advertise: "door.example:2222"})
+	keys.shared = workshops{
+		owners:  map[string]string{"p-alice": keys.alice.ID, "p-bob": keys.bob.ID},
+		members: map[string]map[string]authz.ProjectRole{"p-alice": {}},
+	}
+	az, err := authz.New(keys.shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	door, err := New(Config{HostKey: hostKey, DoorKey: doorKey, Keys: wrap(keys.svc), Targets: ts, Authorizer: policy{az}, Advertise: "door.example:2222"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -447,6 +483,47 @@ func TestDoorRefusals(t *testing.T) {
 	}
 }
 
+// A workshop shared with others opens its runs' workspaces to its
+// maintainers, and to no lower role: a shell holds the owner's
+// credentials.
+func TestDoorSharedWorkshop(t *testing.T) {
+	rig := newDoorRig(t)
+	ctx := context.Background()
+	keys := map[authz.ProjectRole]ssh.Signer{}
+	for _, r := range authz.MemberRoles {
+		u, err := rig.keys.svc.CreateUser(ctx, auth.NewUser{Handle: string(r), Email: string(r) + "@x", Password: "correct horse battery staple"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		rig.keys.shared.members["p-alice"][u.ID] = r
+		keys[r] = rig.keys.register(t, u)
+	}
+	for r, key := range keys {
+		client, err := rig.connect(t, "apo-alice-run", key)
+		if r == authz.RoleMaintainer {
+			if err != nil {
+				t.Errorf("the maintainer was refused: %v", err)
+				continue
+			}
+			client.Close()
+		} else if err == nil {
+			client.Close()
+			t.Errorf("a %s reached the workspace", r)
+		}
+	}
+	// Not the workshop it is maintainer of: bob's run stays bob's.
+	if client, err := rig.connect(t, "apo-bob-run", keys[authz.RoleMaintainer]); err == nil {
+		client.Close()
+		t.Error("a maintainer of one workshop reached another's")
+	}
+	// The owner still gets in.
+	client, err := rig.connect(t, "apo-alice-run", rig.alice)
+	if err != nil {
+		t.Fatalf("the owner = %v", err)
+	}
+	client.Close()
+}
+
 // disabledAfterAuth is an account disabled just after its handshake, before
 // the door knows the connection: the look that let it in is the last to pass.
 type disabledAfterAuth struct {
@@ -549,12 +626,13 @@ func TestDoorCloseEndsSessions(t *testing.T) {
 func TestNewValidates(t *testing.T) {
 	seed := make([]byte, 32)
 	hostKey, _ := KeyFromSeed(seed)
-	ok := Config{HostKey: hostKey, DoorKey: hostKey, Keys: newKeyring(t).svc, Targets: targets{}, Advertise: "h:22"}
+	ok := Config{HostKey: hostKey, DoorKey: hostKey, Keys: newKeyring(t).svc, Targets: targets{}, Authorizer: policy{}, Advertise: "h:22"}
 	for name, mut := range map[string]func(*Config){
 		"no host key":      func(c *Config) { c.HostKey = nil },
 		"no door key":      func(c *Config) { c.DoorKey = nil },
 		"no keys":          func(c *Config) { c.Keys = nil },
 		"no targets":       func(c *Config) { c.Targets = nil },
+		"no authorizer":    func(c *Config) { c.Authorizer = nil },
 		"bad advertise":    func(c *Config) { c.Advertise = "no-colon" },
 		"zero port":        func(c *Config) { c.Advertise = "h:0" },
 		"non-numeric port": func(c *Config) { c.Advertise = "h:ssh" },
@@ -767,7 +845,7 @@ func TestTunnelledConnectionNamesItsWorkspace(t *testing.T) {
 func TestDoorWithoutAListener(t *testing.T) {
 	seed := make([]byte, 32)
 	key, _ := KeyFromSeed(seed)
-	d, err := New(Config{HostKey: key, DoorKey: key, Keys: newKeyring(t).svc, Targets: targets{}})
+	d, err := New(Config{HostKey: key, DoorKey: key, Keys: newKeyring(t).svc, Targets: targets{}, Authorizer: policy{}})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -30,7 +30,8 @@
 		agentsMD = $bindable(),
 		branchFormat = $bindable(),
 		name = $bindable(),
-		extraRepos = $bindable()
+		extraRepos = $bindable(),
+		shared = false
 	}: {
 		repoAccounts: Integration[];
 		repoAccountId: string;
@@ -41,6 +42,10 @@
 		branchFormat: string;
 		name: string;
 		extraRepos: ExtraRepo[];
+		/** The workshop is someone else's: its repository account is its
+		 *  owner's, which the caller cannot see, browse or replace, so it is
+		 *  kept as it is and none of the caller's own is offered. */
+		shared?: boolean;
 	} = $props();
 
 	const repoAccountOptions = $derived<SelectOption[]>(
@@ -123,30 +128,37 @@
 	lead={t('form.project.repoSub')}
 >
 	<div class="grid2">
-		<div class="field">
-			<label for="p-repo-account">{t('form.project.repoAccount')}</label>
-			<div class="row nowrap">
-				<Select
-					id="p-repo-account"
-					options={repoAccountOptions}
-					bind:value={repoAccountId}
-					required
-				/>
-				<button
-					type="button"
-					class="btn-sel"
-					onclick={loadRepos}
-					disabled={!repoAccountId || loadingRepos}
-					aria-busy={loadingRepos}
-					>{loadingRepos ? t('form.project.loading') : t('form.project.browse')}</button
-				>
+		{#if shared}
+			<div class="field">
+				<span class="field-label">{t('form.project.repoAccount')}</span>
+				<div class="help">{t('form.project.ownersRepoAccount')}</div>
 			</div>
-			{#if repoAccounts.length === 0}
-				<div class="error">
-					{@html th('form.project.noRepoAccount', { href: to.system('integrations') })}
+		{:else}
+			<div class="field">
+				<label for="p-repo-account">{t('form.project.repoAccount')}</label>
+				<div class="row nowrap">
+					<Select
+						id="p-repo-account"
+						options={repoAccountOptions}
+						bind:value={repoAccountId}
+						required
+					/>
+					<button
+						type="button"
+						class="btn-sel"
+						onclick={loadRepos}
+						disabled={!repoAccountId || loadingRepos}
+						aria-busy={loadingRepos}
+						>{loadingRepos ? t('form.project.loading') : t('form.project.browse')}</button
+					>
 				</div>
-			{/if}
-		</div>
+				{#if repoAccounts.length === 0}
+					<div class="error">
+						{@html th('form.project.noRepoAccount', { href: to.system('integrations') })}
+					</div>
+				{/if}
+			</div>
+		{/if}
 	</div>
 
 	{#if repoError}<ErrorCard

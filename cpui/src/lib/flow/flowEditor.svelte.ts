@@ -8,6 +8,7 @@ import type { BeforeNavigate } from '@sveltejs/kit';
 import { api } from '$lib/api';
 import type { ActionSpec, Flow, FlowVersion, HarnessSpec, SignalSpec } from '$lib/domain';
 import { to } from '$lib/core/urls';
+import { fleet } from '$lib/app/fleet.svelte';
 import { t, th } from '$lib/i18n/index.svelte';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { toast } from '$lib/ui/toast.svelte';
@@ -98,6 +99,11 @@ export class FlowEditor {
 	/** The name the flow is opened under. */
 	get name() {
 		return this.#name();
+	}
+	/** Saving, cloning and deleting the flow need project:write in its
+	 *  workshop; without it the editor is a viewer (nothing is saved). */
+	get canWrite() {
+		return fleet.can(this.projectId, 'project:write');
 	}
 
 	// The document itself is still validated on its own terms: agent, harness,
@@ -244,7 +250,7 @@ export class FlowEditor {
 		// version; deferred while real edits are pending (they save together).
 		clearTimeout(this.#layoutTimer);
 		this.#layoutTimer = setTimeout(async () => {
-			if (!this.flow || this.dirty || this.flow.builtin) return;
+			if (!this.flow || this.dirty || this.flow.builtin || !this.canWrite) return;
 			const seq = ++this.#saves;
 			try {
 				const saved = await api.flows.save(this.projectId, this.flow.name, this.flow.yaml, {
@@ -323,7 +329,7 @@ export class FlowEditor {
 	};
 
 	save = async () => {
-		if (!this.flow || this.busy || !this.dirty) return;
+		if (!this.flow || this.busy || !this.dirty || !this.canWrite) return;
 		this.busy = true;
 		this.error = '';
 		clearTimeout(this.#layoutTimer); // the layout goes with this save

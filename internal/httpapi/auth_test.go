@@ -13,6 +13,7 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/auth/authtest"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 )
 
@@ -32,10 +33,12 @@ func readBody(res *http.Response) string {
 }
 
 // Every route says how it is reached, and a route whose path names a
-// resource says whose it must be. The guard is one rule in one place, so
-// this is the test that keeps a new endpoint from being open by accident:
-// an undeclared route is a user route (the zero value), and a user route
-// with an id in its path must carry a scope.
+// resource says which. The guard is one policy set in one place, so this is
+// the test that keeps a new endpoint from being open by accident: an
+// undeclared route is a user route (the zero value); a user route declares
+// an action of the vocabulary, and one with an id in its path a scope whose
+// kind the action is about (a workshop's actions cover its runs and
+// tickets); a route the guard never asks about declares none.
 func TestEveryRouteDeclaresItsAccess(t *testing.T) {
 	public := map[string]bool{
 		"GET /api/auth/status": true,
@@ -63,16 +66,27 @@ func TestEveryRouteDeclaresItsAccess(t *testing.T) {
 			if !public[where] {
 				t.Errorf("%s is public but not on the allowlist — is it meant to be?", where)
 			}
-		case AccessAdmin:
-			// Admin routes name users, not owned resources.
 		case AccessRunToken, AccessBrokerToken:
 			if !strings.HasPrefix(rt.Path, "/api/runs/{id}/") {
 				t.Errorf("%s takes a run token but is not under a run", where)
 			}
 		case AccessUser:
-			if idParam.MatchString(rt.Path) && rt.Scope == ScopeNone && !inHandler[where] {
-				t.Errorf("%s names a resource in its path but declares no ownership scope", where)
+			spec, known := authz.Lookup(rt.Action)
+			if !known {
+				t.Errorf("%s declares action %q, which is not in the vocabulary", where, rt.Action)
+				continue
 			}
+			// Admin routes name users, not owned resources.
+			if idParam.MatchString(rt.Path) && rt.Scope == ScopeNone && !inHandler[where] && rt.Action != authz.InstanceAdmin {
+				t.Errorf("%s names a resource in its path but declares no scope", where)
+			}
+			if rt.Scope != ScopeNone && !actionFits(spec.Kind, scopeKind(rt.Scope)) {
+				t.Errorf("%s acts (%s) on a %s", where, rt.Action, scopeName(rt.Scope))
+			}
+			continue
+		}
+		if rt.Action != "" {
+			t.Errorf("%s declares %s, which its guard never asks", where, rt.Action)
 		}
 	}
 	for where := range public {
@@ -86,6 +100,12 @@ func TestEveryRouteDeclaresItsAccess(t *testing.T) {
 			t.Errorf("allowlisted public route %s does not exist", where)
 		}
 	}
+}
+
+// actionFits is an action of kind a on a resource of kind r: the same kind,
+// or a workshop's runs and tickets acted on through the workshop.
+func actionFits(a, r authz.Kind) bool {
+	return a == r || (r == authz.KindProject && (a == authz.KindRun || a == authz.KindTicket))
 }
 
 // Without a credential the API says so; with someone else's it says the
@@ -114,7 +134,7 @@ func TestOwnershipIsTheWholeView(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	other, _, err := x.srv.Auth.NewToken(context.Background(), "usr-other", "t", nil)
+	other, _, err := x.srv.Auth.NewToken(context.Background(), "usr-other", "t", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +213,7 @@ func TestSessionsAndSetup(t *testing.T) {
 		t.Fatalf("weak password = %d %s", res.StatusCode, body)
 	}
 	res, body := post("/api/auth/setup", `{"handle":"Lu","email":"Lu@Example.test","name":"Lu","password":"correct horse"}`, "same-origin")
-	if res.StatusCode != http.StatusCreated || !strings.Contains(body, `"admin":true`) || !strings.Contains(body, `"handle":"lu"`) {
+	if res.StatusCode != http.StatusCreated || !strings.Contains(body, `"role":"admin"`) || !strings.Contains(body, `"handle":"lu"`) {
 		t.Fatalf("setup = %d %s", res.StatusCode, body)
 	}
 	// The cookie is the session now: me answers.

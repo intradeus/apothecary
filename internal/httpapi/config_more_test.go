@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/account/authz"
 	"apothecary/internal/account/logins"
 	"apothecary/internal/account/providers"
 	"apothecary/internal/engine"
@@ -678,6 +679,10 @@ func (l listFails) ListProjectSecrets(context.Context, string) ([]confstore.Stor
 	return nil, l.err
 }
 
+func (l listFails) ListVisibleProjects(context.Context, string, []string) ([]confstore.Project, error) {
+	return nil, l.err
+}
+
 // A database outage is a 500 with the reason; it never reads as an empty list.
 func TestConfigStoreOutage(t *testing.T) {
 	x := newEnv(t, engine.Config{})
@@ -701,19 +706,30 @@ func TestConfigStoreOutage(t *testing.T) {
 	}
 }
 
-// flowOverviewFails fails only the second list the overview makes.
+// projectsFail fails only the workshops a caller reaches: what the
+// overview's (and every list's) visibility reads.
 type projectsFail struct {
 	confstore.DB
 	err error
 }
 
-func (p projectsFail) ListProjects(context.Context, string) ([]confstore.Project, error) {
+func (p projectsFail) ProjectsOf(context.Context, string) ([]confstore.Reach, error) {
 	return nil, p.err
 }
 
 func TestFlowOverviewCannotListProjects(t *testing.T) {
 	x := newEnv(t, engine.Config{})
 	x.srv.Conf = confstore.New(projectsFail{x.srv.Conf.DB(), errors.New("db down")}, secretsKey(t))
+	az, err := authz.New(x.srv.Conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.srv.Authz = az
+	for _, path := range []string{"/api/flows", "/api/runs", "/api/pings", "/api/projects", "/api/swarm"} {
+		if res, body := x.do(t, "GET", path, nil, nil); res.StatusCode != http.StatusInternalServerError {
+			t.Errorf("%s = %d %s", path, res.StatusCode, body)
+		}
+	}
 	if res, body := x.do(t, "GET", "/api/flows", nil, nil); res.StatusCode != http.StatusInternalServerError {
 		t.Errorf("overview = %d %s", res.StatusCode, body)
 	}

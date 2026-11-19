@@ -222,12 +222,17 @@
 					>
 					<span>
 						{#if rule}
-							<span class="tg" title={t('runview.egress.toggle_title')}>
+							<span
+								class="tg"
+								title={rs.canOperate
+									? t('runview.egress.toggle_title')
+									: t('common.needsPermission')}
+							>
 								<Segmented
 									glass={false}
 									size="sm"
 									label={t('runview.egress.rule_for', { host: r.host })}
-									disabled={toggling[r.host]}
+									disabled={toggling[r.host] || !rs.canOperate}
 									value={rule}
 									onchange={(v) =>
 										v !== 'held' && v !== ruleFor(r.host) && setRule(r.host, v === 'allowed')}

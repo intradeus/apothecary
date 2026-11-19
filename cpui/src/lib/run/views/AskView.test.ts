@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aRun, aViewerProject } from '$test/fixtures';
 import type { AskFrame, AskMessage, AskState, Attachment } from '$lib/domain';
 import { fmtClock } from '$lib/core/format';
 import {
@@ -120,6 +122,15 @@ describe('AskView', () => {
 			expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
 			expect(screen.queryByRole('combobox', { name: 'Model' })).not.toBeInTheDocument();
 			expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument();
+		});
+
+		it('shows a viewer of the workshop the conversation, without a way to ask', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			await open({ models: ['acme/one'] }, aViewStore(aRun({ projectId: 'p1' })));
+			expect(screen.queryByRole('textbox', { name: 'Ask' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('combobox', { name: 'Model' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'New session' })).not.toBeInTheDocument();
+			fleet.projects = [];
 		});
 
 		it('takes lines from the Files viewer while Ask is on', async () => {

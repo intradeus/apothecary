@@ -7,6 +7,7 @@ import { fleet } from '$lib/app/fleet.svelte';
 import type { Flow, FlowBinding } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aFlow, aWorkshop } from '$test/fixtures/app.svelte';
+import { aViewerProject } from '$test/fixtures';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import FlowsTab from './FlowsTab.svelte';
 
@@ -216,5 +217,30 @@ describe('FlowsTab, copying', () => {
 		await waitFor(() => expect(onreload).toHaveBeenCalledOnce());
 		expect(goto).toHaveBeenCalledWith('/w/p1/flows/tpl');
 		expect(toasts.list.at(-1)?.text).toBe('Copied as tpl into billing');
+	});
+});
+
+describe('FlowsTab, without project:write', () => {
+	const viewer = aViewerProject({ id: 'p1', defaultFlow: 'builder' });
+
+	it('disables creating, configuring and using a template', () => {
+		setup([aFlow({ name: 'own' }), aFlow({ name: 'tpl', builtin: true })], { project: viewer });
+		expect(newFlow()).toBeDisabled();
+		for (const b of screen.getAllByRole('button', { name: 'Configure…' })) expect(b).toBeDisabled();
+		const use = screen.getByRole('button', { name: 'Copy to edit…' });
+		expect(use).toBeDisabled();
+		expect(use).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
+
+	it('copies only into a workshop that allows it', () => {
+		fleet.projects = [viewer];
+		setup([aFlow({ name: 'own' })], { project: viewer });
+		expect(screen.getByRole('button', { name: /Copy…/ })).toBeDisabled();
+	});
+
+	it('offers a copy when another workshop allows it', () => {
+		fleet.projects = [viewer, aWorkshop({ id: 'p2', name: 'web' })];
+		setup([aFlow({ name: 'own' })], { project: viewer });
+		expect(screen.getByRole('button', { name: /Copy…/ })).toBeEnabled();
 	});
 });

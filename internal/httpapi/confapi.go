@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"sort"
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
 	"apothecary/internal/flow/agentspec"
@@ -337,16 +339,68 @@ func (b projectBody) toProject() confstore.Project {
 	}
 }
 
+// listProjects is the workshops the caller sees: its own and those shared
+// with it, each with what the caller may do there.
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Conf.ListProjects(r.Context(), auth.UserID(r.Context()))
+	v, err := s.visible(r.Context(), authz.KindProject)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if rows == nil {
-		rows = []confstore.Project{}
+	rows, err := s.Conf.ListVisibleProjects(r.Context(), v.UserID, v.ProjectIDs)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
 	}
-	writeJSON(w, http.StatusOK, rows)
+	out := make([]ProjectView, 0, len(rows))
+	seen := newProjectLookups()
+	for _, p := range rows {
+		pv, err := s.projectView(r.Context(), p, seen)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		out = append(out, pv)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// projectView is a workshop as the caller sees it. seen caches owners'
+// handles and ticket sources across a list.
+func (s *Server) projectView(ctx context.Context, p confstore.Project, seen projectLookups) (ProjectView, error) {
+	pr, _ := auth.PrincipalFrom(ctx)
+	role, acts, err := s.Authz.Access(ctx, pr, p.ID)
+	if err != nil {
+		return ProjectView{}, err
+	}
+	out := ProjectView{Project: p, Access: ProjectAccess{Role: string(role), Actions: make([]string, 0, len(acts))}}
+	for _, a := range acts {
+		out.Access.Actions = append(out.Access.Actions, string(a))
+	}
+	if p.UserID != pr.User.ID {
+		h, ok := seen.handles[p.UserID]
+		if !ok {
+			if u, err := s.Auth.GetUser(ctx, p.UserID); err == nil {
+				h = u.Handle
+			}
+			seen.handles[p.UserID] = h
+		}
+		out.OwnerHandle = h
+	}
+	if out.TicketSource, err = s.ticketSourceView(ctx, p.TicketSourceID, seen); err != nil {
+		return ProjectView{}, err
+	}
+	return out, nil
+}
+
+// writeProject answers with a workshop as the caller sees it.
+func (s *Server) writeProject(w http.ResponseWriter, r *http.Request, status int, p confstore.Project) {
+	pv, err := s.projectView(r.Context(), p, newProjectLookups())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, status, pv)
 }
 
 func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +415,7 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, p)
+	s.writeProject(w, r, http.StatusCreated, p)
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
@@ -370,7 +424,7 @@ func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	s.writeProject(w, r, http.StatusOK, p)
 }
 
 func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
@@ -383,7 +437,7 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 		confErr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, p)
+	s.writeProject(w, r, http.StatusOK, p)
 }
 
 func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
@@ -494,19 +548,16 @@ func (s *Server) listFlows(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if projectID == "" {
-		// The overview: every flow of the caller's projects, no one else's.
-		mine, err := s.Conf.ListProjects(r.Context(), auth.UserID(r.Context()))
+		// The overview: every flow of the workshops the caller sees, no one
+		// else's.
+		v, err := s.visible(r.Context(), authz.KindProject)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, err.Error())
 			return
 		}
-		owned := map[string]bool{}
-		for _, p := range mine {
-			owned[p.ID] = true
-		}
 		kept := rows[:0]
 		for _, row := range rows {
-			if owned[row.ProjectID] {
+			if slices.Contains(v.ProjectIDs, row.ProjectID) {
 				kept = append(kept, row)
 			}
 		}
@@ -579,7 +630,7 @@ func (s *Server) copyFlow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// The target is named in the body: the guard covered the source only.
-	if !s.ownsProject(w, r, body.ToProjectID) {
+	if !s.projectIn(w, r, authz.ProjectWrite, body.ToProjectID) {
 		return
 	}
 	row, err := s.Conf.CopyFlow(r.Context(), r.PathValue("id"), r.PathValue("name"),
@@ -601,7 +652,7 @@ func (s *Server) copyFlowTemplate(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !s.ownsProject(w, r, body.ToProjectID) {
+	if !s.projectIn(w, r, authz.ProjectWrite, body.ToProjectID) {
 		return
 	}
 	row, err := s.Conf.CopyTemplate(r.Context(), r.PathValue("name"), body.ToProjectID, body.Name)
@@ -835,22 +886,22 @@ func (s *Server) registryRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/kinds", ID: "listKinds", Tag: tagSystem,
 			Summary: "Every port kind this build carries, with its config fields",
-			Handler: s.listKinds, Returns: []kinds.Descriptor{}, Enabled: haveKinds},
+			Handler: s.listKinds, Returns: []kinds.Descriptor{}, Enabled: haveKinds, Action: authz.IntegrationRead},
 		{Method: "GET", Path: "/api/actions", ID: "listActions", Tag: tagSystem,
 			Summary: "Actions an `action` stage may name",
-			Handler: s.listActions, Returns: []actionspec.Action{}, Enabled: haveConf},
+			Handler: s.listActions, Returns: []actionspec.Action{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/harness-options", ID: "listHarnessOptions", Tag: tagSystem,
 			Summary: "Options an agent stage's harness_options may set, per harness kind",
-			Handler: s.listHarnessOptions, Returns: []harnessspec.Harness{}, Enabled: haveConf},
+			Handler: s.listHarnessOptions, Returns: []harnessspec.Harness{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/signals", ID: "listSignals", Tag: tagSystem,
 			Summary: "Signals a `wait` stage or a gate's auto-answer may name",
-			Handler: s.listSignals, Returns: []signalspec.Signal{}, Enabled: haveConf},
+			Handler: s.listSignals, Returns: []signalspec.Signal{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/settings", ID: "getSettings", Tag: tagSystem,
 			Summary: "One's policy settings: the reaper and retention windows",
-			Handler: s.getSettings, Returns: confstore.Settings{}, Enabled: haveConf},
+			Handler: s.getSettings, Returns: confstore.Settings{}, Enabled: haveConf, Action: authz.SettingsRead},
 		{Method: "PUT", Path: "/api/settings", ID: "updateSettings", Tag: tagSystem,
 			Summary: "Replace one's policy settings",
-			Handler: s.putSettings, Body: confstore.Settings{}, Returns: confstore.Settings{}, Enabled: haveConf},
+			Handler: s.putSettings, Body: confstore.Settings{}, Returns: confstore.Settings{}, Enabled: haveConf, Action: authz.SettingsWrite},
 	}
 }
 
@@ -859,64 +910,64 @@ func (s *Server) integrationRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/integrations", ID: "listIntegrations", Tag: tagIntegrations,
 			Summary: "One's integrations (secrets masked)",
-			Handler: s.listIntegrations, Returns: []integrationJSON{}, Enabled: haveConf},
+			Handler: s.listIntegrations, Returns: []integrationJSON{}, Enabled: haveConf, Action: authz.IntegrationRead},
 		{Method: "POST", Path: "/api/integrations", ID: "createIntegration", Tag: tagIntegrations,
 			Summary: "Configure an integration",
 			Doc:     "Repositories, harnesses and ticket sources; a provisioner is the instance's (PUT /api/provisioner), 400 here.",
 			Handler: s.createIntegration, Body: IntegrationRequest{}, Returns: integrationJSON{},
-			Status: http.StatusCreated, Enabled: haveConf},
+			Status: http.StatusCreated, Enabled: haveConf, Action: authz.IntegrationWrite},
 		{Method: "GET", Path: "/api/integrations/{id}", ID: "getIntegration", Tag: tagIntegrations,
 			Summary: "One integration",
-			Handler: s.getIntegration, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.getIntegration, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationRead},
 		{Method: "PUT", Path: "/api/integrations/{id}", ID: "updateIntegration", Tag: tagIntegrations,
 			Summary: "Change an integration (secrets merge: present replaces, \"\" deletes, absent keeps)",
-			Handler: s.updateIntegration, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.updateIntegration, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationWrite},
 		{Method: "DELETE", Path: "/api/integrations/{id}", ID: "deleteIntegration", Tag: tagIntegrations,
 			Summary: "Delete an integration",
 			Doc: "One a workshop uses — its repository account, provisioner, harness or ticket source — is refused with 409 naming the workshops. " +
 				"A deleted ticket source's records stay, and their runs. The internal tracker cannot be deleted (400).",
-			Handler: s.deleteIntegration, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.deleteIntegration, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationWrite},
 		{Method: "POST", Path: "/api/integrations/{id}/test", ID: "testIntegration", Tag: tagIntegrations,
 			Summary: "Check an integration's credentials against the real service",
-			Handler: s.testIntegration, Returns: TestResult{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.testIntegration, Returns: TestResult{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationWrite},
 		{Method: "GET", Path: "/api/integrations/{id}/repos", ID: "listIntegrationRepos", Tag: tagIntegrations,
 			Summary: "Repositories a repository integration (GitLab, GitHub) can see",
-			Handler: s.listIntegrationRepos, Returns: []kinds.RepoInfo{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.listIntegrationRepos, Returns: []kinds.RepoInfo{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationRead},
 		{Method: "GET", Path: "/api/integrations/{id}/models", ID: "listIntegrationModels", Tag: tagIntegrations,
 			Summary: "Models a harness integration's credentials can reach",
-			Handler: s.listIntegrationModels, Returns: []kinds.ModelInfo{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.listIntegrationModels, Returns: []kinds.ModelInfo{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationRead},
 		{Method: "GET", Path: "/api/integrations/{id}/statuses", ID: "listTrackerStatuses", Tag: tagIntegrations,
 			Summary: "A ticket source's statuses, in order",
 			Doc: "The internal tracker's rows, edited here; a remote tracker's list read live from it, read_only (is_done: its done category). " +
 				"A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.",
 			Query:   []Param{{Name: "refresh", Doc: "1 = read the remote tracker now rather than the cached copy", Enum: []string{"1"}}},
-			Handler: s.listTrackerStatuses, Returns: TrackerStatusList{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.listTrackerStatuses, Returns: TrackerStatusList{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationRead},
 		{Method: "PUT", Path: "/api/integrations/{id}/statuses", ID: "putTrackerStatuses", Tag: tagIntegrations,
 			Summary: "Save the internal tracker's statuses",
 			Doc: "A row with no id is new, a missing one is deleted, names are unique, the order given is kept. " +
 				"Deleting a status tickets use needs replace_with[id] (409 without). A remote tracker's statuses are its own (400).",
-			Handler: s.putTrackerStatuses, Body: TrackerStatusesUpdate{}, Returns: TrackerStatusList{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.putTrackerStatuses, Body: TrackerStatusesUpdate{}, Returns: TrackerStatusList{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationWrite},
 		{Method: "GET", Path: "/api/integrations/{id}/types", ID: "listTrackerTypes", Tag: tagIntegrations,
 			Summary: "A ticket source's issue types, in order",
 			Doc:     "A remote tracker's are read from it first, a type not listed yet added with its change type guessed from its name.",
 			Query:   []Param{{Name: "refresh", Doc: "1 = read the remote tracker now rather than the cached copy", Enum: []string{"1"}}},
-			Handler: s.listTrackerTypes, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.listTrackerTypes, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationRead},
 		{Method: "GET", Path: "/api/provisioner", ID: "getProvisioner", Tag: tagIntegrations,
 			Summary: "The instance's provisioner (secrets masked)",
 			Doc:     "Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).",
-			Handler: s.getProvisioner, Returns: integrationJSON{}, Enabled: haveConf},
+			Handler: s.getProvisioner, Returns: integrationJSON{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/provisioner", ID: "updateProvisioner", Tag: tagIntegrations,
 			Summary: "Change the instance's provisioner (admin; secrets merge: present replaces, \"\" deletes, absent keeps)",
 			Doc:     "An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.",
-			Handler: s.updateProvisioner, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Auth: AccessAdmin},
+			Handler: s.updateProvisioner, Body: IntegrationUpdate{}, Returns: integrationJSON{}, Enabled: haveConf, Action: authz.InstanceAdmin},
 		{Method: "POST", Path: "/api/provisioner/test", ID: "testProvisioner", Tag: tagIntegrations,
 			Summary: "Check the instance's provisioner reaches its cluster (admin)",
-			Handler: s.testProvisioner, Returns: TestResult{}, Enabled: haveConf, Auth: AccessAdmin},
+			Handler: s.testProvisioner, Returns: TestResult{}, Enabled: haveConf, Action: authz.InstanceAdmin},
 		{Method: "PUT", Path: "/api/integrations/{id}/types", ID: "putTrackerTypes", Tag: tagIntegrations,
 			Summary: "Save a ticket source's issue types",
 			Doc: "A remote tracker's rows only take change_type; the internal tracker's are the user's. Every type needs a change type (400). " +
 				"Deleting a type tickets use needs replace_with[id] (409 without).",
-			Handler: s.putTrackerTypes, Body: TrackerTypesUpdate{}, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration},
+			Handler: s.putTrackerTypes, Body: TrackerTypesUpdate{}, Returns: TrackerTypeList{}, Enabled: haveConf, Scope: ScopeIntegration, Action: authz.IntegrationWrite},
 	}
 }
 
@@ -924,35 +975,36 @@ func (s *Server) integrationRoutes() []Route {
 func (s *Server) projectRoutes() []Route {
 	return []Route{
 		{Method: "GET", Path: "/api/projects", ID: "listProjects", Tag: tagProjects,
-			Summary: "One's projects", Handler: s.listProjects, Returns: []confstore.Project{}, Enabled: haveConf},
+			Summary: "The projects one sees: one's own and those shared with one, each with one's access",
+			Handler: s.listProjects, Returns: []ProjectView{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/projects", ID: "createProject", Tag: tagProjects,
 			Summary: "Create a project",
-			Handler: s.createProject, Body: projectBody{}, Returns: confstore.Project{},
-			Status: http.StatusCreated, Enabled: haveConf},
+			Handler: s.createProject, Body: projectBody{}, Returns: ProjectView{},
+			Status: http.StatusCreated, Enabled: haveConf, Action: authz.ProjectCreate},
 		{Method: "GET", Path: "/api/projects/{id}", ID: "getProject", Tag: tagProjects,
-			Summary: "One project", Handler: s.getProject, Returns: confstore.Project{}, Enabled: haveConf, Scope: ScopeProject},
+			Summary: "One project, with one's access", Handler: s.getProject, Returns: ProjectView{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/projects/{id}", ID: "updateProject", Tag: tagProjects,
 			Summary: "Replace a project",
-			Handler: s.updateProject, Body: projectBody{}, Returns: confstore.Project{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.updateProject, Body: projectBody{}, Returns: ProjectView{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "DELETE", Path: "/api/projects/{id}", ID: "deleteProject", Tag: tagProjects,
-			Summary: "Delete a project", Handler: s.deleteProject, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Summary: "Delete a project", Handler: s.deleteProject, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectDelete},
 		{Method: "GET", Path: "/api/projects/{id}/branches", ID: "listProjectBranches", Tag: tagProjects,
 			Summary: "Branches of the project's repository",
-			Handler: s.listProjectBranches, Returns: []kinds.BranchInfo{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listProjectBranches, Returns: []kinds.BranchInfo{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/projects/{id}/mrs", ID: "listProjectMRs", Tag: tagProjects,
 			Summary: "Open merge requests of a project's repository, with the runs on each",
 			Doc:     "The repository's open merge requests, newest first: each with its author and head, and the runs that went through it here — how many have it in their data (started on it, or opened it) and the newest. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.",
 			Query:   []Param{{Name: "repo", Doc: "the repository: \"repo\" (the default) for the primary, an extra repository's name", Type: "string"}},
-			Handler: s.listProjectMRs, Returns: []MRRow{}, Scope: ScopeProject},
+			Handler: s.listProjectMRs, Returns: []MRRow{}, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/projects/{id}/mrs/{iid}", ID: "getProjectMR", Tag: tagProjects,
 			Summary: "One merge request, with its description and the runs on it",
 			Query:   []Param{{Name: "repo", Doc: "the repository: \"repo\" (the default) for the primary, an extra repository's name", Type: "string"}},
-			Handler: s.getProjectMR, Returns: MRRow{}, Scope: ScopeProject},
+			Handler: s.getProjectMR, Returns: MRRow{}, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/projects/{id}/mrs/{iid}/runs", ID: "startMRRun", Tag: tagProjects,
 			Summary: "Start a run of a flow on a merge request",
 			Doc:     "Starts a run on the merge request of a flow whose runs are started on one (operates_on: merge_request; the project's default flow unless the body names another), given its title and description as its work. No ticket is made. 409 while another run is still working on it.",
 			Body:    MRRunRequest{}, Returns: MRRunStarted{}, Status: http.StatusCreated,
-			Handler: s.startMRRun, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.startMRRun, Enabled: haveConf, Scope: ScopeProject, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/projects/{id}/runs", ID: "startNothingRun", Tag: tagProjects,
 			Summary: "Start a run on nothing: a workspace on a branch, with no ticket or merge request",
 			Doc: "Starts a run of a flow whose runs are started on nothing (operates_on: nothing; the project's default flow unless the body names another): " +
@@ -961,53 +1013,53 @@ func (s *Server) projectRoutes() []Route {
 				"or on_branch to work on the branch itself, with nothing forked. " +
 				"Any number may run at once, up to the environment cap (409).",
 			Body: NothingRunRequest{}, Returns: RunRef{}, Status: http.StatusCreated,
-			Handler: s.startNothingRun, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.startNothingRun, Enabled: haveConf, Scope: ScopeProject, Action: authz.RunOperate},
 		{Method: "GET", Path: "/api/projects/{id}/egress-audit", ID: "getProjectEgressAudit", Tag: tagEgress,
 			Summary: "Everything this project's workspaces reached or were blocked from",
-			Query:   auditQuery, Handler: s.getProjectEgressAudit, Returns: []egressport.EgressAuditRow{}, Enabled: haveConf, Scope: ScopeProject},
+			Query:   auditQuery, Handler: s.getProjectEgressAudit, Returns: []egressport.EgressAuditRow{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/projects/{id}/preflight", ID: "preflightProject", Tag: tagProjects,
 			Summary: "Check a project is ready to run, step by step",
-			Handler: s.preflightProject, Returns: PreflightResult{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.preflightProject, Returns: PreflightResult{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "POST", Path: "/api/projects/{id}/envcheck", ID: "startEnvCheck", Tag: tagProjects,
 			Summary: "Prove the project's workspace actually builds (throwaway provision)",
 			Doc:     "Starting a check cancels the project's running one, if any: the newest check is the one that matters.",
 			Handler: s.startEnvCheck, Body: EnvCheckRequest{}, Returns: EnvCheckRef{},
-			Status: http.StatusAccepted, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusAccepted, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/build-cache", ID: "getBuildCache", Tag: tagProjects,
 			Summary: "What the project's devcontainer build cache holds",
 			Doc:     "The cache is per project and outlives its runs — it is what stops every run rebuilding the image into its own throwaway daemon.",
-			Handler: s.getBuildCache, Returns: BuildCacheInfo{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getBuildCache, Returns: BuildCacheInfo{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "DELETE", Path: "/api/projects/{id}/build-cache", ID: "clearBuildCache", Tag: tagProjects,
 			Summary: "Empty the project's build cache",
 			Doc:     "Safe: the next build repopulates it, so the cost of clearing needlessly is one slow build.",
-			Handler: s.deleteBuildCache, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.deleteBuildCache, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/secrets", ID: "listProjectSecrets", Tag: tagProjects,
 			Summary: "The project's secrets, by name",
 			Doc:     "What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.",
-			Handler: s.listProjectSecrets, Returns: []confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listProjectSecrets, Returns: []confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "PUT", Path: "/api/projects/{id}/secrets/{name}", ID: "setProjectSecret", Tag: tagProjects,
 			Summary: "Set one project secret",
 			Doc:     "Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.",
-			Body:    ProjectSecretRequest{}, Handler: s.putProjectSecret, Returns: confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject},
+			Body:    ProjectSecretRequest{}, Handler: s.putProjectSecret, Returns: confstore.ProjectSecret{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "DELETE", Path: "/api/projects/{id}/secrets/{name}", ID: "deleteProjectSecret", Tag: tagProjects,
 			Summary: "Remove one project secret",
 			Doc:     "A flow that reads it is refused at its next run's creation.",
-			Handler: s.deleteProjectSecret, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.deleteProjectSecret, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/browser", ID: "getProjectBrowser", Tag: tagProjects,
 			Summary: "The project's browser: its toggle and its container",
 			Doc:     "One container per project, a Chromium per agent session (the builtin browser MCP server). The toggle is the project's workspace.browser.enabled; this says whether the container runs, with what image, and how many sessions use it.",
-			Handler: s.getProjectBrowser, Returns: BrowserInfo{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getProjectBrowser, Returns: BrowserInfo{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/envchecks/{id}", ID: "getEnvCheck", Tag: tagProjects,
 			Summary: "Poll a workspace check",
-			Handler: s.getEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeEnvCheck},
+			Handler: s.getEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeEnvCheck, Action: authz.ProjectRead},
 		{Method: "DELETE", Path: "/api/envchecks/{id}", ID: "cancelEnvCheck", Tag: tagProjects,
 			Summary: "Cancel a running workspace check",
 			Doc:     "The check stops at its next step and still destroys its workspace.",
-			Handler: s.cancelEnvCheck, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeEnvCheck},
+			Handler: s.cancelEnvCheck, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeEnvCheck, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/envcheck", ID: "getLatestEnvCheck", Tag: tagProjects,
 			Summary: "The project's most recent workspace check",
 			Doc:     "Running or finished — what a page opened mid-check follows.",
-			Handler: s.getLatestEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getLatestEnvCheck, Returns: envcheck.CheckRun{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 	}
 }
 
@@ -1019,82 +1071,82 @@ func (s *Server) flowRoutes() []Route {
 		// templates, and copying is how a good flow reaches another project.
 		{Method: "GET", Path: "/api/flows", ID: "listAllFlows", Tag: tagFlows,
 			Summary: "Every flow of one's projects, for the cross-project overview",
-			Handler: s.listFlows, Returns: []flowResp{}, Enabled: haveConf},
+			Handler: s.listFlows, Returns: []flowResp{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/flow-templates", ID: "listFlowTemplates", Tag: tagFlows,
 			Summary: "The compiled-in flow templates a project can adopt or copy",
-			Handler: s.listBuiltinFlows, Returns: []flowResp{}, Enabled: haveConf},
+			Handler: s.listBuiltinFlows, Returns: []flowResp{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/flow-templates/{name}/copy", ID: "copyFlowTemplate", Tag: tagFlows,
 			Summary: "Copy a compiled-in template into a project",
 			Doc:     "A template belongs to no project, so it is copied from here rather than from under one. Copying it under its own name adopts it: the project gets its own editable document, which shadows the template from then on.",
 			Handler: s.copyFlowTemplate, Body: CopyFlowRequest{}, Returns: flowResp{},
-			Status: http.StatusCreated, Enabled: haveConf},
+			Status: http.StatusCreated, Enabled: haveConf, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/flows/schema", ID: "getFlowSchema", Tag: tagFlows,
 			Summary: "The JSON Schema of a flow document as it is written",
 			Doc:     "The YAML with its shorthand, for an editor to validate, complete and document as a person types; its lists (stage types, signals, actions and their inputs) come from the registries. The parser stays the authority: validate a document for the rules a schema cannot say.",
-			Handler: s.getFlowSchema, Returns: map[string]any{}, Enabled: haveConf},
+			Handler: s.getFlowSchema, Returns: map[string]any{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/flows/validate", ID: "validateFlow", Tag: tagFlows,
 			Summary: "Validate a flow document without saving it",
 			Doc:     "Project-independent: the parser checks the document itself, and a flow carries its own agents.",
-			Handler: s.validateFlow, Body: ValidateFlowRequest{}, Returns: FlowValidation{}, Enabled: haveConf},
+			Handler: s.validateFlow, Body: ValidateFlowRequest{}, Returns: FlowValidation{}, Enabled: haveConf, Action: authz.ProjectRead},
 
 		{Method: "GET", Path: "/api/projects/{id}/flows", ID: "listFlows", Tag: tagFlows,
 			Summary: "A project's flows, with the templates it has not adopted",
-			Handler: s.listFlows, Returns: []flowResp{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listFlows, Returns: []flowResp{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/projects/{id}/flows", ID: "createFlow", Tag: tagFlows,
 			Summary: "Create a flow in a project",
 			Handler: s.createFlow, Body: CreateFlowRequest{}, Returns: flowResp{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/flows/{name}", ID: "getFlow", Tag: tagFlows,
 			Summary: "One of a project's flows",
 			Doc:     "Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.",
-			Handler: s.getFlow, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getFlow, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/projects/{id}/flows/{name}", ID: "updateFlow", Tag: tagFlows,
 			Summary: "Replace one of a project's flows",
 			Doc:     "Saving a built-in template's name for the first time creates this project's own copy of it.",
-			Handler: s.putFlow, Body: UpdateFlowRequest{}, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.putFlow, Body: UpdateFlowRequest{}, Returns: flowResp{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "DELETE", Path: "/api/projects/{id}/flows/{name}", ID: "deleteFlow", Tag: tagFlows,
 			Summary: "Delete a project's flow (resets to the template, when there is one)",
-			Handler: s.deleteFlow, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.deleteFlow, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "POST", Path: "/api/projects/{id}/flows/{name}/copy", ID: "copyFlow", Tag: tagFlows,
 			Summary: "Copy a flow into another project",
 			Handler: s.copyFlow, Body: CopyFlowRequest{}, Returns: flowResp{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/automations", ID: "listAutomations", Tag: tagAutomations,
 			Summary: "The project's automations: how runs begin without a person",
-			Handler: s.listAutomations, Returns: []confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listAutomations, Returns: []confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/projects/{id}/automations", ID: "createAutomation", Tag: tagAutomations,
 			Summary: "Create an automation",
 			Doc:     "Validated the way a firing would be: the integration is a ticket source, the schedule parses, the flow resolves and its operates_on fits the kind (merge_request for a merge_request automation, ticket otherwise — or nothing for a cron automation, which then takes no ticket_id: each slot starts a run of its own, skipped while the previous one is still going), the params are ones it accepts.",
 			Handler: s.createAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{},
-			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject},
+			Status: http.StatusCreated, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/automations/{aid}", ID: "getAutomation", Tag: tagAutomations,
 			Summary: "One automation, with what the watcher last did with it",
-			Handler: s.getAutomation, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getAutomation, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/projects/{id}/automations/{aid}", ID: "updateAutomation", Tag: tagAutomations,
 			Summary: "Replace an automation (its last poll, firing and error are kept)",
-			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.updateAutomation, Body: AutomationRequest{}, Returns: confstore.Automation{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "DELETE", Path: "/api/projects/{id}/automations/{aid}", ID: "deleteAutomation", Tag: tagAutomations,
 			Summary: "Delete an automation (the tickets it recorded and their runs stay)",
-			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.deleteAutomation, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/flow-bindings", ID: "listFlowBindings", Tag: tagFlows,
 			Summary: "The project's parameter bindings, one per configured flow",
-			Handler: s.listFlowBindings, Returns: []confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listFlowBindings, Returns: []confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/projects/{id}/flows/{name}/binding", ID: "getFlowBinding", Tag: tagFlows,
 			Summary: "The project's values for a flow's parameters",
 			Doc:     "404 when the project bound nothing: the flow runs on its declared defaults. A template is configurable without being copied.",
-			Handler: s.getFlowBinding, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getFlowBinding, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/projects/{id}/flows/{name}/binding", ID: "putFlowBinding", Tag: tagFlows,
 			Summary: "Bind values to a flow's parameters for this project",
 			Doc:     "Replaces the binding. Every key must be a parameter the flow declares (the engine-known names included) and every value one it accepts — checked the way a run checks them; an empty value unbinds. A binding left with no values is removed. The document itself is untouched.",
-			Handler: s.putFlowBinding, Body: FlowBindingRequest{}, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.putFlowBinding, Body: FlowBindingRequest{}, Returns: confstore.FlowBinding{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "DELETE", Path: "/api/projects/{id}/flows/{name}/binding", ID: "deleteFlowBinding", Tag: tagFlows,
 			Summary: "Put the project back to the flow's declared defaults",
-			Handler: s.deleteFlowBinding, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.deleteFlowBinding, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},
 		{Method: "GET", Path: "/api/projects/{id}/flows/{name}/versions", ID: "listFlowVersions", Tag: tagFlows,
 			Summary: "A flow's version history within its project",
-			Handler: s.listFlowVersions, Returns: []confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.listFlowVersions, Returns: []confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "GET", Path: "/api/projects/{id}/flow-versions/{hash}", ID: "getFlowVersion", Tag: tagFlows,
 			Summary: "One flow version by content hash",
-			Handler: s.getFlowVersion, Returns: confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject},
+			Handler: s.getFlowVersion, Returns: confstore.FlowVersion{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 	}
 }

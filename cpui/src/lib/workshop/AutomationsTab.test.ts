@@ -5,7 +5,7 @@ import { api } from '$lib/api';
 import type { Automation, Project, TicketRecord, TicketRow } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aTicket, aTicketRow } from '$test/fixtures';
+import { aTicket, aTicketRow, aViewerProject } from '$test/fixtures';
 import { aFlow, anIntegration, aWorkshop, choose, confirmed } from '$test/fixtures/app.svelte';
 import WithHeader from '$test/fixtures/WithHeader.svelte';
 import AutomationsTab from './AutomationsTab.svelte';
@@ -49,6 +49,7 @@ const record = (id: string, key: string, title: string): TicketRecord => ({
 interface Over {
 	tickets?: TicketRow[];
 	integrations?: ReturnType<typeof anIntegration>[] | null;
+	project?: Project;
 }
 function setup(rows: Automation[] = [], { tickets = [], ...over }: Over = {}) {
 	vi.mocked(api.automations.list).mockResolvedValue(rows);
@@ -107,6 +108,23 @@ describe('AutomationsTab, listing', () => {
 		setup();
 		expect(await screen.findByText('No automations yet')).toBeInTheDocument();
 		expect(api.automations.list).toHaveBeenCalledWith('p1');
+	});
+
+	it('without project:write, disables creating, enabling, editing and deleting', async () => {
+		setup([auto()], { project: aViewerProject({ id: 'p1' }) });
+		const edit = await screen.findByRole('button', { name: 'Edit' });
+		expect(edit).toBeDisabled();
+		expect(edit).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+		expect(screen.getByRole('button', { name: 'Delete…' })).toBeDisabled();
+		expect(screen.getByRole('switch')).toBeDisabled();
+		expect(screen.getByRole('button', { name: /New automation/ })).toBeDisabled();
+	});
+
+	it('without project:write, disables inviting the first one', async () => {
+		setup([], { project: aViewerProject({ id: 'p1' }) });
+		await screen.findByText('No automations yet');
+		for (const b of screen.getAllByRole('button', { name: /New automation/ }))
+			expect(b).toBeDisabled();
 	});
 
 	it('offers a retry when loading fails', async () => {

@@ -206,7 +206,8 @@
 		/>
 	{/if}
 	{#if rs.run && !rs.terminal}
-		{#if rs.run.hold || canTakeOver}
+		<!-- Talking to the agent, taking over and handing back are run:operate. -->
+		{#if rs.canOperate && (rs.run.hold || canTakeOver)}
 			<Composer
 				runId={rs.runId}
 				composers={rs.composers}

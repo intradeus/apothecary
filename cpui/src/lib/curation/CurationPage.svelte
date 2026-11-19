@@ -29,6 +29,7 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { I } from '$lib/design/icons';
 	import { t } from '$lib/i18n/index.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
 	import CurationItem from './CurationItem.svelte';
 	import {
 		blankKept,
@@ -48,6 +49,9 @@
 	} from './curation';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
+
+	// Answering is run:operate in the run's workshop; the draft stays editable.
+	const canAnswer = $derived(fleet.can(fleet.runById.get(ping.runId)?.projectId, 'run:operate'));
 
 	// The route mounts this only for a curatable ping; the document is the
 	// first shown file of a review type.
@@ -330,16 +334,17 @@
 			<AttachFiles bind:files label={t('doc.attachReview')} compact />
 			{#if blanks.length}<div class="error">{t('cur.blanksWarn')}</div>{/if}
 			{#if error}<div class="error">{error}</div>{/if}
+			{#if !canAnswer}<p class="help">{t('common.needsPermission')}</p>{/if}
 			<div class="acts">
 				<button
 					class="btn-primary"
-					disabled={busy || !loaded || blanks.length > 0}
+					disabled={busy || !canAnswer || !loaded || blanks.length > 0}
 					aria-busy={busy && sending === 'approve'}
 					onclick={() => submit('approve')}>{approveLabel}</button
 				>
 				<button
 					class="btn-sel"
-					disabled={busy || !loaded || !feedback}
+					disabled={busy || !canAnswer || !loaded || !feedback}
 					aria-busy={busy && sending === 'reject'}
 					title={feedback ? '' : t('cur.rejectNeeds')}
 					onclick={() => submit('reject')}>{t('cur.requestChanges')}</button

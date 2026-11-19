@@ -13,10 +13,14 @@
 
 	let {
 		harnesses,
-		harnessIds = $bindable()
+		harnessIds = $bindable(),
+		shared = false
 	}: {
 		harnesses: Integration[];
 		harnessIds: string[];
+		/** The workshop is someone else's: its harnesses are its owner's, which
+		 *  the caller cannot see or replace, so they are kept as they are. */
+		shared?: boolean;
 	} = $props();
 
 	// A kind is taken if a DIFFERENT checked harness already covers it.
@@ -41,35 +45,39 @@
 			<span class="count">{harnessIds.length}</span>
 		</div>
 		<div class="help">{t('form.project.harnessesHelp')}</div>
-		<div class="hs">
-			{#each harnesses as h (h.id)}
-				{@const on = harnessIds.includes(h.id)}
-				{@const blocked = kindTaken(h) && !on}
-				<button
-					type="button"
-					class="rowbtn hopt"
-					class:on
-					disabled={blocked}
-					role="checkbox"
-					aria-checked={on}
-					title={blocked ? t('form.project.kindTaken', { kind: h.kind }) : ''}
-					onclick={() => toggleHarness(h)}
-				>
-					<StatusMark
-						tone={on ? 'ok' : 'pending'}
-						size="sm"
-						title={on ? t('form.project.picked') : t('form.project.notPicked')}
-					/>
-					<span class="hn truncate">{h.name}</span>
-					<span class="pill sm tint-muted">{h.kind}</span>
-					{#if blocked}<span class="faint tiny">{t('form.project.kindTakenTag')}</span>{/if}
-				</button>
-			{:else}
-				<div class="error">
-					{@html th('form.project.noHarness', { href: to.system('integrations') })}
-				</div>
-			{/each}
-		</div>
+		{#if shared}
+			<div class="help">{t('form.project.ownersHarnesses', { count: harnessIds.length })}</div>
+		{:else}
+			<div class="hs">
+				{#each harnesses as h (h.id)}
+					{@const on = harnessIds.includes(h.id)}
+					{@const blocked = kindTaken(h) && !on}
+					<button
+						type="button"
+						class="rowbtn hopt"
+						class:on
+						disabled={blocked}
+						role="checkbox"
+						aria-checked={on}
+						title={blocked ? t('form.project.kindTaken', { kind: h.kind }) : ''}
+						onclick={() => toggleHarness(h)}
+					>
+						<StatusMark
+							tone={on ? 'ok' : 'pending'}
+							size="sm"
+							title={on ? t('form.project.picked') : t('form.project.notPicked')}
+						/>
+						<span class="hn truncate">{h.name}</span>
+						<span class="pill sm tint-muted">{h.kind}</span>
+						{#if blocked}<span class="faint tiny">{t('form.project.kindTakenTag')}</span>{/if}
+					</button>
+				{:else}
+					<div class="error">
+						{@html th('form.project.noHarness', { href: to.system('integrations') })}
+					</div>
+				{/each}
+			</div>
+		{/if}
 	</FormSub>
 </FormPane>
 

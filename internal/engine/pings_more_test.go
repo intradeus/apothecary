@@ -220,7 +220,7 @@ type fixedPings struct {
 }
 
 func (f fixedPings) GetPing(context.Context, string) (run.PingView, error) { return f.v, f.err }
-func (f fixedPings) ListPings(_ context.Context, _, status string, _ int) ([]run.PingView, error) {
+func (f fixedPings) ListPings(_ context.Context, _ *run.Seen, status string, _ int) ([]run.PingView, error) {
 	if f.err != nil {
 		return nil, f.err
 	}

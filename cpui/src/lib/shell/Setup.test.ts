@@ -9,7 +9,7 @@ import Setup from './Setup.svelte';
 
 vi.mock('$lib/api', () => ({ api: { auth: { setup: vi.fn() } } }));
 
-const me = { user: { id: 'u', handle: 'lu', name: 'Lu', admin: true } } as Me;
+const me = { user: { id: 'u', handle: 'lu', name: 'Lu', role: 'admin' } } as Me;
 const action = () => screen.getByRole('button', { name: 'Create the first account' });
 
 async function fill(

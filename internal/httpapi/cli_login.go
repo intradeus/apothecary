@@ -25,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/run/event"
 )
 
@@ -355,14 +356,14 @@ func (s *Server) cliLoginRoutes() []Route {
 		{Method: "GET", Path: "/api/cli/logins/{code}", ID: "getCliLogin", Tag: tagAuth,
 			Summary: "A terminal sign-in waiting for approval, by its user code",
 			Doc:     "The code in any case, with or without its dash. 404 when it expired or is unknown.",
-			Handler: s.getCLILogin, Returns: CLILoginInfo{}},
+			Handler: s.getCLILogin, Returns: CLILoginInfo{}, Action: authz.AccountManage},
 		{Method: "POST", Path: "/api/cli/logins/{code}/approve", ID: "approveCliLogin", Tag: tagAuth,
 			Summary: "Approve a terminal sign-in: it signs in as you",
 			Doc:     "Mints a personal token named after the sign-in, refused after the deployment's inactivity window without use. 404 when expired or unknown; 409 when already answered.",
-			Handler: s.approveCLILogin, Status: http.StatusNoContent},
+			Handler: s.approveCLILogin, Status: http.StatusNoContent, Action: authz.AccountManage},
 		{Method: "POST", Path: "/api/cli/logins/{code}/deny", ID: "denyCliLogin", Tag: tagAuth,
 			Summary: "Deny a terminal sign-in",
 			Doc:     "404 when expired or unknown; 409 when already answered.",
-			Handler: s.denyCLILogin, Status: http.StatusNoContent},
+			Handler: s.denyCLILogin, Status: http.StatusNoContent, Action: authz.AccountManage},
 	}
 }

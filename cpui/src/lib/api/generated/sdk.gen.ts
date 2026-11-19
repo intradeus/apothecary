@@ -17,6 +17,9 @@ import type {
 	AddChannelData,
 	AddChannelErrors,
 	AddChannelResponses,
+	AddMemberData,
+	AddMemberErrors,
+	AddMemberResponses,
 	AddMySshKeyData,
 	AddMySshKeyErrors,
 	AddMySshKeyResponses,
@@ -356,6 +359,9 @@ import type {
 	ImportSkillsData,
 	ImportSkillsErrors,
 	ImportSkillsResponses,
+	LeaveProjectData,
+	LeaveProjectErrors,
+	LeaveProjectResponses,
 	ListActionsData,
 	ListActionsErrors,
 	ListActionsResponses,
@@ -404,6 +410,9 @@ import type {
 	ListKindsData,
 	ListKindsErrors,
 	ListKindsResponses,
+	ListMembersData,
+	ListMembersErrors,
+	ListMembersResponses,
 	ListMySshKeysData,
 	ListMySshKeysErrors,
 	ListMySshKeysResponses,
@@ -413,6 +422,9 @@ import type {
 	ListNoticesData,
 	ListNoticesErrors,
 	ListNoticesResponses,
+	ListPermissionsData,
+	ListPermissionsErrors,
+	ListPermissionsResponses,
 	ListPingsData,
 	ListPingsErrors,
 	ListPingsResponses,
@@ -464,6 +476,12 @@ import type {
 	ListWorkshopTicketsData,
 	ListWorkshopTicketsErrors,
 	ListWorkshopTicketsResponses,
+	ListWorkshopTicketStatusesData,
+	ListWorkshopTicketStatusesErrors,
+	ListWorkshopTicketStatusesResponses,
+	ListWorkshopTicketTypesData,
+	ListWorkshopTicketTypesErrors,
+	ListWorkshopTicketTypesResponses,
 	LoginData,
 	LoginErrors,
 	LoginResponses,
@@ -521,6 +539,9 @@ import type {
 	ReleaseRunData,
 	ReleaseRunErrors,
 	ReleaseRunResponses,
+	RemoveMemberData,
+	RemoveMemberErrors,
+	RemoveMemberResponses,
 	RenameCredentialData,
 	RenameCredentialErrors,
 	RenameCredentialResponses,
@@ -633,6 +654,9 @@ import type {
 	UpdateIntegrationResponses,
 	UpdateMeData,
 	UpdateMeErrors,
+	UpdateMemberData,
+	UpdateMemberErrors,
+	UpdateMemberResponses,
 	UpdateMeResponses,
 	UpdateProjectData,
 	UpdateProjectErrors,
@@ -2458,7 +2482,7 @@ export const listMyTokens = <ThrowOnError extends boolean = false>(
 /**
  * Mint a personal API token
  *
- * The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token.
+ * The secret is in this response and nowhere else: it is stored hashed. Send it as a bearer token. A token is full_access (the account itself) or limited to actions (GET /api/permissions) and, optionally, to some workshops (project_ids); a limited token never does more than its account may at the time, and cannot hold account:manage.
  */
 export const createMyToken = <ThrowOnError extends boolean = false>(
 	options: Options<CreateMyTokenData, ThrowOnError>
@@ -2606,6 +2630,29 @@ export const getObservability = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The actions a route or a limited token can name, and which a token may hold
+ */
+export const listPermissions = <ThrowOnError extends boolean = false>(
+	options?: Options<ListPermissionsData, ThrowOnError>
+): RequestResult<ListPermissionsResponses, ListPermissionsErrors, ThrowOnError> =>
+	(options?.client ?? client).get<ListPermissionsResponses, ListPermissionsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/permissions',
+		...options
+	});
+
+/**
  * The inbox: one's questions waiting on a human
  */
 export const listPings = <ThrowOnError extends boolean = false>(
@@ -2727,7 +2774,7 @@ export const getPingFiles = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One's projects
+ * The projects one sees: one's own and those shared with one, each with one's access
  */
 export const listProjects = <ThrowOnError extends boolean = false>(
 	options?: Options<ListProjectsData, ThrowOnError>
@@ -2800,7 +2847,7 @@ export const deleteProject = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * One project
+ * One project, with one's access
  */
 export const getProject = <ThrowOnError extends boolean = false>(
 	options: Options<GetProjectData, ThrowOnError>
@@ -3470,6 +3517,137 @@ export const listFlowVersions = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The accounts a project is shared with, and their roles
+ */
+export const listMembers = <ThrowOnError extends boolean = false>(
+	options: Options<ListMembersData, ThrowOnError>
+): RequestResult<ListMembersResponses, ListMembersErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListMembersResponses, ListMembersErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members',
+		...options
+	});
+
+/**
+ * Share a project with an account, by handle or email
+ *
+ * role is viewer, operator or maintainer; sharing with a member again changes its role. Only the owner adds a maintainer or changes one. 404 for an unknown account; 400 for the owner itself; 409 when the account's role there changed while this was decided (reload and retry).
+ */
+export const addMember = <ThrowOnError extends boolean = false>(
+	options: Options<AddMemberData, ThrowOnError>
+): RequestResult<AddMemberResponses, AddMemberErrors, ThrowOnError> =>
+	(options.client ?? client).post<AddMemberResponses, AddMemberErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Stop sharing a project with a member
+ *
+ * Only the owner removes a maintainer. 409 when the role changed while this was decided (reload and retry).
+ */
+export const removeMember = <ThrowOnError extends boolean = false>(
+	options: Options<RemoveMemberData, ThrowOnError>
+): RequestResult<RemoveMemberResponses, RemoveMemberErrors, ThrowOnError> =>
+	(options.client ?? client).delete<RemoveMemberResponses, RemoveMemberErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members/{uid}',
+		...options
+	});
+
+/**
+ * Change a member's role
+ *
+ * Only the owner makes or unmakes a maintainer. 409 when the role changed while this was decided (reload and retry).
+ */
+export const updateMember = <ThrowOnError extends boolean = false>(
+	options: Options<UpdateMemberData, ThrowOnError>
+): RequestResult<UpdateMemberResponses, UpdateMemberErrors, ThrowOnError> =>
+	(options.client ?? client).put<UpdateMemberResponses, UpdateMemberErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members/{uid}',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Leave a project shared with one
+ *
+ * project:leave: every member holds it, the owner does not (it deletes the project instead), and a limited token never does.
+ */
+export const leaveProject = <ThrowOnError extends boolean = false>(
+	options: Options<LeaveProjectData, ThrowOnError>
+): RequestResult<LeaveProjectResponses, LeaveProjectErrors, ThrowOnError> =>
+	(options.client ?? client).delete<LeaveProjectResponses, LeaveProjectErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/members/me',
+		...options
+	});
+
+/**
  * Open merge requests of a project's repository, with the runs on each
  *
  * The repository's open merge requests, newest first: each with its author and head, and the runs that went through it here — how many have it in their data (started on it, or opened it) and the newest. What a run of a flow started on merge requests (operates_on: merge_request) may be started on.
@@ -3683,6 +3861,68 @@ export const setProjectSecret = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * The statuses a workshop's tickets move through, in order
+ *
+ * Its ticket source's list, as listTrackerStatuses gives it, read by anyone who reads the workshop's tickets: the source is its owner's. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.
+ */
+export const listWorkshopTicketStatuses = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketStatusesData, ThrowOnError>
+): RequestResult<
+	ListWorkshopTicketStatusesResponses,
+	ListWorkshopTicketStatusesErrors,
+	ThrowOnError
+> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketStatusesResponses,
+		ListWorkshopTicketStatusesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/ticket-statuses',
+		...options
+	});
+
+/**
+ * The issue types of a workshop's tickets, in order
+ *
+ * Its ticket source's list, as listTrackerTypes gives it, read by anyone who reads the workshop's tickets: the source is its owner's.
+ */
+export const listWorkshopTicketTypes = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketTypesData, ThrowOnError>
+): RequestResult<ListWorkshopTicketTypesResponses, ListWorkshopTicketTypesErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketTypesResponses,
+		ListWorkshopTicketTypesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/ticket-types',
+		...options
 	});
 
 /**
@@ -5398,7 +5638,7 @@ export const getWorkspaceFile = <ThrowOnError extends boolean = false>(
 /**
  * One file anywhere in the workspace, by absolute or ~ path
  *
- * Read as the workspace's remote user; path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
+ * Read as the workspace's remote user, the terminal's reach (run:shell); path in the answer is the expanded, cleaned absolute path. 400 for a relative path or anything but a regular file (a FIFO, device, socket or directory), 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route.
  */
 export const getWorkspacePathFile = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspacePathFileData, ThrowOnError>
@@ -5427,7 +5667,7 @@ export const getWorkspacePathFile = <ThrowOnError extends boolean = false>(
 /**
  * One directory level anywhere in the workspace, by absolute or ~ path
  *
- * Read as the workspace's remote user, the same reach as its terminal: nothing it can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).
+ * Read as the workspace's remote user, the same reach as its terminal, so it takes the terminal's run:shell: nothing that user can read is hidden. Entries carry absolute paths. 400 for a relative path, 403 unreadable, 404 missing, 501 when the workspace's sidecar predates this route (restart or rebuild the workspace).
  */
 export const getWorkspacePathTree = <ThrowOnError extends boolean = false>(
 	options: Options<GetWorkspacePathTreeData, ThrowOnError>
@@ -5481,7 +5721,7 @@ export const getWorkspaceRepos = <ThrowOnError extends boolean = false>(
 /**
  * Where a path mentioned in the run lives: a checkout's file or an absolute one
  *
- * A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
+ * A relative path is tried in the checkout repo names first, then in the run's other checkouts; an absolute (or ~) path inside a checkout maps back to it (repo, path; the primary is repo ""), otherwise it is answered as abs. Outside the checkouts is the terminal's reach: 403 without run:shell, whether or not something is there. 404 when nothing exists, 501 when the workspace's sidecar predates this route.
  */
 export const resolveWorkspacePath = <ThrowOnError extends boolean = false>(
 	options: Options<ResolveWorkspacePathData, ThrowOnError>
@@ -5510,7 +5750,7 @@ export const resolveWorkspacePath = <ThrowOnError extends boolean = false>(
 /**
  * Whether each of a batch of workspace paths exists, with its size and mtime
  *
- * What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.
+ * What the Files pane polls to notice changes: each item is a checkout's (repo, path) or an absolute path (abs), answered in order. A missing path is exists false; one that cannot be looked at carries its own error, never failing the batch — an absolute one without run:shell (the terminal's reach) among them. At most 256 items (400 beyond). mtime is nanoseconds since the epoch as a decimal string. 501 when the workspace's sidecar predates this route.
  */
 export const statWorkspacePaths = <ThrowOnError extends boolean = false>(
 	options: Options<StatWorkspacePathsData, ThrowOnError>
@@ -6137,7 +6377,7 @@ export const createUser = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Change an account: its profile, whether it is an admin, whether it is disabled
+ * Change an account: its profile, its role (admin, member, guest), whether it is disabled
  *
  * Disabling an account signs it out everywhere, revokes its tokens, aborts its active runs and switches its automations off; its history and workspaces stay.
  */

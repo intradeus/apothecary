@@ -26,11 +26,12 @@ type Store interface {
 	RunQuery(ctx context.Context, c Compiled) ([]Row, error)
 	Drill(ctx context.Context, c Compiled) ([]DrillRun, error)
 	Values(ctx context.Context, c Compiled) ([]string, error)
-	// FlowVersionLabels names the user's flow versions "<name> v<n>", n
+	// FlowVersionLabels names the given projects' flow versions "<name> v<n>", n
 	// counting a flow's versions in its project from 1; a hash with no
 	// version row (a built-in flow) is absent.
-	FlowVersionLabels(ctx context.Context, userID string, hashes []string) (map[string]string, error)
-	ProjectNames(ctx context.Context, userID string, ids []string) (map[string]string, error)
+	FlowVersionLabels(ctx context.Context, projects []string, hashes []string) (map[string]string, error)
+	// ProjectNames names the ids among the given projects.
+	ProjectNames(ctx context.Context, projects []string, ids []string) (map[string]string, error)
 	ListDashboards(ctx context.Context, userID string) ([]Dashboard, error)
 	GetDashboard(ctx context.Context, id string) (Dashboard, error)
 	// PutDashboard creates or replaces a dashboard; replacing keeps its
@@ -70,9 +71,9 @@ func (s *Service) now() time.Time {
 // Catalog is every grain and field a query may name.
 func (s *Service) Catalog() Catalog { return catalog() }
 
-// Query answers q over userID's runs: grouped rows, labelled, scored when
-// asked.
-func (s *Service) Query(ctx context.Context, userID string, q Query) (Result, error) {
+// Query answers q over the runs of the given projects (those the caller may
+// see): grouped rows, labelled, scored when asked. userID owns the scorecard.
+func (s *Service) Query(ctx context.Context, userID string, projects []string, q Query) (Result, error) {
 	var sc Scorecard
 	var terms []int
 	if q.Score != nil {
@@ -82,7 +83,7 @@ func (s *Service) Query(ctx context.Context, userID string, q Query) (Result, er
 		}
 		q, terms = withTerms(q, sc)
 	}
-	c, err := Compile(q, userID)
+	c, err := Compile(q, projects)
 	if err != nil {
 		return Result{}, err
 	}
@@ -100,7 +101,7 @@ func (s *Service) Query(ctx context.Context, userID string, q Query) (Result, er
 	for i := range res.Rows {
 		res.Rows[i].Small = res.Rows[i].N < smallN
 	}
-	if res.Labels, err = s.labels(ctx, userID, res.Dims, res.Rows); err != nil {
+	if res.Labels, err = s.labels(ctx, projects, res.Dims, res.Rows); err != nil {
 		return Result{}, err
 	}
 	if q.Score != nil {
@@ -115,7 +116,7 @@ func (s *Service) Query(ctx context.Context, userID string, q Query) (Result, er
 }
 
 // labels names the project and flow-version values among the rows' dims.
-func (s *Service) labels(ctx context.Context, userID string, dims []Field, rows []Row) (map[string]map[string]string, error) {
+func (s *Service) labels(ctx context.Context, projects []string, dims []Field, rows []Row) (map[string]map[string]string, error) {
 	out := map[string]map[string]string{}
 	for i, d := range dims {
 		if d.ID != "project_id" && d.ID != "flow_hash" {
@@ -127,7 +128,7 @@ func (s *Service) labels(ctx context.Context, userID string, dims []Field, rows 
 				vals = append(vals, v)
 			}
 		}
-		m, err := s.labelValues(ctx, userID, d.ID, vals)
+		m, err := s.labelValues(ctx, projects, d.ID, vals)
 		if err != nil {
 			return nil, err
 		}
@@ -136,18 +137,18 @@ func (s *Service) labels(ctx context.Context, userID string, dims []Field, rows 
 	return out, nil
 }
 
-func (s *Service) labelValues(ctx context.Context, userID, dimID string, vals []string) (map[string]string, error) {
+func (s *Service) labelValues(ctx context.Context, projects []string, dimID string, vals []string) (map[string]string, error) {
 	if len(vals) == 0 {
 		return map[string]string{}, nil
 	}
 	if dimID == "project_id" {
-		m, err := s.Store.ProjectNames(ctx, userID, vals)
+		m, err := s.Store.ProjectNames(ctx, projects, vals)
 		if m == nil {
 			m = map[string]string{}
 		}
 		return m, err
 	}
-	m, err := s.Store.FlowVersionLabels(ctx, userID, vals)
+	m, err := s.Store.FlowVersionLabels(ctx, projects, vals)
 	if err != nil {
 		return nil, err
 	}
@@ -164,8 +165,8 @@ func (s *Service) labelValues(ctx context.Context, userID, dimID string, vals []
 
 // Values is a dimension's distinct values (at most 200) over the range,
 // labelled — a filter bar's choices.
-func (s *Service) Values(ctx context.Context, userID string, g Grain, fieldID string, t TimeRange) ([]Value, error) {
-	c, err := compileValues(g, fieldID, t, userID)
+func (s *Service) Values(ctx context.Context, projects []string, g Grain, fieldID string, t TimeRange) ([]Value, error) {
+	c, err := compileValues(g, fieldID, t, projects)
 	if err != nil {
 		return nil, err
 	}
@@ -181,7 +182,7 @@ func (s *Service) Values(ctx context.Context, userID string, g Grain, fieldID st
 				nonEmpty = append(nonEmpty, v)
 			}
 		}
-		if labels, err = s.labelValues(ctx, userID, fieldID, nonEmpty); err != nil {
+		if labels, err = s.labelValues(ctx, projects, fieldID, nonEmpty); err != nil {
 			return nil, err
 		}
 	}
@@ -198,8 +199,8 @@ func (s *Service) Values(ctx context.Context, userID string, g Grain, fieldID st
 
 // Drill lists the runs (at most 200, newest first) behind the rows the
 // filters select — any grain whose rows are one run's.
-func (s *Service) Drill(ctx context.Context, userID string, g Grain, filters []Filter, t TimeRange) ([]DrillRun, error) {
-	c, err := compileDrill(g, filters, t, userID)
+func (s *Service) Drill(ctx context.Context, projects []string, g Grain, filters []Filter, t TimeRange) ([]DrillRun, error) {
+	c, err := compileDrill(g, filters, t, projects)
 	if err != nil {
 		return nil, err
 	}
@@ -321,7 +322,7 @@ func (s *Service) checkDashboard(ctx context.Context, userID string, in *Dashboa
 			}
 			q, _ = withTerms(q, sc)
 		}
-		if _, err := Compile(q, userID); err != nil {
+		if _, err := Compile(q, nil); err != nil {
 			return invalidf("panel %d: %v", i+1, err)
 		}
 	}

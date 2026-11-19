@@ -7,14 +7,21 @@ import { fleet } from '$lib/app/fleet.svelte';
 import type { TicketDetail } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aRun, aTicketDetail } from '$test/fixtures';
+import { aRun, aTicketDetail, aViewerProject } from '$test/fixtures';
 import { aFlow, aWorkshop, confirmed } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import TicketPage from './TicketPage.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		projects: { ticket: vi.fn(), branches: vi.fn(), get: vi.fn(), mergeRequests: vi.fn() },
+		projects: {
+			ticket: vi.fn(),
+			branches: vi.fn(),
+			get: vi.fn(),
+			mergeRequests: vi.fn(),
+			ticketStatuses: vi.fn(),
+			ticketTypes: vi.fn()
+		},
 		tickets: {
 			attachments: vi.fn(),
 			startRun: vi.fn(),
@@ -28,7 +35,7 @@ vi.mock('$lib/api', () => ({
 		runs: { abort: vi.fn() },
 		files: { upload: vi.fn(), attachmentUrl: vi.fn(), limits: vi.fn() },
 		flows: { list: vi.fn(), get: vi.fn(), binding: vi.fn() },
-		integrations: { list: vi.fn(), models: vi.fn(), statuses: vi.fn(), types: vi.fn() },
+		integrations: { list: vi.fn(), models: vi.fn() },
 		skillsets: { list: vi.fn(), versions: vi.fn() }
 	},
 	busyRunOf: (e: unknown) =>
@@ -56,7 +63,7 @@ beforeEach(() => {
 	]);
 	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.tickets.comments).mockResolvedValue([]);
-	vi.mocked(api.integrations.statuses).mockResolvedValue({ statuses: [], readOnly: true });
+	vi.mocked(api.projects.ticketStatuses).mockResolvedValue({ statuses: [], readOnly: true });
 	vi.mocked(api.flows.list).mockResolvedValue([aFlow({ name: 'builder' })]);
 	vi.mocked(api.flows.get).mockResolvedValue(aFlow({ name: 'builder' }));
 	vi.mocked(api.flows.binding).mockResolvedValue({
@@ -69,7 +76,7 @@ beforeEach(() => {
 	vi.mocked(api.projects.get).mockResolvedValue(aWorkshop({ id: 'p1' }));
 	vi.mocked(api.projects.mergeRequests).mockResolvedValue([]);
 	vi.mocked(api.skillsets.list).mockResolvedValue([]);
-	vi.mocked(api.integrations.types).mockResolvedValue([]);
+	vi.mocked(api.projects.ticketTypes).mockResolvedValue([]);
 	vi.mocked(api.files.limits).mockRejectedValue(new Error('no policy'));
 });
 afterEach(() => {
@@ -204,6 +211,25 @@ describe('TicketPage, what may be done to it', () => {
 		await confirmed(true);
 		expect(await screen.findByText('it has an active run')).toBeInTheDocument();
 		expect(goto).not.toHaveBeenCalled();
+	});
+
+	it('without ticket:write or run:operate, edits, deletes, comments and starts nothing', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1', name: 'shop', defaultFlow: 'builder' })];
+		setup(
+			aTicketDetail({
+				internal: true,
+				url: '',
+				labels: ['api'],
+				source: { id: 'o', kind: 'internal', name: 'Apothecary' }
+			})
+		);
+		const edit = await screen.findByRole('button', { name: 'Edit' });
+		expect(edit).toBeDisabled();
+		expect(edit).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+		expect(screen.getByRole('button', { name: /Delete/ })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Remove label api' })).toBeDisabled();
+		expect(screen.queryByRole('button', { name: 'Comment' })).toBeNull();
+		expect(await startBtn()).toBeDisabled();
 	});
 });
 

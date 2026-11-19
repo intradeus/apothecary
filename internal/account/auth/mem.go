@@ -63,7 +63,18 @@ func storable(fields ...string) error {
 // Not EqualFold: that folds ſ onto s, which lower() leaves alone.
 func sameLower(a, b string) bool { return strings.ToLower(a) == strings.ToLower(b) }
 
+// storableRole is the role column's CHECK; empty takes its default.
+func storableRole(r Role) error {
+	if r != "" && !r.Valid() {
+		return fmt.Errorf("role %q violates check constraint", r)
+	}
+	return nil
+}
+
 func userRow(u User) User {
+	if u.Role == "" {
+		u.Role = RoleMember // the column's default
+	}
 	u.DisabledAt, u.LastSeenAt = optional(u.DisabledAt), optional(u.LastSeenAt)
 	u.CreatedAt, u.UpdatedAt = instant(u.CreatedAt), instant(u.UpdatedAt)
 	return u
@@ -112,6 +123,7 @@ func tokenRow(t Token) Token {
 	t.CreatedAt = instant(t.CreatedAt)
 	t.LastUsedAt, t.ExpiresAt = optional(t.LastUsedAt), optional(t.ExpiresAt)
 	t.IdleSeconds = max(t.IdleSeconds, 0) // Postgres keeps no window as NULL
+	t.Actions, t.ProjectIDs = slices.Clone(t.Actions), slices.Clone(t.ProjectIDs)
 	return t
 }
 
@@ -173,6 +185,9 @@ func (m *Mem) CreateUser(_ context.Context, u User) error {
 	if err := storable(u.ID, u.Handle, u.Email, u.Name); err != nil {
 		return err
 	}
+	if err := storableRole(u.Role); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, dup := m.users[u.ID]; dup {
@@ -185,24 +200,61 @@ func (m *Mem) CreateUser(_ context.Context, u User) error {
 	return nil
 }
 
-// UpdateUser writes the profile: created_at and last_seen_at are not an
-// update's to change, so a row read before a touch cannot lose it.
-func (m *Mem) UpdateUser(_ context.Context, u User) error {
-	if err := storable(u.ID, u.Handle, u.Email, u.Name); err != nil {
-		return err
+func (m *Mem) UpdateUserProfile(_ context.Context, id string, p Profile, at time.Time) (User, error) {
+	if err := storable(id, p.Handle, p.Email, p.Name); err != nil {
+		return User{}, err
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	old, ok := m.users[u.ID]
+	u, ok := m.users[id]
 	if !ok {
-		return fmt.Errorf("user %s: %w", u.ID, ErrNotFound)
+		return User{}, fmt.Errorf("user %s: %w", id, ErrNotFound)
 	}
+	u.Handle, u.Email, u.Name, u.UpdatedAt = p.Handle, p.Email, p.Name, at
 	if err := m.conflicts(u); err != nil {
-		return err
+		return User{}, err
 	}
-	u.CreatedAt, u.LastSeenAt = old.CreatedAt, old.LastSeenAt
-	m.users[u.ID] = userRow(u)
-	return nil
+	m.users[id] = userRow(u)
+	return userRow(u), nil
+}
+
+// SetUserRole has no default to fall back on: an empty role is the CHECK's.
+func (m *Mem) SetUserRole(_ context.Context, id string, role Role, at time.Time) (User, error) {
+	if !role.Valid() {
+		return User{}, fmt.Errorf("role %q violates check constraint", role)
+	}
+	return m.adminChange(id, role == RoleAdmin, func(u *User) { u.Role, u.UpdatedAt = role, at })
+}
+
+func (m *Mem) SetUserDisabled(_ context.Context, id string, disabledAt *time.Time, at time.Time) (User, error) {
+	return m.adminChange(id, disabledAt == nil, func(u *User) { u.DisabledAt, u.UpdatedAt = optional(disabledAt), at })
+}
+
+// adminChange applies a change to one user under the lock that the
+// last-admin check holds too; keepsAdmin is a change that cannot take an
+// enabled admin away.
+func (m *Mem) adminChange(id string, keepsAdmin bool, change func(*User)) (User, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	u, ok := m.users[id]
+	if !ok {
+		return User{}, fmt.Errorf("user %s: %w", id, ErrNotFound)
+	}
+	if !keepsAdmin && u.Role == RoleAdmin && !u.Disabled() && !m.otherAdmin(id) {
+		return User{}, ErrLastAdmin
+	}
+	change(&u)
+	m.users[id] = userRow(u)
+	return userRow(u), nil
+}
+
+func (m *Mem) otherAdmin(id string) bool {
+	for _, o := range m.users {
+		if o.ID != id && o.Role == RoleAdmin && !o.Disabled() {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *Mem) GetUser(_ context.Context, id string) (User, error) {
@@ -401,7 +453,7 @@ func (m *Mem) DeleteSessionsOf(_ context.Context, userID string) error {
 // --- tokens -------------------------------------------------------------------
 
 func (m *Mem) CreateToken(_ context.Context, t Token) error {
-	if err := storable(t.ID, t.UserID, t.Name, t.Hash, t.Prefix); err != nil {
+	if err := storable(append([]string{t.ID, t.UserID, t.Name, t.Hash, t.Prefix}, append(t.Actions, t.ProjectIDs...)...)...); err != nil {
 		return err
 	}
 	m.mu.Lock()

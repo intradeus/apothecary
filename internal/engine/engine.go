@@ -50,10 +50,12 @@ import (
 )
 
 // SkillStore is the skill library as the engine sees it (TODO 38): turn a
-// request's skillset refs into pins at run creation, and pins into the
-// trees bootstrap lays down. Implemented by skillstore.Store.
+// request's skillset refs into pins at run creation, carry a run's pins over
+// to its rerun, and turn pins into the trees bootstrap lays down.
+// Implemented by skillstore.Store.
 type SkillStore interface {
 	ResolveSkillsets(ctx context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error)
+	RepinSkillsets(ctx context.Context, userID string, pins []event.SkillsetPin) ([]event.SkillsetPin, error)
 	SkillTrees(ctx context.Context, pins []event.SkillsetPin) ([]skills.Tree, error)
 }
 
@@ -697,15 +699,15 @@ type SnapshotStore interface {
 // scans (pgstore's SQL view is the real implementation).
 type PingLookup interface {
 	GetPing(ctx context.Context, id string) (run.PingView, error)
-	// ListPings is one user's pings ("" = everyone's: the engine's own passes).
-	ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error)
+	// ListPings is the pings of the runs seen sees (nil = everyone's: the engine's own passes).
+	ListPings(ctx context.Context, seen *run.Seen, status string, limit int) ([]run.PingView, error)
 }
 
 // pingViews lists projected pings of a status, from the index when one is
 // wired and by folding the log when not.
 func (e *Engine) pingViews(ctx context.Context, status string) []run.PingView {
 	if e.pingIndex != nil {
-		vs, err := e.pingIndex.ListPings(ctx, "", status, 500)
+		vs, err := e.pingIndex.ListPings(ctx, nil, status, 500)
 		if err != nil {
 			e.log.Warn("ping projection list failed", "err", err)
 			return nil
@@ -746,7 +748,7 @@ func (e *Engine) pingView(ctx context.Context, id string) (run.PingView, bool) {
 	return run.PingView{}, false
 }
 
-// resolveSkillsets pins a request's skillsets: the owner's only, at the
+// resolveSkillsets pins a request's skillsets: the starter's only, at the
 // head version unless one is named.
 func (e *Engine) resolveSkillsets(ctx context.Context, userID string, refs []skills.Ref) ([]event.SkillsetPin, error) {
 	if len(refs) == 0 {
@@ -756,6 +758,18 @@ func (e *Engine) resolveSkillsets(ctx context.Context, userID string, refs []ski
 		return nil, errors.New("skills are not available on this server")
 	}
 	return e.skillLib.ResolveSkillsets(ctx, userID, refs)
+}
+
+// repinSkillsets carries a run's pins over to its rerun by userID: theirs
+// at their head, anyone else's exactly as the run installed them.
+func (e *Engine) repinSkillsets(ctx context.Context, userID string, pins []event.SkillsetPin) ([]event.SkillsetPin, error) {
+	if len(pins) == 0 {
+		return nil, nil
+	}
+	if e.skillLib == nil {
+		return nil, errors.New("skills are not available on this server")
+	}
+	return e.skillLib.RepinSkillsets(ctx, userID, pins)
 }
 
 // skillTrees is what bootstrap installs for a run's pins. A server with no
@@ -824,7 +838,16 @@ func (e *Engine) CreateRun(ctx context.Context, t runinput.Ticket, flowName, pro
 // this workshop) — in the engine rather than in each caller, because every
 // start path (API, automations, reruns, merge requests) builds t from the
 // record before calling; a read that fails never refuses the run.
+//
+// in.Skillsets are in.Starter's (the workshop owner's when no one is
+// named): a set of anyone else's is "not found", whoever owns the workshop.
 func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input) (string, error) {
+	return e.createRun(ctx, t, flowName, projectID, in, nil)
+}
+
+// createRun is CreateRunWith plus pins a rerun carried over (repinSkillsets),
+// installed as they are next to in.Skillsets.
+func (e *Engine) createRun(ctx context.Context, t runinput.Ticket, flowName, projectID string, in runinput.Input, carried []event.SkillsetPin) (string, error) {
 	if strings.TrimSpace(t.Title) == "" {
 		return "", errors.New("ticket title is required")
 	}
@@ -880,10 +903,11 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	if err := e.preflightTicket(ctx, res, fl, t); err != nil {
 		return "", err
 	}
-	pins, err := e.resolveSkillsets(ctx, res.UserID, in.Skillsets)
+	pins, err := e.resolveSkillsets(ctx, cmp.Or(in.Starter, res.UserID), in.Skillsets)
 	if err != nil {
 		return "", fmt.Errorf("preflight: skillsets: %w", err)
 	}
+	pins = append(pins, carried...)
 	e.warmBrowser(res, fl)
 	by := in.By
 	if by == "" {
@@ -961,8 +985,9 @@ func (e *Engine) CreateRunWith(ctx context.Context, t runinput.Ticket, flowName,
 	}); err != nil {
 		return "", err
 	}
+	// The files are the starter's uploads, whoever owns the run.
 	if e.attachments != nil && len(t.AttachmentIDs) > 0 {
-		if err := e.attachments.ClaimForRun(ctx, res.UserID, t.AttachmentIDs, runID, ""); err != nil {
+		if err := e.attachments.ClaimForRun(ctx, in.Starter, t.AttachmentIDs, runID, ""); err != nil {
 			e.log.Warn("claim goal attachments", logs.RunID, runID, "err", err)
 		}
 	}
@@ -1143,17 +1168,20 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 	// The attempt runs with the original's parameter values — unless the
 	// flow changed, or the request says otherwise. Values the flow no
 	// longer declares drop.
-	next := runinput.Input{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets}
+	next := runinput.Input{Params: map[string]string{}, By: in.By, MR: in.MR, Skillsets: in.Skillsets, Starter: in.Starter}
 	// A run started on someone's merge request is rerun on it.
 	if next.MR == nil && v.Adopted != nil {
 		next.MR = &runinput.MR{Repo: v.Adopted.Repo, IID: v.Adopted.IID}
 	}
-	// The original's skillsets carry over, re-pinned to their latest
-	// version (as the flow is re-read by name) — unless the request says
-	// which (an empty list clears them).
+	// The original's skillsets carry over unless the request says which (an
+	// empty list clears them): the starter's re-pinned to their latest
+	// version (as the flow is re-read by name), anyone else's at the version
+	// the original installed — a rerun never reaches a version of a set its
+	// starter could not name.
+	var carried []event.SkillsetPin
 	if next.Skillsets == nil {
-		for _, p := range v.Skillsets {
-			next.Skillsets = append(next.Skillsets, skills.Ref{ID: p.ID})
+		if carried, err = e.repinSkillsets(ctx, cmp.Or(in.Starter, v.UserID), v.Skillsets); err != nil {
+			return "", fmt.Errorf("preflight: skillsets: %w", err)
 		}
 	}
 	if in.Flow == "" || in.Flow == v.FlowName {
@@ -1172,7 +1200,7 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 			return "", err
 		}
 		t.SourceBranch, t.RunGoal, t.AttachmentIDs = sourceBranch, in.Goal, in.AttachmentIDs
-		return e.CreateRunWith(ctx, t, flowName, v.ProjectID, next)
+		return e.createRun(ctx, t, flowName, v.ProjectID, next, carried)
 	}
 	// A branch the engine named after the run (its base plus the run's
 	// tail; before, the run's whole id) is named again for the new run. One
@@ -1182,11 +1210,11 @@ func (e *Engine) Rerun(ctx context.Context, runID string, in runinput.Input) (st
 		(v.BranchBase != "" && branch == v.BranchBase+"-"+wsname.RunIDTail(runID)) {
 		branch = ""
 	}
-	return e.CreateRunWith(ctx, runinput.Ticket{
+	return e.createRun(ctx, runinput.Ticket{
 		Title: v.TicketTitle, Goal: v.TicketGoal, Branch: branch,
 		SourceBranch: sourceBranch,
 		RunGoal:      in.Goal, AttachmentIDs: in.AttachmentIDs,
-	}, flowName, v.ProjectID, next)
+	}, flowName, v.ProjectID, next, carried)
 }
 
 // RetryRun re-enters the stage where an abandoned/failed run stalled,

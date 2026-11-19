@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"apothecary/internal/account/auth"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/flow/agentspec"
 	"apothecary/internal/flow/reviewfile"
 	"apothecary/internal/platform/filestore"
@@ -441,23 +442,23 @@ func (s *Server) fileRoutes() []Route {
 		{Method: "POST", Path: "/api/attachments", ID: "uploadAttachments", Tag: tagFiles,
 			Summary: "Upload files to attach to a ticket, a goal or an answer",
 			Handler: s.postAttachments, Returns: Uploaded{}, Status: http.StatusCreated,
-			Accepts: "multipart/form-data"},
+			Accepts: "multipart/form-data", Action: authz.RunOperate},
 		{Method: "GET", Path: "/api/attachments/limits", ID: "getAttachmentLimits", Tag: tagFiles,
 			Summary: "Upload policy: size cap and accepted types",
-			Handler: s.getAttachmentLimits, Returns: filestore.UploadLimits{}},
+			Handler: s.getAttachmentLimits, Returns: filestore.UploadLimits{}, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/attachments/{id}", ID: "downloadAttachment", Tag: tagFiles,
 			Summary: "Download one uploaded file",
-			Handler: s.getAttachment, Produces: "application/octet-stream", Scope: ScopeAttachment},
+			Handler: s.getAttachment, Produces: "application/octet-stream", Scope: ScopeAttachment, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/snapshots/{id}", ID: "downloadSnapshot", Tag: tagFiles,
 			Summary: "Download one engine-captured record",
-			Handler: s.getSnapshot, Produces: "application/octet-stream", Scope: ScopeSnapshot},
+			Handler: s.getSnapshot, Produces: "application/octet-stream", Scope: ScopeSnapshot, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/files", ID: "getRunFiles", Tag: tagFiles,
 			Summary: "Everything filed under a run: human uploads and engine captures",
-			Handler: s.getRunFiles, Returns: RunFiles{}, Scope: ScopeRun},
+			Handler: s.getRunFiles, Returns: RunFiles{}, Scope: ScopeRun, Action: authz.RunRead},
 		{Method: "GET", Path: "/api/runs/{id}/files.zip", ID: "downloadRunFiles", Tag: tagFiles,
 			Summary: "Everything on a run's Record, in one zip",
 			Doc: "outputs/<stage>-<attempt>/, logs/<stage>-<attempt>/ and attachments/. A file whose content is no longer stored is " +
 				"left out and named in MISSING.txt.",
-			Handler: s.getRunFilesZip, Produces: "application/zip", Scope: ScopeRun},
+			Handler: s.getRunFilesZip, Produces: "application/zip", Scope: ScopeRun, Action: authz.RunRead},
 	}
 }

@@ -38,7 +38,7 @@ func readPtr(at *time.Time) *time.Time {
 func ptr(at time.Time) *time.Time { return &at }
 
 func user(id, handle, email string) auth.User {
-	return auth.User{ID: id, Handle: handle, Email: email, Name: "N " + id, CreatedAt: t0, UpdatedAt: t0}
+	return auth.User{ID: id, Handle: handle, Email: email, Name: "N " + id, Role: auth.RoleMember, CreatedAt: t0, UpdatedAt: t0}
 }
 
 func session(id, owner string) auth.Session {
@@ -122,7 +122,7 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		}
 		plain := user("u1", "alice", "a@x")
 		full := user("u2", "Bob", "Bob@X")
-		full.Admin = true
+		full.Role = auth.RoleAdmin
 		full.DisabledAt, full.LastSeenAt = ptr(t0.Add(time.Hour)), ptr(t0.Add(2*time.Hour))
 		full.UpdatedAt = t0.Add(3 * time.Hour)
 		for _, u := range []auth.User{plain, full} {
@@ -295,21 +295,21 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 			t.Errorf("a duplicate id overwrote the row: %+v", got)
 		}
 
-		bob, _ := db.GetUser(ctx, "u2")
-		bob.Handle = "ALICE"
-		if err := db.UpdateUser(ctx, bob); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "handle") {
+		profile := func(handle, email string) error {
+			_, err := db.UpdateUserProfile(ctx, "u2", auth.Profile{Handle: handle, Email: email, Name: "N u2"}, t0)
+			return err
+		}
+		if err := profile("ALICE", "b@x"); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "handle") {
 			t.Errorf("update onto a taken handle = %v", err)
 		}
-		bob.Handle, bob.Email = "bob", "A@x"
-		if err := db.UpdateUser(ctx, bob); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "email") {
+		if err := profile("bob", "A@x"); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "email") {
 			t.Errorf("update onto a taken email = %v", err)
 		}
 		if got, _ := db.GetUser(ctx, "u2"); got.Handle != "bob" || got.Email != "b@x" {
 			t.Errorf("a refused update wrote: %+v", got)
 		}
 		// Your own row is no conflict, and the case you gave is the case kept.
-		bob.Handle, bob.Email = "BOB", "B@X"
-		if err := db.UpdateUser(ctx, bob); err != nil {
+		if err := profile("BOB", "B@X"); err != nil {
 			t.Errorf("re-casing your own = %v", err)
 		}
 		if got, _ := db.GetUser(ctx, "u2"); got.Handle != "BOB" || got.Email != "B@X" {
@@ -357,31 +357,40 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		}
 	})
 
-	t.Run("update writes the profile, not the record", func(t *testing.T) {
+	t.Run("each user write writes its own columns", func(t *testing.T) {
 		db := open(t)
-		u := user("u1", "alice", "a@x")
-		if err := db.CreateUser(ctx, u); err != nil {
+		if err := db.CreateUser(ctx, user("u1", "alice", "a@x")); err != nil {
 			t.Fatal(err)
 		}
 		if err := db.TouchUser(ctx, "u1", t0.Add(time.Minute)); err != nil {
 			t.Fatal(err)
 		}
-		// A row read before the touch and written after must not lose it, nor
-		// can an update move created_at.
-		stale := u
-		stale.Handle, stale.Email, stale.Name, stale.Admin = "al", "al@x", "Al", true
-		stale.DisabledAt, stale.UpdatedAt = ptr(t0.Add(time.Hour)), t0.Add(2*time.Hour)
-		stale.CreatedAt, stale.LastSeenAt = t0.Add(99*time.Hour), ptr(t0.Add(99*time.Hour))
-		if err := db.UpdateUser(ctx, stale); err != nil {
+		// A role change and a disable, then a profile write: it leaves both,
+		// and last_seen_at and created_at, as they are.
+		if _, err := db.SetUserRole(ctx, "u1", auth.RoleGuest, t0.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
-		want := auth.User{ID: "u1", Handle: "al", Email: "al@x", Name: "Al", Admin: true,
+		if _, err := db.SetUserDisabled(ctx, "u1", ptr(t0.Add(time.Hour)), t0.Add(time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+		got, err := db.UpdateUserProfile(ctx, "u1", auth.Profile{Handle: "al", Email: "al@x", Name: "Al"}, t0.Add(2*time.Hour))
+		want := auth.User{ID: "u1", Handle: "al", Email: "al@x", Name: "Al", Role: auth.RoleGuest,
 			DisabledAt: readPtr(ptr(t0.Add(time.Hour))), LastSeenAt: readPtr(ptr(t0.Add(time.Minute))),
 			CreatedAt: asRead(t0), UpdatedAt: asRead(t0.Add(2 * time.Hour))}
-		if got, err := db.GetUser(ctx, "u1"); err != nil || !reflect.DeepEqual(got, want) {
-			t.Errorf("after update = %+v, %v, want %+v", got, err, want)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("profile write returned %+v, %v, want %+v", got, err, want)
 		}
-		if err := db.UpdateUser(ctx, user("nobody", "x", "y")); !errors.Is(err, auth.ErrNotFound) {
+		if got, err := db.GetUser(ctx, "u1"); err != nil || !reflect.DeepEqual(got, want) {
+			t.Errorf("after the writes = %+v, %v, want %+v", got, err, want)
+		}
+		// The role and disable writes leave the profile likewise.
+		if got, err := db.SetUserRole(ctx, "u1", auth.RoleMember, t0.Add(3*time.Hour)); err != nil || got.Handle != "al" || !got.Disabled() {
+			t.Errorf("role write = %+v, %v", got, err)
+		}
+		if got, err := db.SetUserDisabled(ctx, "u1", nil, t0.Add(3*time.Hour)); err != nil || got.Handle != "al" || got.Role != auth.RoleMember {
+			t.Errorf("enable write = %+v, %v", got, err)
+		}
+		if _, err := db.UpdateUserProfile(ctx, "nobody", auth.Profile{Handle: "x", Email: "y"}, t0); !errors.Is(err, auth.ErrNotFound) {
 			t.Errorf("update of nobody = %v", err)
 		}
 		if n, _ := db.CountUsers(ctx); n != 1 {
@@ -421,9 +430,7 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		if err := db.CreateSSHKey(ctx, sshKey("k1", "u1", "SHA256:one")); err != nil {
 			t.Fatal(err)
 		}
-		u, _ := db.GetUser(ctx, "u1")
-		u.DisabledAt = ptr(t0.Add(time.Hour))
-		if err := db.UpdateUser(ctx, u); err != nil {
+		if _, err := db.SetUserDisabled(ctx, "u1", ptr(t0.Add(time.Hour)), t0.Add(time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		if got, err := db.GetUser(ctx, "u1"); err != nil || !got.Disabled() {
@@ -449,8 +456,7 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 			t.Errorf("key = %v", err)
 		}
 		// Enabling is writing nil back.
-		u.DisabledAt = nil
-		if err := db.UpdateUser(ctx, u); err != nil {
+		if _, err := db.SetUserDisabled(ctx, "u1", nil, t0.Add(2*time.Hour)); err != nil {
 			t.Fatal(err)
 		}
 		if got, _ := db.GetUser(ctx, "u1"); got.Disabled() || got.DisabledAt != nil {
@@ -796,6 +802,168 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 		}
 	})
 
+	// The role is one of three: no role is a member (the column's default),
+	// anything else is refused on insert and on update alike.
+	t.Run("a role is one of three", func(t *testing.T) {
+		db := open(t)
+		none := user("u1", "alice", "a@x")
+		none.Role = ""
+		if err := db.CreateUser(ctx, none); err != nil {
+			t.Fatal(err)
+		}
+		if got, err := db.GetUser(ctx, "u1"); err != nil || got.Role != auth.RoleMember {
+			t.Errorf("no role reads back as %q, %v", got.Role, err)
+		}
+		bad := user("u2", "bob", "b@x")
+		bad.Role = "root"
+		if err := db.CreateUser(ctx, bad); err == nil {
+			t.Error("a user with role root was stored")
+		}
+		if n, _ := db.CountUsers(ctx); n != 1 {
+			t.Errorf("count after a refused insert = %d", n)
+		}
+		if _, err := db.SetUserRole(ctx, "u1", "owner", t0); err == nil {
+			t.Error("an update to role owner was stored")
+		}
+		if _, err := db.SetUserRole(ctx, "u1", "", t0); err == nil {
+			t.Error("an update to no role was stored")
+		}
+		// Another admin, so u1 may leave admin again.
+		other := user("u3", "carol", "c@x")
+		other.Role = auth.RoleAdmin
+		if err := db.CreateUser(ctx, other); err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range auth.Roles {
+			if got, err := db.SetUserRole(ctx, "u1", r, t0); err != nil || got.Role != r {
+				t.Fatalf("set role %s = %+v, %v", r, got, err)
+			}
+			if got, _ := db.GetUser(ctx, "u1"); got.Role != r {
+				t.Errorf("role %s reads back as %q", r, got.Role)
+			}
+		}
+		if _, err := db.SetUserRole(ctx, "nobody", auth.RoleMember, t0); !errors.Is(err, auth.ErrNotFound) {
+			t.Errorf("role of nobody = %v", err)
+		}
+	})
+
+	// Admin is taken away only while another enabled admin stays, and the
+	// check is the write's: of two demotions at once exactly one passes.
+	t.Run("the last enabled admin stays", func(t *testing.T) {
+		db := open(t)
+		for _, id := range []string{"a1", "a2"} {
+			u := user(id, id, id+"@x")
+			u.Role = auth.RoleAdmin
+			if err := db.CreateUser(ctx, u); err != nil {
+				t.Fatal(err)
+			}
+		}
+		off := user("off", "off", "off@x")
+		off.Role, off.DisabledAt = auth.RoleAdmin, ptr(t0)
+		if err := db.CreateUser(ctx, off); err != nil {
+			t.Fatal(err)
+		}
+		for round := range 20 {
+			start := make(chan struct{})
+			errs := make(chan error, 2)
+			for _, id := range []string{"a1", "a2"} {
+				go func() {
+					<-start
+					_, err := db.SetUserRole(ctx, id, auth.RoleMember, t0)
+					errs <- err
+				}()
+			}
+			close(start)
+			var refused int
+			for range 2 {
+				switch err := <-errs; {
+				case errors.Is(err, auth.ErrLastAdmin):
+					refused++
+				case err != nil:
+					t.Fatal(err)
+				}
+			}
+			if refused != 1 {
+				t.Fatalf("round %d: %d of two simultaneous demotions refused, want 1", round, refused)
+			}
+			var admins []string
+			list, _ := db.ListUsers(ctx)
+			for _, u := range list {
+				if u.Role == auth.RoleAdmin && !u.Disabled() {
+					admins = append(admins, u.ID)
+				}
+			}
+			if len(admins) != 1 {
+				t.Fatalf("round %d: enabled admins %v", round, admins)
+			}
+			// Back to two for the next round.
+			for _, id := range []string{"a1", "a2"} {
+				if _, err := db.SetUserRole(ctx, id, auth.RoleAdmin, t0); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		// Disabling counts like demoting; a disabled admin is no admin.
+		if _, err := db.SetUserDisabled(ctx, "a1", ptr(t0), t0); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.SetUserDisabled(ctx, "a2", ptr(t0), t0); !errors.Is(err, auth.ErrLastAdmin) {
+			t.Errorf("disabling the last enabled admin = %v", err)
+		}
+		if _, err := db.SetUserRole(ctx, "a2", auth.RoleGuest, t0); !errors.Is(err, auth.ErrLastAdmin) {
+			t.Errorf("demoting the last enabled admin = %v", err)
+		}
+		if got, _ := db.GetUser(ctx, "a2"); got.Role != auth.RoleAdmin || got.Disabled() {
+			t.Errorf("a refused change wrote: %+v", got)
+		}
+		// Who is no enabled admin changes freely.
+		if _, err := db.SetUserRole(ctx, "off", auth.RoleMember, t0); err != nil {
+			t.Errorf("demoting a disabled admin = %v", err)
+		}
+		if _, err := db.SetUserDisabled(ctx, "a1", nil, t0); err != nil {
+			t.Errorf("enabling = %v", err)
+		}
+		if _, err := db.SetUserDisabled(ctx, "nobody", ptr(t0), t0); !errors.Is(err, auth.ErrNotFound) {
+			t.Errorf("disable nobody = %v", err)
+		}
+	})
+
+	// A token's grant: no action list is a full token, an empty one is kept
+	// apart from it (the service never writes one, the column can hold
+	// one), and what was stored is not the caller's slice.
+	t.Run("a token's grant round-trips, nil apart from empty", func(t *testing.T) {
+		db := open(t)
+		seedUsers(t, db)
+		full := token("t1", "u1", "h1")
+		empty := token("t2", "u1", "h2")
+		empty.Actions, empty.ProjectIDs = []string{}, []string{}
+		scoped := token("t3", "u1", "h3")
+		scoped.Actions, scoped.ProjectIDs = []string{"run:read", "ticket:read"}, []string{"p1", "p2"}
+		for _, k := range []auth.Token{full, empty, scoped} {
+			if err := db.CreateToken(ctx, k); err != nil {
+				t.Fatal(err)
+			}
+		}
+		scoped.Actions[0], scoped.ProjectIDs[0] = "instance:admin", "p9"
+		got, err := db.GetTokenByHash(ctx, "h1")
+		if err != nil || got.Actions != nil || got.ProjectIDs != nil {
+			t.Errorf("full token = %#v %#v, %v", got.Actions, got.ProjectIDs, err)
+		}
+		got, err = db.GetTokenByHash(ctx, "h2")
+		if err != nil || got.Actions == nil || len(got.Actions) != 0 || got.ProjectIDs == nil || len(got.ProjectIDs) != 0 {
+			t.Errorf("empty grant = %#v %#v, %v", got.Actions, got.ProjectIDs, err)
+		}
+		got, err = db.GetTokenByHash(ctx, "h3")
+		if err != nil || !reflect.DeepEqual(got.Actions, []string{"run:read", "ticket:read"}) || !reflect.DeepEqual(got.ProjectIDs, []string{"p1", "p2"}) {
+			t.Errorf("scoped grant = %#v %#v, %v", got.Actions, got.ProjectIDs, err)
+		}
+		got.Actions[0] = "changed"
+		list, err := db.ListTokens(ctx, "u1")
+		if err != nil || len(list) != 3 || list[2].Actions[0] != "run:read" || list[2].ProjectIDs[0] != "p1" {
+			t.Errorf("list after mutating reads = %+v, %v", list, err)
+		}
+	})
+
 	// Expiry is a column to the port and a rule to the service: the row reads
 	// back past its date, so the service can delete it and answer 401.
 	t.Run("expiry is the caller's", func(t *testing.T) {
@@ -893,9 +1061,7 @@ func RunContract(t *testing.T, open func(t *testing.T) auth.DB) {
 			if err := db.CreateUser(ctx, u); !refused(err) {
 				t.Errorf("user name %q = %v", bad, err)
 			}
-			me, _ := db.GetUser(ctx, "u1")
-			me.Name = bad
-			if err := db.UpdateUser(ctx, me); !refused(err) {
+			if _, err := db.UpdateUserProfile(ctx, "u1", auth.Profile{Handle: "alice", Email: "a@x", Name: bad}, t0); !refused(err) {
 				t.Errorf("updated name %q = %v", bad, err)
 			}
 			if err := db.PutMethod(ctx, oauth("m1", "u1", bad)); !refused(err) {

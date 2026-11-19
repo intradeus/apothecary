@@ -3,6 +3,7 @@
 	// runs. The bead slides between workshops, which stay direct children of
 	// the list; a run under one is marked on its own.
 	import { fleet } from '$lib/app/fleet.svelte';
+	import { session } from '$lib/app/session.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
 	import { shortId, stateLabel } from '$lib/core/format';
@@ -27,7 +28,9 @@
 
 <div class="wh">
 	<span class="whl">{t('shell.sidebar.workshops')}</span>
-	<a class="plus" href={to.newWorkshop()} title={t('shell.sidebar.newWorkshop')}>{I.add}</a>
+	{#if !session.guest}<a class="plus" href={to.newWorkshop()} title={t('shell.sidebar.newWorkshop')}
+			>{I.add}</a
+		>{/if}
 </div>
 <div class="wl on-rail" use:indicator={{ selector: '.wi.on' }}>
 	{#each workshops as p (p.id)}
@@ -62,9 +65,11 @@
 			{/each}
 		{/if}
 	{:else}
-		<a class="wi quiet" href={to.newWorkshop()}
-			><span class="grow">{t('shell.sidebar.firstWorkshop', { arrow: I.forward })}</span></a
-		>
+		{#if !session.guest}
+			<a class="wi quiet" href={to.newWorkshop()}
+				><span class="grow">{t('shell.sidebar.firstWorkshop', { arrow: I.forward })}</span></a
+			>
+		{/if}
 	{/each}
 </div>
 

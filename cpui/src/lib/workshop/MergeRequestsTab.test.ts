@@ -6,6 +6,7 @@ import { api } from '$lib/api';
 import type { Flow, MergeRequestRow } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { aFlow, aWorkshop } from '$test/fixtures/app.svelte';
+import { aViewerProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import MergeRequestsTab from './MergeRequestsTab.svelte';
 
@@ -49,6 +50,14 @@ afterEach(() => {
 });
 
 describe('MergeRequestsTab, listing', () => {
+	it('holds Start a run where the role may not start one (run:operate)', async () => {
+		vi.mocked(api.projects.mergeRequests).mockResolvedValue([row()]);
+		render(MergeRequestsTab, { project: aViewerProject({ id: 'p1' }), flows: [reviewer] });
+		const btn = await start();
+		expect(btn).toBeDisabled();
+		expect(btn).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
+
 	it('shows a skeleton first', () => {
 		vi.mocked(api.projects.mergeRequests).mockReturnValue(new Promise(() => {}));
 		render(MergeRequestsTab, { project, flows: [reviewer] });

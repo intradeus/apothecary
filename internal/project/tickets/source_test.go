@@ -79,7 +79,7 @@ func TestClaimFailureDoesNotFailTheWrite(t *testing.T) {
 	var logged bytes.Buffer
 	w.f.Log = slog.New(slog.NewTextHandler(&logged, nil))
 	w.f.Attachments = filestore.NewAttachments(failingClaims{filestore.NewMem()}, filestore.NewBlobs(t.TempDir()), 1<<20, []string{"text/*"})
-	got, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, []string{"att-1"})
+	got, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, owner, []string{"att-1"})
 	if err != nil || got.ID == "" {
 		t.Fatalf("create = %+v, %v", got, err)
 	}
@@ -91,11 +91,11 @@ func TestClaimFailureDoesNotFailTheWrite(t *testing.T) {
 func TestUpdateAndDeleteFailures(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t, devSource())
-	if _, err := w.f.Update(ctx, "missing", confstore.Ticket{Title: "T"}, nil); !errors.Is(err, confstore.ErrNotFound) {
+	if _, err := w.f.Update(ctx, "missing", confstore.Ticket{Title: "T"}, owner, nil); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("update = %v", err)
 	}
 	w.f.Attachments = filestore.NewAttachments(failingClaims{filestore.NewMem()}, filestore.NewBlobs(t.TempDir()), 1<<20, nil)
-	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, nil)
+	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, owner, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +113,7 @@ func TestUpdateAndDeleteFailures(t *testing.T) {
 
 func TestCreateFailure(t *testing.T) {
 	w := newWorld(t, devSource())
-	if _, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Goal: "g"}, nil); !errors.Is(err, confstore.ErrInvalid) {
+	if _, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Goal: "g"}, owner, nil); !errors.Is(err, confstore.ErrInvalid) {
 		t.Errorf("a ticket with no title is refused: %v", err)
 	}
 }

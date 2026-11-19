@@ -32,7 +32,7 @@ func TestUsersRoundtripAndLookups(t *testing.T) {
 		t.Fatalf("empty count = %d, %v", n, err)
 	}
 	a := mkUser("u1", "Alice", "Alice@Example.com")
-	a.Admin = true
+	a.Role = auth.RoleAdmin
 	b := mkUser("u2", "bob", "bob@example.com")
 	b.CreatedAt = testNow.Add(time.Minute)
 	seedUsers(t, s, b, a)
@@ -41,7 +41,7 @@ func TestUsersRoundtripAndLookups(t *testing.T) {
 		t.Errorf("count = %d", n)
 	}
 	got, err := s.GetUser(ctx, "u1")
-	if err != nil || got.Handle != "Alice" || !got.Admin || got.DisabledAt != nil || got.LastSeenAt != nil || !got.CreatedAt.Equal(testNow) {
+	if err != nil || got.Handle != "Alice" || got.Role != auth.RoleAdmin || got.DisabledAt != nil || got.LastSeenAt != nil || !got.CreatedAt.Equal(testNow) {
 		t.Fatalf("GetUser = %+v, %v", got, err)
 	}
 	if _, err := s.GetUser(ctx, "nope"); !errors.Is(err, auth.ErrNotFound) {
@@ -76,14 +76,11 @@ func TestUserConflictsNameTheField(t *testing.T) {
 	if !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "email") {
 		t.Errorf("duplicate email = %v", err)
 	}
-	// The same refusals on the update path.
-	bob, _ := s.GetUser(ctx, "u2")
-	bob.Handle = "alice"
-	if err := s.UpdateUser(ctx, bob); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "handle") {
+	// The same refusals on the profile write.
+	if _, err := s.UpdateUserProfile(ctx, "u2", auth.Profile{Handle: "alice", Email: "b@x"}, testNow); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "handle") {
 		t.Errorf("update onto a taken handle = %v", err)
 	}
-	bob.Handle, bob.Email = "bob", "a@x"
-	if err := s.UpdateUser(ctx, bob); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "email") {
+	if _, err := s.UpdateUserProfile(ctx, "u2", auth.Profile{Handle: "bob", Email: "a@x"}, testNow); !errors.Is(err, auth.ErrConflict) || !strings.Contains(err.Error(), "email") {
 		t.Errorf("update onto a taken email = %v", err)
 	}
 	// A refused write changed nothing.
@@ -95,25 +92,31 @@ func TestUserConflictsNameTheField(t *testing.T) {
 func TestUpdateUserAndTouch(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	u := mkUser("u1", "alice", "a@x")
-	seedUsers(t, s, u)
+	seedUsers(t, s, mkUser("u1", "alice", "a@x"))
 
 	disabled := testNow.Add(time.Hour)
-	u.Handle, u.Email, u.Name, u.Admin, u.DisabledAt, u.UpdatedAt = "al", "al@x", "Al", true, &disabled, testNow.Add(2*time.Hour)
-	if err := s.UpdateUser(ctx, u); err != nil {
+	if _, err := s.UpdateUserProfile(ctx, "u1", auth.Profile{Handle: "al", Email: "al@x", Name: "Al"}, testNow.Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	got, err := s.GetUser(ctx, "u1")
-	if err != nil || got.Handle != "al" || got.Email != "al@x" || got.Name != "Al" || !got.Admin ||
+	if _, err := s.SetUserRole(ctx, "u1", auth.RoleGuest, testNow.Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.SetUserDisabled(ctx, "u1", &disabled, testNow.Add(2*time.Hour))
+	if err != nil || got.Handle != "al" || got.Email != "al@x" || got.Name != "Al" || got.Role != auth.RoleGuest ||
 		got.DisabledAt == nil || !got.DisabledAt.Equal(disabled) || !got.UpdatedAt.Equal(testNow.Add(2*time.Hour)) {
-		t.Fatalf("after update = %+v, %v", got, err)
+		t.Fatalf("after updates = %+v, %v", got, err)
 	}
 	if !got.CreatedAt.Equal(testNow) {
 		t.Errorf("update moved created_at: %v", got.CreatedAt)
 	}
-	ghost := mkUser("nobody", "x", "y")
-	if err := s.UpdateUser(ctx, ghost); !errors.Is(err, auth.ErrNotFound) {
-		t.Errorf("update of nobody = %v", err)
+	if _, err := s.SetUserRole(ctx, "u1", "", testNow); err == nil {
+		t.Error("an empty role was written")
+	}
+	if _, err := s.UpdateUserProfile(ctx, "nobody", auth.Profile{Handle: "x", Email: "y"}, testNow); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("profile of nobody = %v", err)
+	}
+	if _, err := s.SetUserRole(ctx, "nobody", auth.RoleMember, testNow); !errors.Is(err, auth.ErrNotFound) {
+		t.Errorf("role of nobody = %v", err)
 	}
 
 	seen := testNow.Add(3 * time.Hour)

@@ -192,18 +192,21 @@
 	// it): only a rebuild, which replaces it, brings it back. A live run must
 	// pause first, since the engine refuses to rebuild under one.
 	const showBroken = $derived(rs.run?.envStatus === 'broken' && !brokenDismissed);
+	// Both remedies change the run: none on offer without run:operate.
 	const brokenAction = $derived(
-		rs.canRebuild
-			? {
-					label: t('run.rebuild.button'),
-					run: () => rebuild(rs.run!.id, false, { act, desk })
-				}
-			: rs.canPause
+		!rs.canOperate
+			? undefined
+			: rs.canRebuild
 				? {
-						label: t('run.header.pause'),
-						run: () => act('pause', () => api.runs.pause(rs.run!.id))
+						label: t('run.rebuild.button'),
+						run: () => rebuild(rs.run!.id, false, { act, desk })
 					}
-				: undefined
+				: rs.canPause
+					? {
+							label: t('run.header.pause'),
+							run: () => act('pause', () => api.runs.pause(rs.run!.id))
+						}
+					: undefined
 	);
 </script>
 

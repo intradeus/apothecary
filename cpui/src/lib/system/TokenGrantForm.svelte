@@ -1,0 +1,185 @@
+<script lang="ts" module>
+	/** The kinds of action the catalogue names; another kind is headed by its
+	 *  own word. */
+	const KINDS = [
+		'instance',
+		'account',
+		'project',
+		'run',
+		'ticket',
+		'integration',
+		'credential',
+		'channel',
+		'skill',
+		'analytics',
+		'notice',
+		'settings'
+	] as const;
+	type Kind = (typeof KINDS)[number];
+	const known = (k: string): k is Kind => (KINDS as readonly string[]).includes(k);
+</script>
+
+<script lang="ts">
+	// Mints a personal token: its name, and what it may do. Full access is
+	// the account itself; a limited token holds only the actions ticked
+	// (what the engine says a token may hold, never account:manage), in the
+	// workshops ticked (none = every one).
+	import { api } from '$lib/api';
+	import { fleet } from '$lib/app/fleet.svelte';
+	import { errorMessage } from '$lib/core/errors';
+	import { I } from '$lib/design/icons';
+	import type { Permission, Token, TokenGrant } from '$lib/domain';
+	import { t } from '$lib/i18n/index.svelte';
+	import Checkbox from '$lib/ui/Checkbox.svelte';
+	import CheckboxGroup from '$lib/ui/CheckboxGroup.svelte';
+	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import Segmented from '$lib/ui/Segmented.svelte';
+	import Skeleton from '$lib/ui/Skeleton.svelte';
+
+	let {
+		oncreated
+	}: {
+		/** The new token and its secret, shown once. */
+		oncreated: (minted: { token: Token; secret: string }) => void | Promise<void>;
+	} = $props();
+
+	let name = $state('');
+	let mode = $state<'full' | 'limited'>('full');
+	let actions = $state<string[]>([]);
+	let projectIds = $state<string[]>([]);
+	let busy = $state(false);
+	let error = $state('');
+
+	/** What a token may hold, by kind in the catalogue's order; null until
+	 *  read. */
+	let groups = $state<{ kind: string; list: Permission[] }[] | null>(null);
+	let permsError = $state('');
+
+	const workshops = $derived(fleet.projects.map((p) => ({ value: p.id, label: p.name })));
+	const grant = $derived<TokenGrant>(
+		mode === 'full'
+			? { full: true }
+			: { full: false, actions: [...actions], projectIds: [...projectIds] }
+	);
+	const valid = $derived(mode === 'full' || actions.length > 0);
+
+	async function loadPerms() {
+		permsError = '';
+		try {
+			const by = new Map<string, Permission[]>();
+			for (const p of await api.auth.permissions()) {
+				if (!p.grantable || p.action === 'account:manage') continue;
+				by.set(p.kind, [...(by.get(p.kind) ?? []), p]);
+			}
+			groups = [...by].map(([kind, list]) => ({ kind, list }));
+		} catch (err) {
+			permsError = errorMessage(err);
+		}
+	}
+
+	function choose(m: 'full' | 'limited') {
+		if (m === 'limited' && !groups) void loadPerms();
+	}
+
+	function tick(action: string, on: boolean) {
+		actions = on ? [...actions, action] : actions.filter((a) => a !== action);
+	}
+
+	async function mint(e: SubmitEvent) {
+		e.preventDefault();
+		busy = true;
+		error = '';
+		try {
+			const minted = await api.auth.createToken(name.trim(), grant);
+			name = '';
+			mode = 'full';
+			actions = [];
+			projectIds = [];
+			await oncreated(minted);
+		} catch (err) {
+			error = errorMessage(err);
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<form class="col" onsubmit={mint}>
+	<div class="field">
+		<label for="ac-token">{t('page.account.tokenName')}</label>
+		<input
+			id="ac-token"
+			bind:value={name}
+			required
+			placeholder={t('page.account.tokenNamePlaceholder')}
+		/>
+	</div>
+	<div class="field">
+		<span class="field-label">{t('page.account.access')}</span>
+		<Segmented
+			size="sm"
+			glass={false}
+			label={t('page.account.access')}
+			bind:value={mode}
+			onchange={choose}
+			options={[
+				{ value: 'full', label: t('page.account.accessFull') },
+				{ value: 'limited', label: t('page.account.accessLimited') }
+			]}
+		/>
+		<div class="help">
+			{mode === 'full' ? t('page.account.accessFullHelp') : t('page.account.accessLimitedHelp')}
+		</div>
+	</div>
+	{#if mode === 'limited'}
+		{#if permsError}
+			<ErrorCard
+				cause={t('page.account.permissionsFailed')}
+				detail={permsError}
+				onretry={loadPerms}
+			/>
+		{:else if !groups}
+			<Skeleton lines={3} />
+		{:else}
+			<div class="kinds">
+				{#each groups as g (g.kind)}
+					<fieldset class="field">
+						<legend>{known(g.kind) ? t(`page.account.kind.${g.kind}`) : g.kind}</legend>
+						<div class="choices">
+							{#each g.list as p (p.action)}
+								<Checkbox
+									label={p.action}
+									detail={p.doc}
+									checked={actions.includes(p.action)}
+									onchange={(on) => tick(p.action, on)}
+								/>
+							{/each}
+						</div>
+					</fieldset>
+				{/each}
+			</div>
+			{#if !actions.length}<div class="help">{t('page.account.actionsHelp')}</div>{/if}
+			{#if workshops.length}
+				<fieldset class="field">
+					<legend>{t('page.account.workshops')}</legend>
+					<CheckboxGroup row options={workshops} bind:value={projectIds} />
+					<div class="help">{t('page.account.workshopsHelp')}</div>
+				</fieldset>
+			{/if}
+		{/if}
+	{/if}
+	{#if error}<div class="error">{error}</div>{/if}
+	<div class="form-actions">
+		<button class="btn-primary" type="submit" disabled={busy || !valid} aria-busy={busy}
+			>{`${I.add} ${t('page.account.mint')}`}</button
+		>
+	</div>
+</form>
+
+<style>
+	.kinds {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+		gap: 14px 20px;
+	}
+</style>

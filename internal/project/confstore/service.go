@@ -177,6 +177,18 @@ func (s *Service) GetIntegration(ctx context.Context, id string) (Integration, e
 	return s.open(r)
 }
 
+// GetIntegrationSealed is an integration with its secrets left unopened
+// (nil): its kind, name and config, for what is shown of it beyond its
+// owner — a key that no longer opens them does not hide it.
+func (s *Service) GetIntegrationSealed(ctx context.Context, id string) (Integration, error) {
+	r, err := s.db.GetIntegration(ctx, id)
+	if err != nil {
+		return Integration{}, err
+	}
+	return Integration{ID: r.ID, UserID: r.UserID, Port: r.Port, Kind: r.Kind, Name: r.Name, Config: r.Config,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt}, nil
+}
+
 // ListIntegrations is one user's integrations ("" = everyone's, for the
 // daemon's own passes).
 func (s *Service) ListIntegrations(ctx context.Context, userID string) ([]Integration, error) {

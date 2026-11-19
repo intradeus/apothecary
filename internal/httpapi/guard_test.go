@@ -18,6 +18,7 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/auth/authtest"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/notices"
@@ -51,15 +52,23 @@ func (x *env) addUser(t *testing.T, id string, admin bool) map[string]string {
 	ctx := context.Background()
 	now := time.Now().UTC()
 	if err := x.users.CreateUser(ctx, auth.User{
-		ID: id, Handle: id, Email: id + "@example.test", Name: id, Admin: admin, CreatedAt: now, UpdatedAt: now,
+		ID: id, Handle: id, Email: id + "@example.test", Name: id, Role: roleOf(admin), CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	secret, _, err := x.srv.Auth.NewToken(ctx, id, "t", nil)
+	secret, _, err := x.srv.Auth.NewToken(ctx, id, "t", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return map[string]string{"Authorization": "Bearer " + secret}
+}
+
+// roleOf is the instance role a test account is made with.
+func roleOf(admin bool) auth.Role {
+	if admin {
+		return auth.RoleAdmin
+	}
+	return auth.RoleMember
 }
 
 // reserve rebuilds the test server's mux, for fields that gate registration.
@@ -149,7 +158,7 @@ func newWorld(t *testing.T) *world {
 	}
 	w.notice = ns[0].ID
 
-	secret, tok, err := x.srv.Auth.NewToken(ctx, testUser, "another", nil)
+	secret, tok, err := x.srv.Auth.NewToken(ctx, testUser, "another", nil, auth.Grant{})
 	if err != nil || secret == "" {
 		t.Fatal(err)
 	}
@@ -293,12 +302,12 @@ func TestAdminRoutesRefuseEveryoneElse(t *testing.T) {
 	w := newWorld(t)
 	n := 0
 	for _, rt := range w.enabled(t) {
-		if rt.Auth != AccessAdmin {
+		if rt.Action != authz.InstanceAdmin {
 			continue
 		}
 		n++
 		path := pathParam.ReplaceAllString(rt.Path, testUser)
-		res, body := w.do(t, rt.Method, path, map[string]any{"password": "a new password", "handle": "hacked", "admin": true, "disabled": true}, w.other)
+		res, body := w.do(t, rt.Method, path, map[string]any{"password": "a new password", "handle": "hacked", "role": "admin", "disabled": true}, w.other)
 		if res.StatusCode != http.StatusForbidden || !strings.Contains(string(body), "instance admin") {
 			t.Errorf("%s %s as a user = %d %s, want 403", rt.Method, path, res.StatusCode, body)
 		}
@@ -308,7 +317,7 @@ func TestAdminRoutesRefuseEveryoneElse(t *testing.T) {
 	}
 	// Nothing changed: the owner is still who they were.
 	res, body := w.do(t, "GET", "/api/me", nil, nil)
-	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"handle":"tester"`) || !strings.Contains(string(body), `"admin":true`) {
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(body), `"handle":"tester"`) || !strings.Contains(string(body), `"role":"admin"`) {
 		t.Errorf("me after the attempts = %d %s", res.StatusCode, body)
 	}
 }
@@ -460,7 +469,7 @@ func TestPersonalTokenLifecycle(t *testing.T) {
 
 	// Expired: as good as none.
 	past := time.Now().Add(-time.Minute)
-	expired, _, err := x.srv.Auth.NewToken(ctx, testUser, "old", &past)
+	expired, _, err := x.srv.Auth.NewToken(ctx, testUser, "old", &past, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -470,7 +479,7 @@ func TestPersonalTokenLifecycle(t *testing.T) {
 
 	// Minted over the API, the secret is shown once and the list never has it.
 	soon := time.Now().Add(time.Hour)
-	res, body := x.do(t, "POST", "/api/me/tokens", TokenRequest{Name: "ci", ExpiresAt: &soon}, nil)
+	res, body := x.do(t, "POST", "/api/me/tokens", TokenRequest{Name: "ci", ExpiresAt: &soon, FullAccess: true}, nil)
 	if res.StatusCode != http.StatusCreated {
 		t.Fatalf("create token = %d %s", res.StatusCode, body)
 	}
@@ -513,7 +522,7 @@ func TestPersonalTokenLifecycle(t *testing.T) {
 	}
 
 	// A token needs a name, and the body must be one.
-	if res, _ := x.do(t, "POST", "/api/me/tokens", TokenRequest{Name: " "}, nil); res.StatusCode != http.StatusBadRequest {
+	if res, _ := x.do(t, "POST", "/api/me/tokens", TokenRequest{Name: " ", FullAccess: true}, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("nameless token = %d", res.StatusCode)
 	}
 	if res, _ := x.bare(t, "POST", "/api/me/tokens", "{", map[string]string{"Authorization": "Bearer " + x.token}); res.StatusCode != http.StatusBadRequest {
@@ -579,7 +588,7 @@ func TestCookieWritesMustComeFromTheOrigin(t *testing.T) {
 		{"Origin": w.ts.URL},
 		{}, // no browser at all
 	} {
-		res, body := w.bare(t, "POST", path, `{"name":"from-ui"}`, merged(cookie, site))
+		res, body := w.bare(t, "POST", path, `{"name":"from-ui","full_access":true}`, merged(cookie, site))
 		if res.StatusCode != http.StatusCreated {
 			t.Errorf("%v = %d %s", site, res.StatusCode, body)
 		}
@@ -588,7 +597,7 @@ func TestCookieWritesMustComeFromTheOrigin(t *testing.T) {
 		t.Errorf("cross-site read = %d, want 200", res.StatusCode)
 	}
 	// A bearer write is not a browser's, wherever it says it came from.
-	res, body := w.bare(t, "POST", path, `{"name":"from-script"}`, merged(
+	res, body := w.bare(t, "POST", path, `{"name":"from-script","full_access":true}`, merged(
 		map[string]string{"Authorization": "Bearer " + w.token2(t)}, map[string]string{"Sec-Fetch-Site": "cross-site"}))
 	if res.StatusCode != http.StatusCreated {
 		t.Errorf("bearer write = %d %s", res.StatusCode, body)
@@ -597,7 +606,7 @@ func TestCookieWritesMustComeFromTheOrigin(t *testing.T) {
 
 func (w *world) token2(t *testing.T) string {
 	t.Helper()
-	secret, _, err := w.srv.Auth.NewToken(context.Background(), testUser, "script", nil)
+	secret, _, err := w.srv.Auth.NewToken(context.Background(), testUser, "script", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}

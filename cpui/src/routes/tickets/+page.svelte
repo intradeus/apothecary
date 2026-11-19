@@ -2,15 +2,12 @@
      to no workshop, so the list needs one picked (?project=, the first one
      by default). -->
 <script lang="ts">
-	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api } from '$lib/api';
 	import { to } from '$lib/core/urls';
 	import { fleet } from '$lib/app/fleet.svelte';
+	import NewWorkshopLink from '$lib/workshop/NewWorkshopLink.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import type { Integration } from '$lib/domain';
-	import { sourceOf } from '$lib/tickets/tracker';
 	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import TicketList from '$lib/tickets/TicketList.svelte';
 	import PageHeader from '$lib/ui/PageHeader.svelte';
@@ -19,17 +16,9 @@
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 
-	let integrations = $state<Integration[] | null>(null);
-	onMount(() => {
-		api.integrations
-			.list()
-			.then((l) => (integrations = l))
-			.catch(() => (integrations = []));
-	});
-
 	const asked = $derived(page.url.searchParams.get('project') ?? '');
 	const project = $derived(fleet.projectById.get(asked) ?? fleet.projects[0]);
-	const source = $derived(project ? sourceOf(project, integrations) : undefined);
+	const source = $derived(project?.ticketSource);
 	const options = $derived<SelectOption[]>(
 		fleet.projects.map((p) => ({ value: p.id, label: p.name }))
 	);
@@ -43,12 +32,7 @@
 
 {#snippet action(cls: string)}
 	{#if project}
-		<NewTicketLink
-			{project}
-			{integrations}
-			label={t('page.desk.newTicket')}
-			cls="btn-primary {cls}"
-		/>
+		<NewTicketLink {project} label={t('page.desk.newTicket')} cls="btn-primary {cls}" />
 	{/if}
 {/snippet}
 
@@ -79,7 +63,7 @@
 		<Skeleton pane lines={6} />
 	{:else if !project}
 		<EmptyState title={t('page.tickets.noWorkshop')} text={t('page.tickets.noWorkshopText')}>
-			<a class="btn btn-primary" href={to.newWorkshop()}>{t('page.tickets.newWorkshop')}</a>
+			<NewWorkshopLink label={t('page.tickets.newWorkshop')} />
 		</EmptyState>
 	{:else}
 		<TicketList projectId={project.id}>

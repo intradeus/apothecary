@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { TicketDetail, TrackerType } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aProject, aTicketDetail } from '$test/fixtures';
+import { aProject, aTicketDetail, aViewerProject } from '$test/fixtures';
 import { choose } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import TicketForm from './TicketForm.svelte';
@@ -12,7 +12,7 @@ import TicketForm from './TicketForm.svelte';
 vi.mock('$lib/api', () => ({
 	api: {
 		tickets: { create: vi.fn(), update: vi.fn(), attachments: vi.fn() },
-		integrations: { types: vi.fn() },
+		projects: { ticketTypes: vi.fn() },
 		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() }
 	}
 }));
@@ -39,10 +39,20 @@ const lastBody = () => vi.mocked(api.tickets.create).mock.calls.at(-1)![1];
 
 beforeEach(() => {
 	vi.resetAllMocks();
-	vi.mocked(api.integrations.types).mockResolvedValue([]);
+	vi.mocked(api.projects.ticketTypes).mockResolvedValue([]);
 	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.files.limits).mockResolvedValue(null as never);
 	toasts.list = [];
+});
+
+describe('TicketForm, without ticket:write', () => {
+	it('cannot create, and says why', async () => {
+		setup({ project: aViewerProject({ id: 'p1', ticketSourceId: 'own' }) });
+		await userEvent.type(title(), 'T');
+		await userEvent.type(goal(), 'G');
+		expect(create()).toBeDisabled();
+		expect(create()).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+	});
 });
 
 describe('TicketForm, creating', () => {
@@ -147,14 +157,15 @@ describe('TicketForm, creating', () => {
 });
 
 describe('TicketForm, the type', () => {
-	it("offers the source's types, and a type picked brings its change type", async () => {
+	it("offers the workshop source's types, and a type picked brings its change type", async () => {
 		created();
-		vi.mocked(api.integrations.types).mockResolvedValue([
+		vi.mocked(api.projects.ticketTypes).mockResolvedValue([
 			type('t2', 'Chore', 'chore', 1),
 			type('t1', 'Bug', 'fix', 0)
 		]);
 		setup();
-		await waitFor(() => expect(api.integrations.types).toHaveBeenCalledWith('own'));
+		// Read through the workshop, not its owner's source integration.
+		await waitFor(() => expect(api.projects.ticketTypes).toHaveBeenCalledWith('p1'));
 		await choose('Type', 'Bug');
 		expect(screen.getByRole('combobox', { name: 'Change type' })).toHaveTextContent('fix');
 		await userEvent.type(title(), 'A');
@@ -164,17 +175,17 @@ describe('TicketForm, the type', () => {
 	});
 
 	it('keeps the change type when no type is picked', async () => {
-		vi.mocked(api.integrations.types).mockResolvedValue([type('t1', 'Bug', 'fix')]);
+		vi.mocked(api.projects.ticketTypes).mockResolvedValue([type('t1', 'Bug', 'fix')]);
 		setup();
-		await waitFor(() => expect(api.integrations.types).toHaveBeenCalled());
+		await waitFor(() => expect(api.projects.ticketTypes).toHaveBeenCalled());
 		await choose('Type', 'No type');
 		expect(screen.getByRole('combobox', { name: 'Change type' })).toHaveTextContent('feat');
 	});
 
 	it('still works without the type list', async () => {
-		vi.mocked(api.integrations.types).mockRejectedValue(new Error('down'));
+		vi.mocked(api.projects.ticketTypes).mockRejectedValue(new Error('down'));
 		setup();
-		await waitFor(() => expect(api.integrations.types).toHaveBeenCalled());
+		await waitFor(() => expect(api.projects.ticketTypes).toHaveBeenCalled());
 		expect(screen.getByRole('combobox', { name: 'Type' })).toHaveTextContent('No type');
 	});
 

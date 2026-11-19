@@ -9,6 +9,7 @@
 	import Terminal from '../Terminal.svelte';
 	import RepoBar from '../RepoBar.svelte';
 	import NoWorkspace from '../NoWorkspace.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import type { RunStore } from '../store.svelte';
 	import type { ComposerKind } from '../composerTarget.svelte';
 
@@ -72,8 +73,11 @@
 						{visible}
 						oncount={(n) => (rs.changesCount = repo ? rs.changesCount : n)}
 					/>
-				{:else}
+				{:else if rs.canShell}
 					<Terminal runId={rs.runId} {repo} {dir} />
+				{:else}
+					<!-- A shell is run:shell in the run's workshop. -->
+					<EmptyState compact title={t('common.needsPermission')} />
 				{/if}
 			{/key}
 		{/if}

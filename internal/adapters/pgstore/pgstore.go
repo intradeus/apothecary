@@ -913,11 +913,12 @@ func (s *Store) RunViews(ctx context.Context) ([]run.View, error) {
 	return out, rows.Err()
 }
 
-// ListRunViews reads one user's runs, optionally of one project and one
-// ticket, newest first (run.ViewLister — the run list's backing).
+// ListRunViews reads the runs a reader sees (its own and its workshops'),
+// optionally of one project and one ticket, newest first (run.ViewLister —
+// the run list's backing).
 func (s *Store) ListRunViews(ctx context.Context, f run.ListFilter) ([]run.View, error) {
-	q := `SELECT ` + viewColumns + ` FROM runs WHERE user_id=$1`
-	args := []any{f.UserID}
+	q := `SELECT ` + viewColumns + ` FROM runs WHERE (($1 <> '' AND user_id=$1) OR project_id = ANY($2))`
+	args := []any{f.UserID, nonNil(f.ProjectIDs)}
 	if f.ProjectID != "" {
 		args = append(args, f.ProjectID)
 		q += fmt.Sprintf(` AND project_id=$%d`, len(args))
@@ -940,6 +941,15 @@ func (s *Store) ListRunViews(ctx context.Context, f run.ListFilter) ([]run.View,
 		out = append(out, v)
 	}
 	return out, rows.Err()
+}
+
+// nonNil is a list bound as a text[]: nil binds NULL, which ANY never
+// matches anyway, but an explicit empty array says what is meant.
+func nonNil(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
 }
 
 // --- channels persistence (§9) ----------------------------------------------
@@ -1035,18 +1045,19 @@ const pingCols = `ping_id, run_id, user_id, type, stage_id, question, context, f
 	             file_types, curated, choices, ref`
 
 // ListPings reads the pings projection (PLAN4 M15): the durable
-// request/response surface, one user's ("" = everyone's). status filters
-// pending|answered; "" or "all" returns both. Newest first, capped by limit.
-func (s *Store) ListPings(ctx context.Context, userID, status string, limit int) ([]run.PingView, error) {
+// request/response surface, of the runs seen sees (nil: everyone's, for the
+// daemon's own passes). status filters pending|answered; "" or "all"
+// returns both. Newest first, capped by limit.
+func (s *Store) ListPings(ctx context.Context, seen *run.Seen, status string, limit int) ([]run.PingView, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 100
 	}
 	q := `SELECT ` + pingCols + ` FROM pings`
 	var where []string
 	args := []any{}
-	if userID != "" {
-		args = append(args, userID)
-		where = append(where, fmt.Sprintf("user_id=$%d", len(args)))
+	if seen != nil {
+		args = append(args, seen.UserID, nonNil(seen.ProjectIDs))
+		where = append(where, `(($1 <> '' AND user_id=$1) OR run_id IN (SELECT run_id FROM runs WHERE project_id = ANY($2)))`)
 	}
 	if status != "" && status != "all" {
 		args = append(args, status)

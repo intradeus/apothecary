@@ -32,6 +32,10 @@
 	const run = $derived(rs.run!);
 	const sid = $derived(shortId(run.id));
 	const active = $derived(!rs.terminal);
+	// Every button here changes the run: held while another action is in
+	// flight, or for good when the caller's workshop role cannot operate it.
+	const locked = $derived(actions.any || !rs.canOperate);
+	const denied = $derived(rs.canOperate ? undefined : t('common.needsPermission'));
 
 	// The stage a retry re-enters: where the run stopped.
 	const retryStage = $derived(
@@ -85,39 +89,45 @@
 		{#if run.state === 'paused'}
 			<button
 				class="btn-primary"
-				disabled={actions.any}
+				disabled={locked}
 				aria-busy={actions.has('play')}
 				onclick={() => act('play', () => api.runs.play(run.id))}
-				title={run.pause?.reason === 'budget'
-					? t('run.header.playBudgetTitle', { why: run.pause.note ?? '' })
-					: t('run.header.playTitle')}
+				title={denied ??
+					(run.pause?.reason === 'budget'
+						? t('run.header.playBudgetTitle', { why: run.pause.note ?? '' })
+						: t('run.header.playTitle'))}
 				><TransportIcon kind="play" />
 				{run.pause?.reason === 'budget' ? t('run.header.playBudget') : t('run.header.play')}</button
 			>
 		{:else if run.state !== 'pending'}
 			<button
-				disabled={actions.any}
+				disabled={locked}
 				aria-busy={actions.has('pause')}
 				onclick={() => act('pause', () => api.runs.pause(run.id))}
-				title={t('run.header.pauseTitle')}
+				title={denied ?? t('run.header.pauseTitle')}
 				><TransportIcon kind="pause" /> {t('run.header.pause')}</button
 			>
 		{/if}
-		<button class="btn-danger" disabled={actions.any} aria-busy={actions.has('stop')} onclick={stop}
-			><TransportIcon kind="stop" /> {t('run.header.stop')}</button
+		<button
+			class="btn-danger"
+			disabled={locked}
+			aria-busy={actions.has('stop')}
+			title={denied}
+			onclick={stop}><TransportIcon kind="stop" /> {t('run.header.stop')}</button
 		>
 	{:else}
 		{#if !run.archivedAt && (run.state === 'failed' || run.state === 'abandoned')}
 			<button
 				class="btn-primary"
-				disabled={actions.any}
+				disabled={locked}
 				aria-busy={actions.has('retry')}
 				onclick={retry}
-				title={run.provisionFailed
-					? t('run.header.retryProvisionTitle')
-					: t('run.header.retryTitle', {
-							stage: retryStage ?? t('run.header.theFailedStage')
-						})}
+				title={denied ??
+					(run.provisionFailed
+						? t('run.header.retryProvisionTitle')
+						: t('run.header.retryTitle', {
+								stage: retryStage ?? t('run.header.theFailedStage')
+							}))}
 				>{I.retry}
 				{run.provisionFailed
 					? t('run.header.retryProvision')
@@ -126,24 +136,26 @@
 						: t('run.header.retry')}</button
 			>
 		{/if}
-		<button disabled={actions.any} onclick={() => onrerun()} title={t('run.header.rerunTitle')}
+		<button disabled={locked} onclick={() => onrerun()} title={denied ?? t('run.header.rerunTitle')}
 			>{t('run.header.rerun')}</button
 		>
 		{#if !run.archivedAt}
 			<button
 				class="btn-danger"
-				disabled={actions.any}
+				disabled={locked}
 				aria-busy={actions.has('archive')}
+				title={denied}
 				onclick={archive}>{t('run.header.archive')}</button
 			>
 		{:else if run.envId}
 			<button
 				class="btn-danger"
-				disabled={actions.any}
+				disabled={locked}
 				aria-busy={actions.has('archive')}
-				title={`${t('run.header.destroyWorkspaceTitle', { env: run.envId })}${
-					run.envDestroyError ? ` — ${run.envDestroyError}` : ''
-				}`}
+				title={denied ??
+					`${t('run.header.destroyWorkspaceTitle', { env: run.envId })}${
+						run.envDestroyError ? ` — ${run.envDestroyError}` : ''
+					}`}
 				onclick={destroyWorkspace}>{t('run.header.destroyWorkspace')}</button
 			>
 		{/if}

@@ -20,6 +20,15 @@ describe('WorkshopChips', () => {
 		expect(screen.getByText('Codex')).toBeInTheDocument();
 	});
 
+	it('marks nothing missing on a workshop shared with the caller: its integrations are the owner’s', () => {
+		const { container } = render(WorkshopChips, {
+			project: { ...project, ownerHandle: 'ada' },
+			integrations: []
+		});
+		expect(container.querySelectorAll('.pill')).toHaveLength(0);
+		expect(screen.queryByText(/missing/)).not.toBeInTheDocument();
+	});
+
 	it('shows dots while integrations load, marking nothing missing', () => {
 		const { container } = render(WorkshopChips, { project, integrations: null });
 		expect(screen.getAllByText('…')).toHaveLength(3);

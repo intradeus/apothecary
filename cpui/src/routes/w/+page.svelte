@@ -16,6 +16,8 @@
 	import { ms, spring } from '$lib/ui/motion';
 	import RunRow from '$lib/run/RunRow.svelte';
 	import WorkshopChips from '$lib/workshop/WorkshopChips.svelte';
+	import NewWorkshopLink from '$lib/workshop/NewWorkshopLink.svelte';
+	import SharedBadge from '$lib/workshop/SharedBadge.svelte';
 	import { flip } from 'svelte/animate';
 
 	let integrations = $state<Integration[] | null>(null);
@@ -48,7 +50,7 @@
 			>{/if}
 	{/snippet}
 	{#snippet actions()}
-		<a class="btn btn-primary btn-lg" href={to.newWorkshop()}>{newLabel}</a>
+		<NewWorkshopLink class="btn btn-primary btn-lg" label={newLabel} />
 	{/snippet}
 </PageHeader>
 
@@ -65,7 +67,7 @@
 		</div>
 	{:else if projects.length === 0}
 		<EmptyState title={t('page.workshops.empty')} text={t('page.workshops.emptyText')}>
-			<a class="btn btn-primary" href={to.newWorkshop()}>{newLabel}</a>
+			<NewWorkshopLink label={newLabel} />
 			{#if integrations && integrations.length === 0}
 				<a class="btn" href={to.system('integrations')}>{t('page.workshops.setupIntegrations')}</a>
 			{/if}
@@ -94,6 +96,7 @@
 								>{/if}
 						</div>
 						<WorkshopChips project={p} {integrations} />
+						<SharedBadge project={p} />
 					</div>
 					{#each live.slice(0, 3) as r (r.id)}<RunRow run={r} />{/each}
 					{#if live.length > 3}

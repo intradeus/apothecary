@@ -35,7 +35,7 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"RunView":            func() error { _, _, err := s.RunView(ctx, "r"); return err },
 		"RunByEnv":           func() error { _, _, err := s.RunByEnv(ctx, "e"); return err },
 		"RunViews":           func() error { _, err := s.RunViews(ctx); return err },
-		"ListRunViews":       func() error { _, err := s.ListRunViews(ctx, run.ListFilter{UserID: "u"}); return err },
+		"ListRunViews":       func() error { _, err := s.ListRunViews(ctx, run.ListFilter{Seen: run.Seen{UserID: "u"}}); return err },
 		"Rebuild":            func() error { _, err := s.RebuildProjections(ctx); return err },
 		"SaveChannel":        func() error { return s.SaveChannel(ctx, "c", "", "k", nil) },
 		"DeleteChannel":      func() error { return s.DeleteChannel(ctx, "c") },
@@ -43,7 +43,7 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"SaveExposedPort":    func() error { return s.SaveExposedPort(ctx, "r", 1, 2) },
 		"DeleteExposedPorts": func() error { return s.DeleteExposedPorts(ctx, "r") },
 		"LoadExposedPorts":   func() error { _, err := s.LoadExposedPorts(ctx); return err },
-		"ListPings":          func() error { _, err := s.ListPings(ctx, "", "", 0); return err },
+		"ListPings":          func() error { _, err := s.ListPings(ctx, nil, "", 0); return err },
 		"GetPing":            func() error { _, err := s.GetPing(ctx, "p"); return err },
 		"LoadLimits":         func() error { _, _, _, err := s.LoadLimits(ctx); return err },
 		"SaveLimits":         func() error { return s.SaveLimits(ctx, 1, 1) },
@@ -127,7 +127,9 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"ListVersions":           func() error { _, err := s.ListVersions(ctx, "s"); return err },
 		"CountUsers":             func() error { _, err := s.CountUsers(ctx); return err },
 		"CreateUser":             func() error { return s.CreateUser(ctx, auth.User{ID: "u"}) },
-		"UpdateUser":             func() error { return s.UpdateUser(ctx, auth.User{ID: "u"}) },
+		"UpdateUserProfile":      func() error { _, err := s.UpdateUserProfile(ctx, "u", auth.Profile{}, now); return err },
+		"SetUserRole":            func() error { _, err := s.SetUserRole(ctx, "u", auth.RoleMember, now); return err },
+		"SetUserDisabled":        func() error { _, err := s.SetUserDisabled(ctx, "u", nil, now); return err },
 		"GetUser":                func() error { _, err := s.GetUser(ctx, "u"); return err },
 		"GetUserByLogin":         func() error { _, err := s.GetUserByLogin(ctx, "u"); return err },
 		"ListUsers":              func() error { _, err := s.ListUsers(ctx); return err },
@@ -159,8 +161,8 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		},
 		"AnalyticsDrill":    func() error { _, err := s.Drill(ctx, analytics.Compiled{SQL: "SELECT 1"}); return err },
 		"AnalyticsValues":   func() error { _, err := s.Values(ctx, analytics.Compiled{SQL: "SELECT ''"}); return err },
-		"FlowVersionLabels": func() error { _, err := s.FlowVersionLabels(ctx, "u", []string{"h"}); return err },
-		"ProjectNames":      func() error { _, err := s.ProjectNames(ctx, "u", []string{"p"}); return err },
+		"FlowVersionLabels": func() error { _, err := s.FlowVersionLabels(ctx, []string{"p"}, []string{"h"}); return err },
+		"ProjectNames":      func() error { _, err := s.ProjectNames(ctx, []string{"p"}, []string{"p"}); return err },
 		"ListDashboards":    func() error { _, err := s.ListDashboards(ctx, "u"); return err },
 		"GetDashboard":      func() error { _, err := s.GetDashboard(ctx, "d"); return err },
 		"PutDashboard":      func() error { return s.PutDashboard(ctx, analytics.Dashboard{ID: "d"}) },
@@ -483,7 +485,7 @@ func TestPingReadFailsWhenItsCommentsDo(t *testing.T) {
 	if err := sabotage(t, s, "ping_review_comments", func() error { _, err := s.GetPing(ctx, "p"); return err }); err == nil {
 		t.Error("GetPing swallowed the failure")
 	}
-	if err := sabotage(t, s, "ping_review_comments", func() error { _, err := s.ListPings(ctx, "", "", 0); return err }); err == nil {
+	if err := sabotage(t, s, "ping_review_comments", func() error { _, err := s.ListPings(ctx, nil, "", 0); return err }); err == nil {
 		t.Error("ListPings swallowed the failure")
 	}
 }

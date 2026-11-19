@@ -45,7 +45,7 @@ func snapshotBody(t *testing.T, snaps *filestore.Snapshots, id string) string {
 	return string(data)
 }
 
-// A run takes its owner's uploads: a goal naming someone else's id claims
+// A run takes its starter's uploads: a goal naming someone else's id claims
 // nothing, so nothing of theirs reaches this workspace.
 func TestGoalCannotClaimAnotherUsersUpload(t *testing.T) {
 	att, snaps, _ := newFiles(t)
@@ -62,6 +62,28 @@ func TestGoalCannotClaimAnotherUsersUpload(t *testing.T) {
 	h.e.Wait(runID)
 	if got, err := att.Get(context.Background(), up.ID); err != nil || !got.Unclaimed() {
 		t.Fatalf("their upload after the run = %+v, %v", got, err)
+	}
+}
+
+// A collaborator starting a run on someone else's workshop attaches their own
+// uploads: the run stays the owner's, the files are the starter's.
+func TestGoalClaimsTheStartersUploads(t *testing.T) {
+	att, snaps, _ := newFiles(t)
+	h := newHarnessWith(t, func(_ *harness, d *Deps) { d.Attachments, d.Snapshots = att, snaps }, mustFlow(t, loopFlowDoc))
+	ctx := context.Background()
+	mine := uploadAs(t, att, "collab", "spec.md", "the spec")
+	owners := uploadAs(t, att, "", "owners.md", "the owner's")
+	runID, err := h.e.CreateRunWith(ctx, runinput.Ticket{Title: "T", AttachmentIDs: []string{mine.ID, owners.ID}},
+		"loop", testProject, runinput.Input{Starter: "collab"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(runID)
+	if got, err := att.Get(ctx, mine.ID); err != nil || got.RunID != runID {
+		t.Errorf("the starter's upload = %+v, %v, want claimed for the run", got, err)
+	}
+	if got, err := att.Get(ctx, owners.ID); err != nil || !got.Unclaimed() {
+		t.Errorf("the owner's upload, sent by another = %+v, %v, want unclaimed", got, err)
 	}
 }
 

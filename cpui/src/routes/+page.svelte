@@ -5,13 +5,13 @@
 	import { onMount } from 'svelte';
 	import { flip } from 'svelte/animate';
 	import { to } from '$lib/core/urls';
-	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { session } from '$lib/app/session.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import type { Integration, Run } from '$lib/domain';
-	import { isInternal, sourceOf } from '$lib/tickets/tracker';
+	import type { Run } from '$lib/domain';
+	import { isInternal } from '$lib/tickets/tracker';
 	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
+	import NewWorkshopLink from '$lib/workshop/NewWorkshopLink.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -29,16 +29,11 @@
 
 	let now = $state(Date.now());
 	// Which workshops write tickets here (an internal source): New ticket
-	// shows only for those. One read per visit.
-	let integrations = $state<Integration[] | null>(null);
-	const writable = $derived(fleet.projects.find((p) => isInternal(sourceOf(p, integrations))));
+	// shows only for those.
+	const writable = $derived(fleet.projects.find((p) => isInternal(p.ticketSource)));
 
 	onMount(() => {
 		const tick = setInterval(() => (now = Date.now()), 1000);
-		api.integrations
-			.list()
-			.then((l) => (integrations = l))
-			.catch(() => (integrations = []));
 		return () => clearInterval(tick);
 	});
 
@@ -188,9 +183,7 @@
 
 					{#if fleet.projects.length === 0}
 						<EmptyState title={t('page.desk.noWorkshops')} text={t('page.desk.noWorkshopsText')}>
-							<a class="btn btn-primary" href={to.newWorkshop()}
-								>{I.add} {t('page.desk.newWorkshop')}</a
-							>
+							<NewWorkshopLink label={`${I.add} ${t('page.desk.newWorkshop')}`} />
 						</EmptyState>
 					{:else}
 						<div class="card-grid" style:--min="330px">
@@ -206,7 +199,6 @@
 										liveTotal={c.all.length}
 										finished={lastFinished.get(c.project.id) ?? []}
 										pings={fleet.pingsByProject.get(c.project.id) ?? 0}
-										{integrations}
 										{now}
 									/>
 								</div>
@@ -225,12 +217,7 @@
 											href={to.workshop(p.id)}>{p.name}</a
 										>{/each}
 								</span>
-								<NewTicketLink
-									project={quiet[0]}
-									{integrations}
-									label={t('page.desk.newTicket')}
-									cls="btn-sm"
-								/>
+								<NewTicketLink project={quiet[0]} label={t('page.desk.newTicket')} cls="btn-sm" />
 							</EmptyState>
 						{/if}
 						{#if !cards.length && filter !== 'all' && !quiet.length}

@@ -1,13 +1,14 @@
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { fleet } from '$lib/app/fleet.svelte';
 import { goto } from '$app/navigation';
 import { api } from '$lib/api';
 import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { toast } from '$lib/ui/toast.svelte';
 import type { RunEvent } from '$lib/domain';
 import type { RunStore } from '$lib/run/store.svelte';
-import { aRun, aRunStore } from '$test/fixtures';
+import { aProject, aRun, aRunStore, aViewerProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import { HeaderActions, type HeaderAct } from './actions.svelte';
 import RunControls from './RunControls.svelte';
@@ -19,6 +20,10 @@ vi.mock('$lib/ui/confirm.svelte', () => ({ confirmDialog: vi.fn() }));
 vi.mock('$lib/ui/toast.svelte', () => ({ toast: vi.fn() }));
 
 const ARCHIVED = '2026-10-31T12:00:00Z';
+
+afterEach(() => {
+	fleet.projects = [];
+});
 
 function setup(state: Parameters<typeof aRun>[0], over: Partial<RunStore> = {}) {
 	const rs = aRunStore(aRun(state), over);
@@ -111,6 +116,7 @@ describe('RunControls: stop', () => {
 
 describe('RunControls: archive', () => {
 	it('asks, naming the workspace it destroys, then archives and offers the ticket', async () => {
+		fleet.projects = [aProject({ id: 'p1' })];
 		vi.mocked(confirmDialog).mockResolvedValue(true);
 		vi.mocked(api.runs.archive).mockResolvedValue(undefined as never);
 		setup(
@@ -192,5 +198,23 @@ describe('RunControls: retry stage', () => {
 		const act: HeaderAct = (which, fn) => actions.run(which, () => rs.act(fn));
 		render(RunControls, { rs, actions, act, onrerun: vi.fn(), onretried: vi.fn() });
 		expect(screen.getByRole('button', { name: /retry/i })).toHaveTextContent(/build/);
+	});
+});
+
+// A workshop shared as viewer: every lifecycle button stays, disabled, saying why.
+describe('RunControls: a viewer', () => {
+	it.each([
+		[{ state: 'running' as const }, [/pause/i, /abort/i]],
+		[{ state: 'paused' as const }, [/play|resume/i, /abort/i]],
+		[{ state: 'failed' as const }, [/retry/i, /new run from this/i, /^archive/i]],
+		[{ state: 'failed' as const, archivedAt: ARCHIVED, envId: 'env-1' }, [/destroy workspace/i]]
+	])('cannot operate a run of %o', (state, names) => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		setup({ ...state, projectId: 'p1' });
+		for (const name of names) {
+			const b = screen.getByRole('button', { name });
+			expect(b).toBeDisabled();
+			expect(b).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+		}
 	});
 });

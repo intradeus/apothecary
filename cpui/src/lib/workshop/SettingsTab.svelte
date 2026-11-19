@@ -4,7 +4,7 @@
 	import { errorMessage } from '$lib/core/errors';
 	import { goto } from '$app/navigation';
 	import { api } from '$lib/api';
-	import type { Flow, Integration, Project, Run } from '$lib/domain';
+	import { projectCan, type Flow, type Integration, type Project, type Run } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to } from '$lib/core/urls';
 	import { t, th } from '$lib/i18n/index.svelte';
@@ -77,34 +77,36 @@
 	{#key mount}
 		<ProjectForm {integrations} {flows} existing={project} oncancel={() => mount++} onsaved={saved}>
 			{#snippet after()}
-				<section id="delete" class="glass pane">
-					<div class="pane-head"><h2>{t('page.workshop.deleteHead')}</h2></div>
-					<div class="pane-body del">
-						{#if blocking.length}
-							<p class="muted">
-								<b>{t('page.workshop.archiveFirst')}.</b>
-								{t('page.workshop.blockedText', { count: blocking.length })}
-							</p>
-						{:else}
-							<p class="muted">{t('page.workshop.deleteLead')}</p>
-						{/if}
-						{#if error}<ErrorCard cause={t('page.workshop.deleteFailed')} detail={error} />{/if}
-						<div class="acts">
-							<button
-								type="button"
-								class="btn-danger"
-								aria-busy={deleting}
-								disabled={blocking.length > 0}
-								onclick={remove}>{t('page.workshop.deleteAction')}</button
-							>
+				{#if projectCan(project, 'project:delete')}
+					<section id="delete" class="glass pane">
+						<div class="pane-head"><h2>{t('page.workshop.deleteHead')}</h2></div>
+						<div class="pane-body del">
 							{#if blocking.length}
-								<a class="btn" href={to.workshop(project.id, 'runs')}
-									>{t('page.workshop.showRuns')} {I.forward}</a
-								>
+								<p class="muted">
+									<b>{t('page.workshop.archiveFirst')}.</b>
+									{t('page.workshop.blockedText', { count: blocking.length })}
+								</p>
+							{:else}
+								<p class="muted">{t('page.workshop.deleteLead')}</p>
 							{/if}
+							{#if error}<ErrorCard cause={t('page.workshop.deleteFailed')} detail={error} />{/if}
+							<div class="acts">
+								<button
+									type="button"
+									class="btn-danger"
+									aria-busy={deleting}
+									disabled={blocking.length > 0}
+									onclick={remove}>{t('page.workshop.deleteAction')}</button
+								>
+								{#if blocking.length}
+									<a class="btn" href={to.workshop(project.id, 'runs')}
+										>{t('page.workshop.showRuns')} {I.forward}</a
+									>
+								{/if}
+							</div>
 						</div>
-					</div>
-				</section>
+					</section>
+				{/if}
 			{/snippet}
 		</ProjectForm>
 	{/key}

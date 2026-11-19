@@ -43,17 +43,11 @@ describe('OverviewTab, runs', () => {
 	});
 
 	it('links a remote source’s tracker instead of a New ticket', () => {
-		setup(project(), [], {
-			integrations: [
-				anIntegration({
-					id: 'src',
-					name: 'Jira',
-					kind: 'jira',
-					port: 'ticketsource',
-					config: { base_url: 'https://acme.atlassian.net' }
-				})
-			]
-		});
+		setup(
+			project({
+				ticketSource: { kind: 'jira', name: 'Jira', home: 'https://acme.atlassian.net' }
+			})
+		);
 		expect(screen.queryByRole('link', { name: /New ticket/ })).not.toBeInTheDocument();
 		expect(screen.getByRole('link', { name: /Open in Jira/ })).toBeInTheDocument();
 	});

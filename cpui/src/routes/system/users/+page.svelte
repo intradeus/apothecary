@@ -1,22 +1,22 @@
 <script lang="ts">
 	// Users (TODO 25), for the instance admin: every account, with what an
-	// admin may do to one — create it, make or unmake an admin, disable it,
-	// set its password. Nothing here looks into anyone's work.
+	// admin may do to one — create it, set its role (admin, member, guest),
+	// disable it, set its password. Nothing here looks into anyone's work.
 	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { session } from '$lib/app/session.svelte';
-	import type { User } from '$lib/domain';
+	import type { User, UserRole } from '$lib/domain';
 	import { ago } from '$lib/core/format';
 	import { initialsOf } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import AddCard from '$lib/system/AddCard.svelte';
-	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import HeaderAction from '$lib/ui/HeaderAction.svelte';
+	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import UserAvatar from '$lib/ui/UserAvatar.svelte';
 	import { I } from '$lib/design/icons';
@@ -33,7 +33,15 @@
 	let email = $state('');
 	let name = $state('');
 	let password = $state('');
-	let admin = $state(false);
+	let role = $state<UserRole>('member');
+
+	const roles = $derived<SelectOption<UserRole>[]>(
+		(['admin', 'member', 'guest'] as const).map((r) => ({
+			value: r,
+			label: t(`page.users.role.${r}`),
+			detail: t(`page.users.roleHelp.${r}`)
+		}))
+	);
 
 	// The password reset, inline under one row.
 	let resetting = $state<string | null>(null);
@@ -60,10 +68,10 @@
 				email: email.trim(),
 				name: name.trim(),
 				password,
-				admin
+				role
 			});
 			handle = email = name = password = '';
-			admin = false;
+			role = 'member';
 			adding = false;
 			toast(t('page.users.created', { handle: u.handle }));
 			await refresh();
@@ -74,7 +82,7 @@
 		}
 	}
 
-	async function patch(u: User, d: { admin?: boolean; disabled?: boolean }) {
+	async function patch(u: User, d: { role?: UserRole; disabled?: boolean }) {
 		busy = u.id;
 		error = '';
 		try {
@@ -163,8 +171,11 @@
 						<div class="help">{t('page.users.initialPasswordHelp')}</div>
 					</div>
 				</div>
-				<Checkbox bind:checked={admin} label={t('page.users.admin')} />
-				<div class="help">{t('page.users.adminHelp')}</div>
+				<div class="field">
+					<label for="nu-role">{t('page.users.role')}</label>
+					<Select id="nu-role" bind:value={role} options={roles} />
+					<div class="help">{t('page.users.adminHelp')}</div>
+				</div>
 				<div class="form-actions">
 					<button type="button" class="btn-ghost" onclick={() => (adding = false)}
 						>{t('common.cancel')}</button
@@ -201,8 +212,17 @@
 						</span>
 						<span class="muted truncate">{u.email}</span>
 						<span class="chips">
-							{#if u.admin}<span class="pill sm tint-brand">{t('page.users.admin')}</span
-								>{:else}<span class="pill sm flat">{t('page.users.member')}</span>{/if}
+							{#if u.id === me}<span class="pill sm" class:tint-brand={u.role === 'admin'}
+									>{t(`page.users.role.${u.role}`)}</span
+								>{:else}<Select
+									size="sm"
+									inline
+									value={u.role}
+									options={roles}
+									disabled={busy === u.id}
+									label={t('page.users.roleOf', { handle: u.handle })}
+									onchange={(r) => patch(u, { role: r })}
+								/>{/if}
 							{#if u.disabled}<span class="pill sm t-rose">{t('page.users.disabled')}</span>{/if}
 						</span>
 						<span class="num muted small"
@@ -210,12 +230,6 @@
 						>
 						<span class="row nowrap acts">
 							{#if u.id !== me}
-								<button
-									class="btn-sm"
-									aria-busy={busy === u.id}
-									onclick={() => patch(u, { admin: !u.admin })}
-									>{u.admin ? t('page.users.dropAdmin') : t('page.users.makeAdmin')}</button
-								>
 								{#if u.disabled}
 									<button
 										class="btn-sm"

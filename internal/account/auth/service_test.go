@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -29,7 +30,11 @@ func newService(t *testing.T) (*Service, *Mem, *time.Time) {
 
 func user(t *testing.T, s *Service, handle string, admin bool) User {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), NewUser{Handle: handle, Email: handle + "@example.test", Password: pw, Admin: admin})
+	role := RoleMember
+	if admin {
+		role = RoleAdmin
+	}
+	u, err := s.CreateUser(context.Background(), NewUser{Handle: handle, Email: handle + "@example.test", Password: pw, Role: role})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +51,7 @@ func TestSetupClaimsAFreshInstanceOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !u.Admin || u.Handle != "lu" || u.Email != "lu@example.test" || u.Name != "lu" {
+	if u.Role != RoleAdmin || u.Handle != "lu" || u.Email != "lu@example.test" || u.Name != "lu" {
 		t.Errorf("first user = %+v", u)
 	}
 	if need, _ := s.SetupRequired(ctx); need {
@@ -128,38 +133,41 @@ func TestLastAdminStays(t *testing.T) {
 	a, b := user(t, s, "first", true), user(t, s, "second", true)
 	plain := user(t, s, "plain", false)
 
-	if _, err := s.SetAdmin(ctx, a.ID, false); err != nil {
+	if _, err := s.SetRole(ctx, a.ID, RoleMember); err != nil {
 		t.Fatalf("stepping down with another admin = %v", err)
 	}
-	if _, err := s.SetAdmin(ctx, b.ID, false); !errors.Is(err, ErrInvalid) {
+	if _, err := s.SetRole(ctx, b.ID, RoleGuest); !errors.Is(err, ErrInvalid) {
 		t.Errorf("the last admin stepped down: %v", err)
 	}
 	if _, err := s.SetDisabled(ctx, b.ID, true); !errors.Is(err, ErrInvalid) {
 		t.Errorf("the last admin was disabled: %v", err)
 	}
-	if got, _ := s.GetUser(ctx, b.ID); !got.Admin || got.Disabled() {
+	if got, _ := s.GetUser(ctx, b.ID); got.Role != RoleAdmin || got.Disabled() {
 		t.Errorf("after the refusals = %+v", got)
 	}
 	// A plain user is no admin to lose.
-	if _, err := s.SetAdmin(ctx, plain.ID, false); err != nil {
-		t.Errorf("SetAdmin(false) on a plain user = %v", err)
+	if _, err := s.SetRole(ctx, plain.ID, RoleGuest); err != nil {
+		t.Errorf("SetRole(guest) on a plain user = %v", err)
+	}
+	if _, err := s.SetRole(ctx, plain.ID, "root"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("SetRole(root) = %v", err)
 	}
 	if _, err := s.SetDisabled(ctx, plain.ID, true); err != nil {
 		t.Errorf("disabling a plain user = %v", err)
 	}
 	// A disabled admin does not count: promote someone, disable them, and the
 	// remaining one is the last again.
-	if _, err := s.SetAdmin(ctx, a.ID, true); err != nil {
+	if _, err := s.SetRole(ctx, a.ID, RoleAdmin); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.SetDisabled(ctx, a.ID, true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.SetAdmin(ctx, b.ID, false); !errors.Is(err, ErrInvalid) {
+	if _, err := s.SetRole(ctx, b.ID, RoleMember); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a disabled admin counted as another admin: %v", err)
 	}
-	if _, err := s.SetAdmin(ctx, "nobody", true); !errors.Is(err, ErrNotFound) {
-		t.Errorf("SetAdmin nobody = %v", err)
+	if _, err := s.SetRole(ctx, "nobody", RoleAdmin); !errors.Is(err, ErrNotFound) {
+		t.Errorf("SetRole nobody = %v", err)
 	}
 	if _, err := s.SetDisabled(ctx, "nobody", true); !errors.Is(err, ErrNotFound) {
 		t.Errorf("SetDisabled nobody = %v", err)
@@ -175,7 +183,7 @@ func TestDisableTakesCredentialsWithIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, _, err := s.NewToken(ctx, u.ID, "t", nil)
+	tok, _, err := s.NewToken(ctx, u.ID, "t", nil, Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,12 +300,6 @@ func (f failDB) ListMethods(ctx context.Context, u string) ([]Method, error) {
 	}
 	return f.DB.ListMethods(ctx, u)
 }
-func (f failDB) ListUsers(ctx context.Context) ([]User, error) {
-	if f.list != nil {
-		return nil, f.list
-	}
-	return f.DB.ListUsers(ctx)
-}
 func (f failDB) PutMethod(ctx context.Context, m Method) error {
 	if f.put != nil {
 		return f.put
@@ -345,7 +347,7 @@ func TestStoreOutagesPropagate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tok, _, err := s.NewToken(ctx, u.ID, "t", nil)
+	tok, _, err := s.NewToken(ctx, u.ID, "t", nil, Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,10 +381,11 @@ func TestStoreOutagesPropagate(t *testing.T) {
 	check("create user's method", err)
 	_, _, err = with(failDB{create: boom}).NewSession(ctx, u.ID, "ua")
 	check("new session", err)
-	_, _, err = with(failDB{create: boom}).NewToken(ctx, u.ID, "t", nil)
+	_, _, err = with(failDB{create: boom}).NewToken(ctx, u.ID, "t", nil, Grant{})
 	check("new token", err)
-	_, err = with(failDB{list: boom}).SetAdmin(ctx, mustAdmin(t, s), false)
-	check("last-admin check", err)
+	plain := user(t, s, "pl", false)
+	_, err = with(failDB{put: boom}).SetDisabled(ctx, plain.ID, true)
+	check("disable's sign-out", err)
 	check("set password method", with(failDB{method: boom}).SetPassword(ctx, u.ID, pw))
 	check("set password put", with(failDB{put: boom}).SetPassword(ctx, u.ID, pw))
 	check("change password", with(failDB{method: boom}).ChangePassword(ctx, u.ID, pw, pw))
@@ -394,14 +397,14 @@ func TestStoreOutagesPropagate(t *testing.T) {
 	if _, err := with(failDB{user: ErrNotFound}).AuthenticateToken(ctx, tok); !errors.Is(err, ErrUnauthorized) {
 		t.Errorf("token of nobody = %v", err)
 	}
-	if _, _, err := with(failDB{user: ErrNotFound}).NewToken(ctx, "x", "t", nil); !errors.Is(err, ErrNotFound) {
+	if _, _, err := with(failDB{user: ErrNotFound}).NewToken(ctx, "x", "t", nil, Grant{}); !errors.Is(err, ErrNotFound) {
 		t.Errorf("token for nobody = %v", err)
 	}
 }
 
 func mustAdmin(t *testing.T, s *Service) string {
 	t.Helper()
-	u, err := s.CreateUser(context.Background(), NewUser{Handle: "boss", Email: "boss@x", Password: pw, Admin: true})
+	u, err := s.CreateUser(context.Background(), NewUser{Handle: "boss", Email: "boss@x", Password: pw, Role: RoleAdmin})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -587,10 +590,10 @@ func TestTokens(t *testing.T) {
 	u := user(t, s, "lu", false)
 	other := user(t, s, "other", false)
 
-	if _, _, err := s.NewToken(ctx, u.ID, "  ", nil); !errors.Is(err, ErrInvalid) {
+	if _, _, err := s.NewToken(ctx, u.ID, "  ", nil, Grant{}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("nameless = %v", err)
 	}
-	secret, tok, err := s.NewToken(ctx, u.ID, " ci ", nil)
+	secret, tok, err := s.NewToken(ctx, u.ID, " ci ", nil, Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -637,7 +640,7 @@ func TestTokens(t *testing.T) {
 
 	// Expiry: the instant it passes.
 	at := now.Add(time.Hour)
-	expiring, _, err := s.NewToken(ctx, u.ID, "soon", &at)
+	expiring, _, err := s.NewToken(ctx, u.ID, "soon", &at, Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -727,11 +730,10 @@ func TestDisabledCredentialIsRefusedByName(t *testing.T) {
 	ctx := context.Background()
 	u := user(t, s, "lu", false)
 	raw, _, _ := s.NewSession(ctx, u.ID, "")
-	tok, _, _ := s.NewToken(ctx, u.ID, "t", nil)
+	tok, _, _ := s.NewToken(ctx, u.ID, "t", nil, Grant{})
 	// Disabled at the store, as a race with the sign-out would find it.
 	now := time.Now()
-	u.DisabledAt = &now
-	if err := mem.UpdateUser(ctx, u); err != nil {
+	if _, err := mem.SetUserDisabled(ctx, u.ID, &now, now); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.AuthenticateSession(ctx, raw); !errors.Is(err, ErrDisabled) {
@@ -808,6 +810,47 @@ func TestALoginCannotUndoAPasswordReset(t *testing.T) {
 	}
 	if m, err := mem.GetMethod(ctx, u.ID, KindPassword); err != nil || m.LastUsedAt == nil {
 		t.Errorf("the use went unrecorded: %+v, %v", m, err)
+	}
+}
+
+// demoteOnRead demotes and disables the account right after a profile edit
+// has read it: the moment a whole-row write would put the old role back.
+type demoteOnRead struct {
+	DB
+	demote func()
+}
+
+func (d *demoteOnRead) GetUser(ctx context.Context, id string) (User, error) {
+	u, err := d.DB.GetUser(ctx, id)
+	if d.demote != nil {
+		demote := d.demote
+		d.demote = nil
+		demote()
+	}
+	return u, err
+}
+
+// A profile edit in flight while an admin downgrades the account must not
+// write the old role, or the old enabled state, back.
+func TestAProfileEditCannotUndoARoleChange(t *testing.T) {
+	admin, mem, now := newService(t)
+	ctx := context.Background()
+	u := user(t, admin, "lu", false)
+	s := New(&demoteOnRead{DB: mem, demote: func() {
+		if _, err := admin.SetRole(ctx, u.ID, RoleGuest); err != nil {
+			t.Error(err)
+		}
+		if _, err := admin.SetDisabled(ctx, u.ID, true); err != nil {
+			t.Error(err)
+		}
+	}})
+	s.now = func() time.Time { return *now }
+	got, err := s.UpdateProfile(ctx, u.ID, Profile{Name: "Lucas"})
+	if err != nil || got.Name != "Lucas" || got.Role != RoleGuest || !got.Disabled() {
+		t.Errorf("the edit that raced = %+v, %v", got, err)
+	}
+	if stored, _ := mem.GetUser(ctx, u.ID); stored.Name != "Lucas" || stored.Role != RoleGuest || !stored.Disabled() {
+		t.Errorf("stored = %+v, want the new name, guest and disabled", stored)
 	}
 }
 
@@ -976,7 +1019,7 @@ func TestGetUserByLoginNormalises(t *testing.T) {
 func TestMemEdges(t *testing.T) {
 	ctx := context.Background()
 	m := NewMem()
-	if err := m.UpdateUser(ctx, User{ID: "nobody"}); !errors.Is(err, ErrNotFound) {
+	if _, err := m.UpdateUserProfile(ctx, "nobody", Profile{}, time.Now()); !errors.Is(err, ErrNotFound) {
 		t.Errorf("update nobody = %v", err)
 	}
 	if err := m.CreateUser(ctx, User{ID: "a", Handle: "a", Email: "a@x"}); err != nil {
@@ -985,7 +1028,7 @@ func TestMemEdges(t *testing.T) {
 	if err := m.CreateUser(ctx, User{ID: "b", Handle: "b", Email: "b@x"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.UpdateUser(ctx, User{ID: "b", Handle: "a", Email: "b@x"}); !errors.Is(err, ErrConflict) {
+	if _, err := m.UpdateUserProfile(ctx, "b", Profile{Handle: "a", Email: "b@x"}, time.Now()); !errors.Is(err, ErrConflict) {
 		t.Errorf("handle clash = %v", err)
 	}
 	if err := m.TouchUser(ctx, "nobody", time.Now()); err != nil {
@@ -1018,5 +1061,59 @@ func TestMemEdges(t *testing.T) {
 	}
 	if _, err := m.FindMethodBySubject(ctx, "passkey", "sub"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("another kind matched: %v", err)
+	}
+}
+
+// A token's grant: full by default; scoped only through the vocabulary's
+// check (none wired refuses every scoped token); workshops only with
+// actions; an empty workshop list is no limit; and the principal it
+// authenticates as carries it.
+func TestNewTokenGrant(t *testing.T) {
+	s, _, _ := newService(t)
+	ctx := context.Background()
+	u := user(t, s, "alice", false)
+
+	if _, _, err := s.NewToken(ctx, u.ID, "t", nil, Grant{Actions: []string{"run:read"}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("scoped with no vocabulary = %v", err)
+	}
+	var checked []string
+	s.CheckGrant = func(actions []string) error {
+		checked = actions
+		if slices.Contains(actions, "nope") {
+			return errors.New("unknown action nope")
+		}
+		return nil
+	}
+	if _, _, err := s.NewToken(ctx, u.ID, "t", nil, Grant{Actions: []string{"run:read", "nope"}}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "nope") {
+		t.Errorf("unknown action = %v", err)
+	}
+	if _, _, err := s.NewToken(ctx, u.ID, "t", nil, Grant{ProjectIDs: []string{"p1"}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("full token limited to workshops = %v", err)
+	}
+
+	in := Grant{Actions: []string{"run:read"}, ProjectIDs: []string{"p2", "p1", "p2"}}
+	secret, tok, err := s.NewToken(ctx, u.ID, "scoped", nil, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(checked, []string{"run:read"}) || !reflect.DeepEqual(tok.ProjectIDs, []string{"p1", "p2"}) || !tok.Scoped() {
+		t.Errorf("minted = %+v (checked %v)", tok, checked)
+	}
+	in.Actions[0] = "changed"
+	p, err := s.AuthenticateToken(ctx, secret)
+	if err != nil || !reflect.DeepEqual(p.Token.Actions, []string{"run:read"}) || !reflect.DeepEqual(p.Token.ProjectIDs, []string{"p1", "p2"}) {
+		t.Errorf("principal = %+v, %v", p.Token, err)
+	}
+
+	_, tok, err = s.NewToken(ctx, u.ID, "any workshop", nil, Grant{Actions: []string{"run:read"}, ProjectIDs: []string{}})
+	if err != nil || tok.ProjectIDs != nil {
+		t.Errorf("empty workshop list = %#v, %v", tok.ProjectIDs, err)
+	}
+	_, tok, err = s.NewToken(ctx, u.ID, "full", nil, Grant{})
+	if err != nil || tok.Scoped() || tok.ProjectIDs != nil {
+		t.Errorf("full = %+v, %v", tok, err)
+	}
+	if p, _ := s.AuthenticateToken(ctx, secret); !(Principal{User: User{Role: RoleAdmin}}).Admin() || p.Admin() {
+		t.Error("Admin() is not the role")
 	}
 }

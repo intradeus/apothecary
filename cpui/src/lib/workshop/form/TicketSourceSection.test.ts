@@ -46,6 +46,13 @@ describe('TicketSourceSection', () => {
 			'/system/integrations'
 		);
 	});
+
+	it('keeps a shared workshop’s source, its owner’s, offering none of the caller’s', () => {
+		const props = setup({ shared: true, ticketSourceId: 'owners-jira' });
+		expect(screen.getByText(/its owner’s ticket source/)).toBeInTheDocument();
+		expect(screen.queryByRole('combobox', { name: 'Ticket source' })).toBeNull();
+		expect(props.ticketSourceId).toBe('owners-jira');
+	});
 });
 
 describe('ticketSourceLabel', () => {

@@ -22,11 +22,15 @@
 
 	let {
 		sources,
-		ticketSourceId = $bindable()
+		ticketSourceId = $bindable(),
+		shared = false
 	}: {
 		/** The user's ticket-source integrations. */
 		sources: Integration[];
 		ticketSourceId: string;
+		/** The workshop is someone else's: its ticket source is its owner's,
+		 *  which the caller cannot see or replace, so it is kept as it is. */
+		shared?: boolean;
 	} = $props();
 
 	// The built-in tracker first; until it exists, '' stands for it.
@@ -42,11 +46,18 @@
 
 <FormSub>
 	<h3>{t('form.project.ticketSource.head')}</h3>
-	<div class="field">
-		<label for="p-tickets">{t('form.project.ticketSource.label')}</label>
-		<Select id="p-tickets" {options} bind:value={ticketSourceId} />
-		<div class="help">
-			{@html th('form.project.ticketSource.help', { href: to.system('integrations') })}
+	{#if shared}
+		<div class="field">
+			<span class="field-label">{t('form.project.ticketSource.label')}</span>
+			<div class="help">{t('form.project.ticketSource.owners')}</div>
 		</div>
-	</div>
+	{:else}
+		<div class="field">
+			<label for="p-tickets">{t('form.project.ticketSource.label')}</label>
+			<Select id="p-tickets" {options} bind:value={ticketSourceId} />
+			<div class="help">
+				{@html th('form.project.ticketSource.help', { href: to.system('integrations') })}
+			</div>
+		</div>
+	{/if}
 </FormSub>

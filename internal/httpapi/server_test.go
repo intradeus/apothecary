@@ -17,6 +17,7 @@ import (
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/auth/authtest"
+	"apothecary/internal/account/authz"
 	"apothecary/internal/adapters/fake"
 	"apothecary/internal/engine"
 	"apothecary/internal/engine/ask"
@@ -97,16 +98,22 @@ func (x *env) signIn(t *testing.T) {
 	svc := authtest.New(x.users)
 	now := time.Now().UTC()
 	if err := x.users.CreateUser(context.Background(), auth.User{
-		ID: testUser, Handle: "tester", Email: "tester@example.test", Name: "Tester", Admin: true,
+		ID: testUser, Handle: "tester", Email: "tester@example.test", Name: "Tester", Role: auth.RoleAdmin,
 		CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	secret, _, err := svc.NewToken(context.Background(), testUser, "tests", nil)
+	secret, _, err := svc.NewToken(context.Background(), testUser, "tests", nil, auth.Grant{})
 	if err != nil {
 		t.Fatal(err)
 	}
+	svc.CheckGrant = authz.ValidateGrant
 	x.srv.Auth = svc
+	az, err := authz.New(x.srv.Conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	x.srv.Authz = az
 	x.token = secret
 }
 

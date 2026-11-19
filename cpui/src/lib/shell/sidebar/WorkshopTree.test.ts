@@ -2,6 +2,8 @@ import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fleet } from '$lib/app/fleet.svelte';
+import { session } from '$lib/app/session.svelte';
+import type { Me } from '$lib/domain';
 import { aPing, aProject, aRun } from '$test/fixtures';
 import WorkshopTree from './WorkshopTree.svelte';
 
@@ -12,6 +14,7 @@ const web = aProject({ id: 'p2', name: 'web' });
 const run = aRun({ id: '01RUNABCD', title: 'Fix the invoice', projectId: 'p1' });
 
 beforeEach(() => {
+	session.me = null;
 	fleet.reset();
 	fleet.projects = [billing, web];
 	fleet.runs = [run];
@@ -56,6 +59,13 @@ describe('WorkshopTree', () => {
 			'/w/new'
 		);
 		expect(links).toHaveLength(2);
+	});
+
+	it('offers a guest no new workshop: it creates none', () => {
+		session.me = { user: { id: 'u', handle: 'lu', name: 'Lu', role: 'guest' } } as Me;
+		render(WorkshopTree, { workshops: [] });
+		expect(screen.queryByRole('link')).not.toBeInTheDocument();
+		session.me = null;
 	});
 
 	it('tells the drawer a link was followed', async () => {

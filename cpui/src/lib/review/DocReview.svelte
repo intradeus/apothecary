@@ -43,6 +43,7 @@
 	import { bump } from '$lib/ui/motion';
 	import { onMount } from 'svelte';
 	import { t, th } from '$lib/i18n/index.svelte';
+	import { fleet } from '$lib/app/fleet.svelte';
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
 
@@ -60,6 +61,9 @@
 	let summary = $state('');
 	let error = $state('');
 	let busy = $state(false);
+	// Answering is run:operate in the run's workshop.
+	const canAnswer = $derived(fleet.can(fleet.runById.get(ping.runId)?.projectId, 'run:operate'));
+	const locked = $derived(busy || !canAnswer);
 	let files = $state<File[]>([]); // the review's own attachments
 	let showAll = $state(false);
 	let view = $state<FileView | null>(null);
@@ -439,7 +443,7 @@
 
 		<footer class="pane-foot sf">
 			{#if !isGate && shape === 'fields' && ping.form}
-				<PingFormFields form={ping.form} bind:values disabled={busy} />
+				<PingFormFields form={ping.form} bind:values disabled={locked} />
 			{/if}
 			<label class="sum">
 				<span class="caption">{t('doc.summary')}</span>
@@ -456,18 +460,19 @@
 			</label>
 			<AttachFiles bind:files label={t('doc.attachReview')} compact />
 			{#if error}<div class="error">{error}</div>{/if}
+			{#if !canAnswer}<p class="note">{t('common.needsPermission')}</p>{/if}
 			{#if isGate}
 				<div class="acts">
 					<button
 						class="btn-primary"
-						disabled={busy}
+						disabled={locked}
 						aria-busy={busy && sending === 'approve'}
 						onclick={() => submit('approve')}
 						>{said ? t('doc.approveWith') : t('doc.approve')}</button
 					>
 					<button
 						class="btn-sel"
-						disabled={busy || !said}
+						disabled={locked || !said}
 						aria-busy={busy && sending === 'reject'}
 						title={said ? '' : t('doc.rejectNeeds')}
 						onclick={() => submit('reject')}
@@ -480,7 +485,7 @@
 					{#each lone.options as opt, i (opt.id)}
 						<button
 							class={i === 0 ? 'btn-primary' : ''}
-							disabled={busy}
+							disabled={locked}
 							aria-busy={busy && sending === opt.id}
 							title={opt.detail ?? ''}
 							onclick={() => submit('accept', summary.trim(), { [lone.id]: opt.id }, opt.id)}
@@ -494,7 +499,7 @@
 				<div class="acts">
 					<button
 						class="btn-primary"
-						disabled={busy || !summary.trim()}
+						disabled={locked || !summary.trim()}
 						aria-busy={busy && sending === 'accept'}
 						onclick={sendText}
 					>
@@ -506,7 +511,7 @@
 				<div class="acts">
 					<button
 						class="btn-primary"
-						disabled={busy || missing.length > 0}
+						disabled={locked || missing.length > 0}
 						aria-busy={busy && sending === 'accept'}
 						title={missing.length
 							? t('ping.missing', { fields: missing.map(fieldLabel).join(', ') })
@@ -532,7 +537,7 @@
 {#snippet decline()}
 	<button
 		class="btn-ghost"
-		disabled={busy || !summary.trim()}
+		disabled={locked || !summary.trim()}
 		aria-busy={busy && sending === 'decline'}
 		title={summary.trim() ? t('ping.declineTitle') : t('doc.declineNeeds')}
 		onclick={() => submit('decline')}>{t('doc.decline')}</button

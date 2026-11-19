@@ -884,3 +884,152 @@ func (s *Store) DeleteCredential(ctx context.Context, id string) error {
 	}
 	return nil
 }
+
+// --- members ------------------------------------------------------------------
+
+func (s *Store) ListVisibleProjects(ctx context.Context, userID string, projectIDs []string) ([]confstore.Project, error) {
+	if projectIDs == nil {
+		projectIDs = []string{}
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+projectCols+` FROM projects
+		WHERE ($1 <> '' AND user_id=$1) OR id = ANY($2) ORDER BY created_at`, userID, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.Project
+	for rows.Next() {
+		p, err := scanProject(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) PutMember(ctx context.Context, m confstore.Member, from string) error {
+	// One statement each way: the role is compared and written atomically.
+	var tag pgconn.CommandTag
+	var err error
+	if from == "" {
+		tag, err = s.pool.Exec(ctx, `INSERT INTO project_members (project_id, user_id, role, created_at)
+			VALUES ($1,$2,$3,$4) ON CONFLICT (project_id, user_id) DO NOTHING`,
+			m.ProjectID, m.UserID, m.Role, m.CreatedAt)
+	} else {
+		tag, err = s.pool.Exec(ctx, `UPDATE project_members SET role=$3
+			WHERE project_id=$1 AND user_id=$2 AND role=$4`,
+			m.ProjectID, m.UserID, m.Role, from)
+	}
+	var pg *pgconn.PgError
+	switch {
+	case errors.As(err, &pg) && pg.Code == "23514":
+		return fmt.Errorf("member role %q: %w", m.Role, confstore.ErrInvalid)
+	case isFK(err) && strings.Contains(err.Error(), "project_id"):
+		return fmt.Errorf("project %s: %w", m.ProjectID, confstore.ErrNotFound)
+	case isFK(err):
+		return fmt.Errorf("user %s: %w", m.UserID, confstore.ErrNotFound)
+	case err != nil:
+		return err
+	case tag.RowsAffected() == 1:
+		return nil
+	}
+	if _, err := s.GetProject(ctx, m.ProjectID); err != nil {
+		return err
+	}
+	return memberChanged(m.UserID, from)
+}
+
+// memberChanged is a compare-and-swap that lost: the role is no longer from.
+func memberChanged(userID, from string) error {
+	if from == "" {
+		from = "none"
+	}
+	return fmt.Errorf("member %s: the role is no longer %s; reload and try again: %w", userID, from, confstore.ErrConflict)
+}
+
+const memberCols = `project_id, user_id, role, created_at`
+
+func (s *Store) GetMember(ctx context.Context, projectID, userID string) (confstore.Member, error) {
+	var m confstore.Member
+	err := s.pool.QueryRow(ctx, `SELECT `+memberCols+` FROM project_members WHERE project_id=$1 AND user_id=$2`,
+		projectID, userID).Scan(&m.ProjectID, &m.UserID, &m.Role, &m.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return m, fmt.Errorf("member %s: %w", userID, confstore.ErrNotFound)
+	}
+	return m, err
+}
+
+func (s *Store) ListMembers(ctx context.Context, projectID string) ([]confstore.Member, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+memberCols+` FROM project_members WHERE project_id=$1 ORDER BY created_at, user_id`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.Member
+	for rows.Next() {
+		var m confstore.Member
+		if err := rows.Scan(&m.ProjectID, &m.UserID, &m.Role, &m.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) DeleteMember(ctx context.Context, projectID, userID, from string) error {
+	tag, err := s.pool.Exec(ctx, `DELETE FROM project_members WHERE project_id=$1 AND user_id=$2 AND role=$3`, projectID, userID, from)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 1 {
+		return nil
+	}
+	if _, err := s.GetMember(ctx, projectID, userID); err != nil {
+		return err
+	}
+	return memberChanged(userID, from)
+}
+
+func (s *Store) ProjectAccess(ctx context.Context, projectID, userID string) (string, string, error) {
+	var owner string
+	var role *string
+	err := s.pool.QueryRow(ctx, `SELECT p.user_id, m.role FROM projects p
+		LEFT JOIN project_members m ON m.project_id = p.id AND m.user_id = $2
+		WHERE p.id = $1`, projectID, userID).Scan(&owner, &role)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", "", fmt.Errorf("project %s: %w", projectID, confstore.ErrNotFound)
+	}
+	if err != nil {
+		return "", "", err
+	}
+	switch {
+	case owner == userID:
+		return owner, confstore.RoleOwner, nil
+	case role != nil:
+		return owner, *role, nil
+	}
+	return owner, "", nil
+}
+
+func (s *Store) ProjectsOf(ctx context.Context, userID string) ([]confstore.Reach, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, user_id, 'owner' FROM projects WHERE user_id = $1
+		UNION ALL
+		SELECT p.id, p.user_id, m.role FROM project_members m JOIN projects p ON p.id = m.project_id
+		WHERE m.user_id = $1 AND p.user_id <> $1
+		ORDER BY 1`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []confstore.Reach
+	for rows.Next() {
+		var r confstore.Reach
+		if err := rows.Scan(&r.ProjectID, &r.OwnerID, &r.Role); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}

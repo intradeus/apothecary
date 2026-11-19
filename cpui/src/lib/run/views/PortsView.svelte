@@ -24,6 +24,9 @@
 
 	let { rs, visible }: { rs: RunStore; visible: boolean } = $props();
 
+	// Exposing a port and tunnelling to it: a live run, and run:shell in its
+	// workshop. Without it the table only reads.
+	const reach = $derived(!rs.terminal && rs.canShell);
 	$effect(() => {
 		if (!visible) return;
 		return rs.usePorts();
@@ -101,15 +104,15 @@
 		<PortTable
 			{rows}
 			nameHeader={t('runview.ports.col_service')}
-			forward={rs.terminal ? undefined : forwardOne}
+			forward={reach ? forwardOne : undefined}
 			links={rs.portLinks}
-			onopen={rs.terminal ? undefined : expose}
+			onopen={reach ? expose : undefined}
 			{busy}
 		/>
-		{#if !rs.terminal}<div class="help">{t('runview.ports.forward_hint')}</div>{/if}
+		{#if reach}<div class="help">{t('runview.ports.forward_hint')}</div>{/if}
 		{#if rs.portLinks}<div class="help">{t('runview.ports.web_only')}</div>{/if}
 	{/if}
-	{#if !rs.terminal && rs.portLinks}
+	{#if reach && rs.portLinks}
 		<div class="caption">{t('runview.ports.another')}</div>
 		<div class="ex">
 			<input
@@ -129,7 +132,7 @@
 		</div>
 	{/if}
 	{#if error}<div class="error">{error}</div>{/if}
-	{#if !rs.terminal && rows.length > 0}
+	{#if reach && rows.length > 0}
 		<div class="caption">{t('runview.ports.forward_all')}</div>
 		<CopyCommand command={`apothecary forward ${ws}`} help={t('runview.ports.forward_help')} />
 		<CopyCommand

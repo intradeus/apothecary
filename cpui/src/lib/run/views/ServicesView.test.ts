@@ -8,7 +8,7 @@ import { to } from '$lib/core/urls';
 import type { RunServices, ServicePortStatus, ServiceStatus } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aProject, aRun } from '$test/fixtures';
+import { aProject, aRun, aViewerProject } from '$test/fixtures';
 import { AT, NOW, aLiveRun, anEvent, aService, aViewStore } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
 import ServicesView from './ServicesView.svelte';
@@ -242,6 +242,30 @@ describe('ServicesView', () => {
 			await open([aService()], { workspace: false });
 			expect(btn(/Restart$/)).toBeDisabled();
 			expect(btn('Stop')).toBeDisabled();
+		});
+
+		it('holds every control from a viewer of the workshop, saying why', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			const rs = aViewStore(aLiveRun({ projectId: 'p1' }));
+			const view = await open([aService()], { rs });
+			for (const b of [btn(/Restart$/), btn('Stop')]) {
+				expect(b).toBeDisabled();
+				expect(b).toHaveAttribute('title', 'Your role in this workshop does not allow this');
+			}
+			view.unmount();
+			await open([aService({ state: 'stopped' })], { rs });
+			expect(btn('Start')).toBeDisabled();
+			expect(btn('Start').title).toBe('Your role in this workshop does not allow this');
+		});
+
+		it('offers a viewer no forward line', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			const ports: ServicePortStatus[] = [
+				{ port: 5432, protocol: 'tcp', address: 'localhost:5432' }
+			];
+			await open([aService({ ports })], { rs: aViewStore(aLiveRun({ projectId: 'p1' })) });
+			expect(noBtn(/apothecary forward/)).not.toBeInTheDocument();
+			expect(screen.queryByText(/^forward copies the command/)).not.toBeInTheDocument();
 		});
 	});
 

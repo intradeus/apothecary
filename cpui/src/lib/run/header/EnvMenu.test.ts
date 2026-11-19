@@ -3,6 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aViewerProject } from '$test/fixtures';
 import type { RunSsh } from '$lib/domain';
 import { toasts } from '$lib/ui/toast.svelte';
 import { bound, settled } from '$test/fixtures/run-components';
@@ -348,6 +350,27 @@ describe('EnvMenu', () => {
 			setup();
 			await settled();
 			expect(screen.getByRole('link', { name: /app :3000/ })).toBeInTheDocument();
+		});
+	});
+
+	describe('for a viewer of the workshop', () => {
+		afterEach(() => {
+			fleet.projects = [];
+		});
+		it('neither reads the door nor links into the workspace', async () => {
+			fleet.projects = [aViewerProject({ id: 'p1' })];
+			vi.mocked(api.runs.ports).mockResolvedValue({
+				exposed: [{ port: 3000, url: 'http://app.test' }],
+				observed: []
+			} as never);
+			setup(true, aViewStore(aLiveRun({ projectId: 'p1' })));
+			await settled();
+			expect(api.runs.ssh).not.toHaveBeenCalled();
+			expect(
+				screen.getByText('Your role in this workshop does not allow this')
+			).toBeInTheDocument();
+			expect(screen.queryByRole('link', { name: /app :3000/ })).not.toBeInTheDocument();
+			expect(screen.queryByText(/\d links?/)).not.toBeInTheDocument();
 		});
 	});
 });

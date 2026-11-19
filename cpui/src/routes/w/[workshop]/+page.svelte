@@ -1,12 +1,14 @@
 <script lang="ts">
 	// Workshop overview (DESIGN 7.7): the header, then a tab strip — Overview,
-	// Runs, Tickets, Merge requests, Flows, Automations, Health, Settings —
-	// driven by ?tab=.
+	// Runs, Tickets, Merge requests, Flows, Automations, Health, Members,
+	// Settings — driven by ?tab=. Settings is listed only to a caller holding
+	// project:write (kept while the workshop loads, when nothing renders under
+	// it anyway); without it ?tab=settings falls back to Overview.
 	import { errorMessage } from '$lib/core/errors';
 	import { onMount } from 'svelte';
 	import { page } from '$app/state';
 	import { api } from '$lib/api';
-	import type { Flow, Integration, Project } from '$lib/domain';
+	import { projectCan, type Flow, type Integration, type Project } from '$lib/domain';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to, type WorkshopTab } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
@@ -26,10 +28,11 @@
 	import MergeRequestsTab from '$lib/workshop/MergeRequestsTab.svelte';
 	import HealthTab from '$lib/workshop/HealthTab.svelte';
 	import SettingsTab from '$lib/workshop/SettingsTab.svelte';
+	import MembersTab from '$lib/workshop/MembersTab.svelte';
 
 	const slot = provideHeaderSlot();
 	const projectId = $derived(page.params.workshop!);
-	const TABS: WorkshopTab[] = [
+	const ALL_TABS: WorkshopTab[] = [
 		'overview',
 		'runs',
 		'tickets',
@@ -37,8 +40,12 @@
 		'flows',
 		'automations',
 		'health',
+		'members',
 		'settings'
 	];
+	const TABS = $derived(
+		ALL_TABS.filter((tb) => tb !== 'settings' || !project || projectCan(project, 'project:write'))
+	);
 	const tab = $derived.by<WorkshopTab>(() => {
 		const q = page.url.searchParams.get('tab') as WorkshopTab | null;
 		return q && TABS.includes(q) ? q : 'overview';
@@ -93,6 +100,7 @@
 		flows: t('page.workshops.flows'),
 		automations: t('page.workshop.tabAutomations'),
 		health: t('page.workshop.tabHealth'),
+		members: t('page.workshop.tabMembers'),
 		settings: t('page.workshop.tabSettings')
 	});
 
@@ -168,9 +176,9 @@
 			{#if tab === 'overview'}
 				<OverviewTab {project} {integrations} {flows} {runs} />
 			{:else if tab === 'runs'}
-				<RunsTab {project} {runs} {integrations} />
+				<RunsTab {project} {runs} />
 			{:else if tab === 'tickets'}
-				<TicketsTab {project} {integrations} />
+				<TicketsTab {project} />
 			{:else if tab === 'mrs'}
 				<MergeRequestsTab {project} {flows} />
 			{:else if tab === 'flows'}
@@ -179,6 +187,8 @@
 				<AutomationsTab {project} {integrations} />
 			{:else if tab === 'health'}
 				<HealthTab {project} />
+			{:else if tab === 'members'}
+				<MembersTab {project} />
 			{:else if tab === 'settings'}
 				<SettingsTab {project} {integrations} {flows} {runs} onsaved={(p) => (project = p)} />
 			{/if}

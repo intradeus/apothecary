@@ -28,7 +28,7 @@ import (
 
 // SpecVersion is the documented API version. Bump it when the surface changes
 // in a way a client must notice.
-const SpecVersion = "1.2.0"
+const SpecVersion = "2.0.0"
 
 var pathParamRE = regexp.MustCompile(`\{([a-zA-Z_][a-zA-Z0-9_]*)\}`)
 
@@ -245,6 +245,12 @@ func addRoute(doc *openapi3.T, rt Route, schemaFor func(any) (*openapi3.SchemaRe
 		op.AddResponse(code, errResp)
 	}
 
+	// What the route does, in the authorizer's vocabulary: what a role or a
+	// limited token must hold to call it.
+	if rt.Action != "" {
+		op.Extensions = map[string]any{"x-apothecary-action": string(rt.Action)}
+	}
+
 	doc.AddOperation(rt.Path, rt.Method, op)
 	return nil
 }
@@ -264,7 +270,9 @@ func errorCodes(rt Route) []int {
 	if rt.Auth != AccessPublic {
 		codes = append(codes, http.StatusUnauthorized)
 	}
-	if rt.Auth == AccessAdmin {
+	// A user route's action may be one the caller's role, workshop role or
+	// token does not hold.
+	if rt.Auth == AccessUser {
 		codes = append(codes, http.StatusForbidden)
 	}
 	// Any endpoint can be served by an engine that lacks the dependency it

@@ -4,7 +4,8 @@ import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import type { RunCheckout, WorkspaceChanges } from '$lib/domain';
-import { aRun } from '$test/fixtures';
+import { fleet } from '$lib/app/fleet.svelte';
+import { aRun, aViewerProject } from '$test/fixtures';
 import { NOW, aLiveRun, anEvent, aViewStore } from '$test/fixtures/run-views';
 import WorkspaceView from './WorkspaceView.svelte';
 
@@ -325,5 +326,14 @@ describe('WorkspaceView', () => {
 			await rerender({ visible: true });
 			expect(api.workspace.changes).toHaveBeenCalledTimes(2);
 		});
+	});
+
+	it('opens no shell for a viewer of the workshop, saying why', async () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		show('terminal', aViewStore(aLiveRun({ projectId: 'p1' })));
+		await tick();
+		expect(screen.getByText('Your role in this workshop does not allow this')).toBeInTheDocument();
+		expect(api.workspace.terminalUrl).not.toHaveBeenCalled();
+		fleet.projects = [];
 	});
 });
