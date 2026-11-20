@@ -64,8 +64,6 @@ export class FlowEditor {
 
 	validateOpen = $state(false);
 	showVersions = $state(false);
-	/** The assistant's panel is open beside the canvas. */
-	showAssistant = $state(false);
 	/** Bumped each time the flow is loaded, saved or replaced by a version:
 	 *  what an assistant's fill could undo is gone. */
 	replaced = $state(0);

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ticketFill, type TicketFields } from '$lib/domain';
-import { FillGuard, HandoffGuard, NoFill } from './fillGuard.svelte';
+import { FillGuard, HandoffGuard } from './fillGuard.svelte';
 
 function page(init: TicketFields) {
 	let cur = { ...init };
@@ -111,23 +111,6 @@ describe('FillGuard', () => {
 		expect(p.guard.undo).toBeNull();
 		p.guard.revert();
 		expect(p.get().title).toBe('T');
-	});
-});
-
-describe('NoFill', () => {
-	it('fills nothing, and knows when it asked', () => {
-		const g = new NoFill();
-		g.ask();
-		expect(g.asking).toBe(true);
-		expect(g.offer()).toBe(false);
-		expect(g.applyNow()).toBe(false);
-		g.applyPending();
-		g.discardPending();
-		g.revert();
-		g.answered();
-		expect(g.asking).toBe(false);
-		expect(g.changed).toEqual([]);
-		expect(g.pending).toBeNull();
 	});
 });
 

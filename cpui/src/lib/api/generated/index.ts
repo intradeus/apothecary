@@ -203,7 +203,6 @@ export {
 	setAskModel,
 	setAssistantChoice,
 	setAssistantModel,
-	setAssistantSubject,
 	setEgressRule,
 	setLimits,
 	setProjectSecret,
@@ -243,7 +242,8 @@ export {
 	updateWorkshopTicket,
 	uploadAttachments,
 	validateFlow,
-	waitRun
+	waitRun,
+	warmAssistant
 } from './sdk.gen';
 export type {
 	AbortRunData,
@@ -328,7 +328,6 @@ export type {
 	AssistantSession,
 	AssistantSessionView,
 	AssistantStatus,
-	AssistantSubjectRequest,
 	Attachment,
 	AttemptFacts,
 	AuthBrokerDeleteData,
@@ -1266,10 +1265,6 @@ export type {
 	SetAssistantModelErrors,
 	SetAssistantModelResponse,
 	SetAssistantModelResponses,
-	SetAssistantSubjectData,
-	SetAssistantSubjectErrors,
-	SetAssistantSubjectResponse,
-	SetAssistantSubjectResponses,
 	SetEgressRuleData,
 	SetEgressRuleErrors,
 	SetEgressRuleResponse,
@@ -1493,6 +1488,9 @@ export type {
 	WaitRunErrors,
 	WaitRunResponse,
 	WaitRunResponses,
+	WarmAssistantData,
+	WarmAssistantErrors,
+	WarmAssistantResponses,
 	WorkshopRef,
 	WorkspaceChangedFile,
 	WorkspaceChanges,

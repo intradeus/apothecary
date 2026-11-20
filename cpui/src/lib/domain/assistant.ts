@@ -1,7 +1,7 @@
-// The assistant beside a page (a flow, a ticket, a skill, a run, a
-// dashboard) or none (the command palette's): a person's conversation with
-// an agent in their own pod, which acts two ways, both through the person:
-// it fills the page's inputs, and it asks the person to confirm acts.
+// The person's assistant: a conversation with an agent in their own pod.
+// On a page (a flow, a ticket, a skill, a run, a dashboard) a fresh
+// session fills the page's inputs; the general session, behind the
+// assistant button on every page, asks the person to confirm acts.
 // Frontend-owned shapes; the mappers translate.
 
 export type AssistantKind = 'flow' | 'ticket' | 'skill' | 'run' | 'dashboard' | 'general';
@@ -53,12 +53,19 @@ export interface AssistantRepo {
 	at: string;
 }
 
+/** A skillset the person chose for their assistant: no seq, the latest. */
+export interface AssistantSkillsetRef {
+	id: string;
+	seq?: number;
+}
+
 export interface AssistantStatus {
 	enabled: boolean;
 	/** Why it cannot run, when it cannot. */
 	reason?: string;
-	/** The harness integration and model a new session starts with. */
-	choice: { integration: string; model: string };
+	/** The harness integration and model a new session starts with, and the
+	 *  skillsets it installs. */
+	choice: { integration: string; model: string; skillsets: AssistantSkillsetRef[] };
 	integrations: AssistantIntegration[];
 	models: string[];
 	pod: { state: string; error?: string };

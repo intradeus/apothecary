@@ -396,6 +396,10 @@ components:
           type: string
         model:
           type: string
+        skillsets:
+          items:
+            $ref: '#/components/schemas/Ref'
+          type: array
       required:
         - integration
         - model
@@ -406,6 +410,10 @@ components:
           type: string
         model:
           type: string
+        skillsets:
+          items:
+            $ref: '#/components/schemas/Ref'
+          type: array
       required:
         - integration
         - model
@@ -486,6 +494,8 @@ components:
       type: object
     AssistantOpenRequest:
       properties:
+        fresh:
+          type: boolean
         kind:
           type: string
         subject:
@@ -577,6 +587,10 @@ components:
           type: string
         model:
           type: string
+        skillsets:
+          items:
+            $ref: '#/components/schemas/SkillsetPin'
+          type: array
         subject:
           type: string
         updated_at:
@@ -648,13 +662,6 @@ components:
         - pages
         - pod
         - repos
-      type: object
-    AssistantSubjectRequest:
-      properties:
-        subject:
-          type: string
-      required:
-        - subject
       type: object
     Attachment:
       properties:
@@ -6391,6 +6398,7 @@ paths:
       x-apothecary-action: assistant:read
   /api/assistant/choice:
     put:
+      description: 'Applies to sessions opened from now on: an open one keeps what it started with.'
       operationId: setAssistantChoice
       requestBody:
         content:
@@ -6428,7 +6436,7 @@ paths:
       security:
         - session: []
         - personalToken: []
-      summary: Pick the harness integration (one's own) the assistant runs on, and the model it starts with
+      summary: Pick the harness integration (one's own) the assistant runs on, the model it starts with and the skillsets it installs
       tags:
         - assistant
       x-apothecary-action: assistant:write
@@ -6480,7 +6488,7 @@ paths:
       x-apothecary-action: assistant:write
   /api/assistant/sessions:
     post:
-      description: kind is flow, ticket or skill; subject the flow's name, the ticket's key, the skill's id, or a draft id before the first save. A flow's or a ticket's session names its workshop.
+      description: kind is flow, ticket, skill, run, dashboard (a page's session, which fills it) or general (the assistant button's, which acts by requests); subject the flow's name, the ticket's key, the skill's id, the run's id, the dashboard's id, or a draft id before the first save. A flow's, a ticket's or a run's session names its workshop. fresh opens a new session even when one exists.
       operationId: openAssistantSession
       requestBody:
         content:
@@ -6935,59 +6943,6 @@ paths:
       tags:
         - assistant
       x-apothecary-action: assistant:fill
-  /api/assistant/sessions/{id}/subject:
-    put:
-      operationId: setAssistantSubject
-      parameters:
-        - in: path
-          name: id
-          required: true
-          schema:
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AssistantSubjectRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AssistantSession'
-          description: OK
-        "400":
-          content:
-            application/json: {}
-          description: error
-        "401":
-          content:
-            application/json: {}
-          description: error
-        "403":
-          content:
-            application/json: {}
-          description: error
-        "404":
-          content:
-            application/json: {}
-          description: error
-        "409":
-          content:
-            application/json: {}
-          description: error
-        "503":
-          content:
-            application/json: {}
-          description: error
-      security:
-        - session: []
-        - personalToken: []
-      summary: Move a draft's session to what it was saved as
-      tags:
-        - assistant
-      x-apothecary-action: assistant:write
   /api/assistant/stream:
     get:
       description: 'Every session''s answers as they are written (delta), messages as they land, a session''s state, fills for the page, repository fetches. id is the frame''s sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.'
@@ -7028,6 +6983,40 @@ paths:
       tags:
         - assistant
       x-apothecary-action: assistant:read
+  /api/assistant/warm:
+    post:
+      description: Called as the person starts typing a question, so its answer does not wait for the pod. Returns at once; one warm runs at a time. 409 when no harness is chosen.
+      operationId: warmAssistant
+      responses:
+        "202":
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Start one's assistant pod ahead of a question
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
   /api/attachments:
     post:
       operationId: uploadAttachments

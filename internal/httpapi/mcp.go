@@ -610,7 +610,8 @@ func boundRoute(id string) bool { return id == fillRouteID || id == requestRoute
 
 // boundTool is fill or request as an assistant session's token sees it: its
 // session bound, fill's input its page's fill (a page with none lists no
-// fill). ok false for any other principal.
+// fill), request only for a page that acts. ok false for any other
+// principal.
 func (s *Server) boundTool(ctx context.Context, p auth.Principal, t *mcpTool, rt Route) (*mcpTool, bool) {
 	if s.Assistant == nil || p.Token == nil {
 		return nil, false
@@ -619,7 +620,7 @@ func (s *Server) boundTool(ctx context.Context, p auth.Principal, t *mcpTool, rt
 	if err != nil || !d.Allowed() {
 		return nil, false
 	}
-	sid, schema, ok := s.Assistant.FillTool(ctx, p.Token.ID)
+	sid, schema, acts, ok := s.Assistant.FillTool(ctx, p.Token.ID)
 	if !ok {
 		return nil, false
 	}
@@ -632,6 +633,9 @@ func (s *Server) boundTool(ctx context.Context, p auth.Principal, t *mcpTool, rt
 		}
 		bound.def.InputSchema = schema
 	} else {
+		if !acts {
+			return nil, false
+		}
 		bound.def.InputSchema = withoutArg(t.def.InputSchema, "id")
 	}
 	// Neither changes anything until the person does.

@@ -10,16 +10,18 @@ import (
 // profile is how a harness runs as an assistant session: its ACP command
 // (absolute: the session has no PATH lookup through a shell, and the
 // musl builds are executed directly), the other programs it runs, its
-// environment, its session mode, and the settings that keep it from
+// environment, its session mode, the settings that keep it from
 // offering the tools the session has no use for (its shell, its writes,
-// web fetches). Landlock and the gateway are what hold; this keeps the
-// agent from reaching for tools that would only fail.
+// web fetches), and its user-level skills directory, where the person's
+// chosen skills go. Landlock and the gateway are what hold; this keeps
+// the agent from reaching for tools that would only fail.
 type profile struct {
-	argv  []string
-	exec  []string
-	envs  map[string]string
-	mode  string
-	files func(home string) []homeFile
+	argv   []string
+	exec   []string
+	envs   map[string]string
+	mode   string
+	files  func(home string) []homeFile
+	skills func(home string) string
 }
 
 type homeFile struct{ path, content string }
@@ -43,6 +45,7 @@ var profiles = map[string]profile{
 		files: func(home string) []homeFile {
 			return []homeFile{{path.Join(home, ".claude", "settings.json"), `{"permissions":{"deny":["Bash","Edit","Write","NotebookEdit","WebFetch","WebSearch","Task"]}}`}}
 		},
+		skills: func(home string) string { return path.Join(home, ".claude", "skills") },
 	},
 	"opencode": {
 		argv: []string{path.Join(assistantport.ToolsMusl, "libexec/opencode"), "acp"},
@@ -51,6 +54,7 @@ var profiles = map[string]profile{
 			return []homeFile{{path.Join(home, ".config", "opencode", "opencode.json"),
 				`{"tools":{"bash":false,"edit":false,"write":false,"patch":false,"webfetch":false,"task":false},"autoupdate":false}`}}
 		},
+		skills: func(home string) string { return path.Join(home, ".config", "opencode", "skills") },
 	},
 }
 

@@ -14,6 +14,10 @@ import { deferred } from '$test/helpers';
 import { HeaderActions } from './header/actions.svelte';
 import RunHeader from './RunHeader.svelte';
 
+vi.mock(
+	'$lib/assistant/FillAssistant.svelte',
+	() => import('$test/fixtures/FillAssistantStub.svelte')
+);
 vi.mock('$lib/api', () => ({
 	api: {
 		runs: {
@@ -204,6 +208,69 @@ describe('RunHeader', () => {
 			vi.mocked(goto).mockClear();
 			started.action?.run();
 			expect(goto).toHaveBeenCalledExactlyOnceWith(`/runs/${run.id}`);
+		});
+	});
+
+	describe('the local assistant', () => {
+		const modal = () => screen.queryByRole('region', { name: 'Fill assistant' });
+		const offer = async (fill: unknown) => {
+			const box = screen.getByRole('textbox', { name: 'fill' });
+			await userEvent.clear(box);
+			box.focus();
+			await userEvent.paste(JSON.stringify(fill));
+			await userEvent.click(btn('offer the fill'));
+		};
+		const open = async (over: Partial<Run> = {}) => {
+			const { run } = setup(aLiveRun({ projectId: 'p1', state: 'failed', ...over }));
+			expect(modal()).not.toBeInTheDocument();
+			await userEvent.click(btn('Fill with the assistant'));
+			return run;
+		};
+
+		beforeEach(() => sessionStorage.clear());
+
+		it('opens on this run, reading it as it stands', async () => {
+			const mrs = [{ repo: 'repo', iid: 20, url: 'https://git.test/20', branch: 'b' }];
+			const run = await open({ mrs } as Partial<Run>);
+			expect(modal()!.dataset).toMatchObject({ kind: 'run', subject: run.id, workshop: 'p1' });
+			await userEvent.click(btn('read the page'));
+			const read = JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
+			expect(read).toEqual({
+				run: run.id,
+				title: 'Add idempotency keys',
+				state: 'failed',
+				flow: 'builder',
+				flow_hash: 'e7c90c12',
+				open_pings: 0,
+				merge_requests: ['https://git.test/20']
+			});
+		});
+
+		it('takes a proposed flow change to the flow editor', async () => {
+			await open();
+			await offer({ flow: 'builder', yaml: 'name: builder\n' });
+			expect(
+				screen.getByText('The assistant proposes a change to the flow builder.')
+			).toBeInTheDocument();
+			await userEvent.click(btn('Open in the flow editor'));
+			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBe('name: builder\n');
+			expect(goto).toHaveBeenCalledWith('/w/p1/flows/builder');
+			expect(screen.queryByText(/proposes a change/)).not.toBeInTheDocument();
+		});
+
+		it('drops a proposed change, and ignores what is not one', async () => {
+			await open();
+			await offer({ yaml: 'no flow' });
+			expect(screen.queryByText(/proposes a change/)).not.toBeInTheDocument();
+			await offer({ flow: 'ship', yaml: 'name: ship\n' });
+			await userEvent.click(btn(/Dismiss/));
+			expect(screen.queryByText(/proposes a change/)).not.toBeInTheDocument();
+			expect(goto).not.toHaveBeenCalled();
+		});
+
+		it('is not offered on a run outside any workshop', () => {
+			setup(aLiveRun());
+			expect(screen.queryByRole('button', { name: 'Fill with the assistant' })).toBeNull();
 		});
 	});
 });

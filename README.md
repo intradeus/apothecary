@@ -67,11 +67,14 @@ query. Between the start and the end, it does whatever your flow says.
   session, its changes, files, terminal, logs, egress, ports, services and
   vitals. *Take over* to talk to the agent; the *Ask* pane answers questions
   about the code without touching the run.
-- **An assistant beside the flow, ticket and skill pages.** It reads the
-  workshop's repositories, their history and the platform, and fills the
-  page you are on: a flow's YAML, a ticket's title and goal, a skill's
-  files. You read it, undo it or change it, and save it yourself. It runs
-  on your own Claude Code or opencode harness.
+- **An assistant on every page.** The sparkle at the top right opens it
+  over the page: it reads the workshop's repositories, their history and
+  the platform, and acts (starting runs, filing tickets, saving flows) only
+  once you confirm each act. On the flow, ticket, skill, run and dashboard
+  pages, *Fill with the assistant* fills the page you are on: a flow's
+  YAML, a ticket's title and goal, a skill's files. You read it, undo it or
+  change it, and save it yourself. It runs on your own Claude Code or
+  opencode harness, with the skills you choose (System → Assistant).
 - **An MCP server** ([docs/mcp.md](docs/mcp.md)): connect an MCP client
   with a token you scope, and it reads what that token reads.
 - **From your machine.** Forward a run's ports, `ssh` in, or open it in

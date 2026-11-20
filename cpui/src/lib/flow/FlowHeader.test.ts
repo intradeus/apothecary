@@ -22,7 +22,6 @@ const setup = (over: Record<string, unknown> = {}) => {
 		versions: [{}, {}, {}],
 		showVersions: false,
 		cloning: false,
-		showAssistant: false,
 		dirty: false,
 		busy: false,
 		canWrite: true,
@@ -184,13 +183,9 @@ describe('FlowHeader', () => {
 			expect(btn).toHaveAttribute('aria-pressed', 'true');
 		});
 
-		it('toggles the assistant', async () => {
-			const ed = setup();
-			const btn = button('Assistant');
-			expect(btn).toHaveAttribute('aria-pressed', 'false');
-			await userEvent.click(btn);
-			expect(ed.showAssistant).toBe(true);
-			expect(btn).toHaveAttribute('aria-pressed', 'true');
+		it('leaves the assistant to the page, with no toggle of its own', () => {
+			setup();
+			expect(screen.queryByRole('button', { name: /assistant/i })).not.toBeInTheDocument();
 		});
 
 		it('opens the clone dialog', async () => {

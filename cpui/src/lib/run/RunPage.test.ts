@@ -200,7 +200,7 @@ describe('RunPage', () => {
 			sizeDesk(600, 800);
 			await setup();
 			await waitFor(() => expect(windows()).toHaveLength(1));
-			expect(windows()[0]).toHaveLength(16);
+			expect(windows()[0]).toHaveLength(15);
 		});
 
 		it('names the flow and its version', async () => {

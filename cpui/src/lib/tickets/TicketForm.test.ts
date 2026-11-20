@@ -13,13 +13,12 @@ vi.mock('$lib/api', () => ({
 	api: {
 		tickets: { create: vi.fn(), update: vi.fn(), attachments: vi.fn() },
 		projects: { ticketTypes: vi.fn() },
-		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() },
-		assistant: { setSubject: vi.fn() }
+		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() }
 	}
 }));
 vi.mock(
-	'$lib/assistant/AssistantPanel.svelte',
-	() => import('$test/fixtures/AssistantPanelStub.svelte')
+	'$lib/assistant/FillAssistant.svelte',
+	() => import('$test/fixtures/FillAssistantStub.svelte')
 );
 
 const project = aProject({ id: 'p1', ticketSourceId: 'own' });
@@ -47,7 +46,6 @@ beforeEach(() => {
 	vi.mocked(api.projects.ticketTypes).mockResolvedValue([]);
 	vi.mocked(api.tickets.attachments).mockResolvedValue({ attachments: [], remote: [] });
 	vi.mocked(api.files.limits).mockResolvedValue(null as never);
-	vi.mocked(api.assistant.setSubject).mockResolvedValue({} as never);
 	toasts.list = [];
 });
 
@@ -291,7 +289,9 @@ describe('TicketForm, editing', () => {
 });
 
 describe('TicketForm, the assistant', () => {
-	const openIt = () => userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
+	const openIt = () =>
+		userEvent.click(screen.getByRole('button', { name: 'Fill with the assistant' }));
+	const modal = () => screen.getByRole('region', { name: 'Fill assistant' });
 	const offer = async (fill: unknown) => {
 		const box = screen.getByRole('textbox', { name: 'fill' });
 		await userEvent.clear(box);
@@ -300,17 +300,16 @@ describe('TicketForm, the assistant', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
 	};
 
-	it('opens beside a new ticket as a draft, reads the form, and fills it', async () => {
+	it('opens on a new ticket as a draft, reads the unsaved form, and fills it unsaved', async () => {
 		vi.mocked(api.projects.ticketTypes).mockResolvedValue([type('t1', 'Bug', 'fix')]);
 		setup();
-		expect(screen.queryByRole('region', { name: 'Assistant' })).not.toBeInTheDocument();
-		await openIt();
-		const panel = screen.getByRole('region', { name: 'Assistant' });
-		expect(panel.dataset.kind).toBe('ticket');
-		expect(panel.dataset.subject).toMatch(/^draft-/);
-		expect(panel.dataset.workshop).toBe('p1');
-
+		expect(screen.queryByRole('region', { name: 'Fill assistant' })).not.toBeInTheDocument();
 		await userEvent.type(goal(), 'my notes');
+		await openIt();
+		expect(modal().dataset.kind).toBe('ticket');
+		expect(modal().dataset.subject).toMatch(/^draft-/);
+		expect(modal().dataset.workshop).toBe('p1');
+
 		await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
 		expect(JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!)).toEqual({
 			title: '',
@@ -324,50 +323,30 @@ describe('TicketForm, the assistant', () => {
 		await offer({ title: 'Fix the login', goal: 'It works.', change_type: 'fix', type_id: 't1' });
 		expect(title()).toHaveValue('Fix the login');
 		expect(goal()).toHaveValue('It works.');
-		expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent(
-			'title,goal,changeType,typeId'
-		);
-		await userEvent.click(screen.getByRole('button', { name: 'undo the fill' }));
+		expect(api.tickets.create).not.toHaveBeenCalled();
+		expect(screen.getByText(/^Filled:/)).toHaveTextContent('title');
+		await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
 		expect(title()).toHaveValue('');
 		expect(goal()).toHaveValue('my notes');
+		expect(screen.queryByText(/^Filled:/)).not.toBeInTheDocument();
 	});
 
-	it('moves a draft’s conversation onto the created ticket', async () => {
+	it('creates the ticket from what was filled', async () => {
 		created({ key: 'APO-7' });
 		const { onsaved } = setup();
 		await openIt();
 		await offer({ title: 'T', goal: 'G' });
 		await userEvent.click(create());
 		await waitFor(() => expect(onsaved).toHaveBeenCalled());
-		expect(api.assistant.setSubject).toHaveBeenCalledWith('s1', 'APO-7');
 		expect(lastBody()).toMatchObject({ title: 'T', goal: 'G' });
+		expect(screen.queryByText(/^Filled:/)).not.toBeInTheDocument();
 	});
 
-	it('still hands the ticket over when the conversation cannot move', async () => {
-		const saved = created({ key: 'APO-7' });
-		vi.mocked(api.assistant.setSubject).mockRejectedValue(new Error('gone'));
-		const { onsaved } = setup();
-		await openIt();
-		await offer({ title: 'T', goal: 'G' });
-		await userEvent.click(create());
-		await waitFor(() => expect(onsaved).toHaveBeenCalledWith(saved));
-	});
-
-	it('moves nothing when it was never opened', async () => {
-		created();
-		const { onsaved } = setup();
-		await userEvent.type(title(), 'T');
-		await userEvent.type(goal(), 'G');
-		await userEvent.click(create());
-		await waitFor(() => expect(onsaved).toHaveBeenCalled());
-		expect(api.assistant.setSubject).not.toHaveBeenCalled();
-	});
-
-	it('is about the ticket’s key when editing one', async () => {
+	it('is about the ticket’s key when editing one, and closes', async () => {
 		setup({ existing: aTicketDetail({ key: 'APO-3', internal: true }) });
 		await openIt();
-		expect(screen.getByRole('region', { name: 'Assistant' }).dataset.subject).toBe('APO-3');
-		await userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
-		expect(screen.queryByRole('region', { name: 'Assistant' })).not.toBeInTheDocument();
+		expect(modal().dataset.subject).toBe('APO-3');
+		await userEvent.click(screen.getByRole('button', { name: 'close the assistant' }));
+		expect(screen.queryByRole('region', { name: 'Fill assistant' })).not.toBeInTheDocument();
 	});
 });

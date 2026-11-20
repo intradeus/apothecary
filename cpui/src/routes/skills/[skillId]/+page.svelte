@@ -10,7 +10,8 @@
 	import { api } from '$lib/api';
 	import type { Skill, SkillFileContent, SkillFields, Skillset } from '$lib/domain';
 	import { draftSubject, skillFill } from '$lib/domain';
-	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
+	import FillButton from '$lib/assistant/FillButton.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
@@ -54,10 +55,10 @@
 	let renameTo = $state('');
 	let uploader = $state<HTMLInputElement | null>(null);
 
-	// The assistant beside the editor: its fill sets the name and the text
-	// files through the guard; files that are not text stay as they are. A
-	// new skill's conversation is a draft's until it is created.
-	let showAssistant = $state(false);
+	// The local assistant: its fill sets the name and the text files through
+	// the guard; files that are not text stay as they are. A new skill's
+	// conversation is a draft's; each opening is a fresh session.
+	let fillOpen = $state(false);
 	let subject = $state(draftSubject());
 	// A workshop attached: the assistant reads its repositories too.
 	let assistWorkshop = $state('');
@@ -65,7 +66,6 @@
 		{ value: '', label: t('assistant.noWorkshop') },
 		...fleet.projects.map((p) => ({ value: p.id, label: p.name }))
 	]);
-	let sessionId = '';
 	const skillGuard = new FillGuard<SkillFields>(
 		() => ({ name, files: textFiles(files) }),
 		(v) => {
@@ -227,13 +227,6 @@
 			};
 			if (creating) {
 				const created = await api.skills.create(draft);
-				if (sessionId) {
-					try {
-						await api.assistant.setSubject(sessionId, created.id);
-					} catch {
-						/* the skill is saved; its conversation stays the draft's */
-					}
-				}
 				toast(t('skills.skill.created', { name: created.name }));
 				await goto(to.skill(created.id));
 			} else {
@@ -315,12 +308,6 @@
 					>{I.retry} {refreshing ? t('skills.skill.refreshing') : t('skills.skill.refresh')}</button
 				>
 			{/if}
-			<button
-				class="btn-sm"
-				class:btn-sel={showAssistant}
-				aria-pressed={showAssistant}
-				onclick={() => (showAssistant = !showAssistant)}>{t('assistant.open')}</button
-			>
 			{#if !creating}
 				<button class="btn-sm" onclick={del}>{t('skills.skill.delete')}</button>
 			{/if}
@@ -409,34 +396,34 @@
 					</div>
 				{/if}
 			{/if}
+			<div class="pane-foot">
+				<FillButton guard={skillGuard} onclick={() => (fillOpen = true)} />
+			</div>
 		</section>
-
-		{#if showAssistant}
-			<aside class="assist">
-				{#if fleet.projects.length}
-					<div class="field">
-						<label for="sk-assist-ws">{t('assistant.skillWorkshop')}</label>
-						<Select
-							id="sk-assist-ws"
-							size="sm"
-							options={workshopOptions}
-							bind:value={assistWorkshop}
-						/>
-					</div>
-				{/if}
-				{#key assistWorkshop}
-					<AssistantPanel
-						kind="skill"
-						{subject}
-						workshop={assistWorkshop}
-						guard={skillGuard}
-						pageState={skillState}
-						onsession={(id) => (sessionId = id)}
-					/>
-				{/key}
-			</aside>
-		{/if}
 	</div>
+
+	<FillAssistant
+		bind:open={fillOpen}
+		kind="skill"
+		{subject}
+		workshop={assistWorkshop}
+		guard={skillGuard}
+		pageState={skillState}
+	>
+		{#snippet workshopPicker()}
+			{#if fleet.projects.length}
+				<div class="field">
+					<label for="sk-assist-ws">{t('assistant.skillWorkshop')}</label>
+					<Select
+						id="sk-assist-ws"
+						size="sm"
+						options={workshopOptions}
+						bind:value={assistWorkshop}
+					/>
+				</div>
+			{/if}
+		{/snippet}
+	</FillAssistant>
 
 	{#if skill && (skill.source || usedBy.length)}
 		<div class="meta">
@@ -564,14 +551,6 @@
 		display: flex;
 		flex-direction: column;
 	}
-	.assist {
-		width: 360px;
-		flex-shrink: 0;
-		min-width: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-	}
 	.ed {
 		flex: 1;
 		min-height: 400px;
@@ -599,8 +578,7 @@
 		.split {
 			flex-direction: column;
 		}
-		.files,
-		.assist {
+		.files {
 			width: 100%;
 		}
 	}

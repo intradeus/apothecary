@@ -12,12 +12,9 @@ import type { Me } from '$lib/domain';
 import { aPing, aProject, aRun, aTicketRow } from '$test/fixtures';
 import { bindable } from '$test/fixtures/app.svelte';
 import { aHold, anOpenMr } from '$test/fixtures/run-components';
+import { drawer } from '$lib/assistant/drawer.svelte';
 import CommandPalette from './CommandPalette.svelte';
 
-vi.mock(
-	'$lib/assistant/AssistantPanel.svelte',
-	() => import('$test/fixtures/AssistantPanelStub.svelte')
-);
 vi.mock('$lib/api', () => ({
 	api: {
 		projects: { tickets: vi.fn(), mergeRequests: vi.fn() },
@@ -329,14 +326,15 @@ describe('CommandPalette, doing things', () => {
 		expect(goto).not.toHaveBeenCalled();
 	});
 
-	it('opens the assistant with no page, closing itself', async () => {
+	it('opens the assistant’s drawer, closing itself', async () => {
+		drawer.open = false;
 		const { props } = setup();
 		await userEvent.type(search(), 'ask the');
 		expect(selected()).toHaveTextContent('Ask the assistant');
 		await userEvent.keyboard('{Enter}');
 		expect(props.open).toBe(false);
-		const panel = await screen.findByRole('region', { name: 'Assistant' });
-		expect(panel.dataset.kind).toBe('general');
+		expect(drawer.open).toBe(true);
+		drawer.open = false;
 	});
 
 	it('jumps to a merge request of any workshop, reading them once a search is typed', async () => {

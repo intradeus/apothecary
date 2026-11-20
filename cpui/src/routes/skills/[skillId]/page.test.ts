@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
@@ -17,14 +17,13 @@ vi.mock('$app/state', async () => {
 vi.mock('$lib/api', () => ({
 	api: {
 		skills: { get: vi.fn(), create: vi.fn(), update: vi.fn() },
-		skillsets: { list: vi.fn() },
-		assistant: { setSubject: vi.fn() }
+		skillsets: { list: vi.fn() }
 	}
 }));
 vi.mock('$lib/skills/SkillFileEditor.svelte', () => import('$test/fixtures/YamlEditorStub.svelte'));
 vi.mock(
-	'$lib/assistant/AssistantPanel.svelte',
-	() => import('$test/fixtures/AssistantPanelStub.svelte')
+	'$lib/assistant/FillAssistant.svelte',
+	() => import('$test/fixtures/FillAssistantStub.svelte')
 );
 
 const md = (name: string) => `---\nname: ${name}\ndescription: Notes.\n---\n\nDo it.\n`;
@@ -39,8 +38,10 @@ const aSkill = (over: Partial<Skill> = {}): Skill => ({
 	...over
 });
 
-const openIt = () => userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
-const panel = () => screen.getByRole('region', { name: 'Assistant' });
+const openIt = () =>
+	userEvent.click(screen.getByRole('button', { name: 'Fill with the assistant' }));
+const panel = () => screen.getByRole('region', { name: 'Fill assistant' });
+const filled = () => screen.queryByText(/^Filled:/);
 async function offer(fill: unknown) {
 	const box = screen.getByRole('textbox', { name: 'fill' });
 	await userEvent.clear(box);
@@ -56,19 +57,21 @@ const readPage = async () => {
 beforeEach(() => {
 	vi.resetAllMocks();
 	vi.mocked(api.skillsets.list).mockResolvedValue([]);
-	vi.mocked(api.assistant.setSubject).mockResolvedValue({} as never);
 	fleet.projects = [];
 });
 
 describe('the skill page’s assistant', () => {
-	it('drafts a new skill: fills its name and files, and moves onto it once created', async () => {
+	it('drafts a new skill: reads the unsaved editor, fills its name and files unsaved', async () => {
 		page.params.skillId = 'new';
 		vi.mocked(api.skills.create).mockResolvedValue(aSkill({ id: 'sk9', name: 'release-notes' }));
 		render(Page);
+		await userEvent.type(screen.getByLabelText('Name'), 'draft');
 		await openIt();
 		expect(panel().dataset).toMatchObject({ kind: 'skill', workshop: '' });
 		expect(panel().dataset.subject).toMatch(/^draft-/);
-		expect((await readPage()).files).toHaveLength(1);
+		const read = await readPage();
+		expect(read.name).toBe('draft');
+		expect(read.files).toHaveLength(1);
 
 		await offer({
 			name: 'release-notes',
@@ -79,16 +82,14 @@ describe('the skill page’s assistant', () => {
 		});
 		expect(screen.getByLabelText('Name')).toHaveValue('release-notes');
 		expect(screen.getByRole('button', { name: 'notes.md' })).toBeInTheDocument();
-		expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent(
-			'name,SKILL.md,notes.md'
-		);
+		expect(filled()).toHaveTextContent('name, SKILL.md, notes.md');
+		expect(api.skills.create).not.toHaveBeenCalled();
 
 		await userEvent.click(screen.getByRole('button', { name: 'Create skill' }));
 		await waitFor(() => expect(goto).toHaveBeenCalled());
 		expect(api.skills.create).toHaveBeenCalledWith(
 			expect.objectContaining({ name: 'release-notes' })
 		);
-		expect(api.assistant.setSubject).toHaveBeenCalledWith('s1', 'sk9');
 	});
 
 	it('is about the skill when it exists, reads it, and undoes a fill', async () => {
@@ -102,7 +103,7 @@ describe('the skill page’s assistant', () => {
 		} as SkillDetail;
 		vi.mocked(api.skills.get).mockResolvedValue(detail);
 		render(Page);
-		await screen.findByRole('button', { name: 'Assistant' });
+		await screen.findByRole('button', { name: 'Fill with the assistant' });
 		await openIt();
 		expect(panel().dataset.subject).toBe('sk1');
 		expect(await readPage()).toEqual({
@@ -116,9 +117,11 @@ describe('the skill page’s assistant', () => {
 		expect(screen.getByRole('textbox', { name: /SKILL\.md/ })).toHaveValue(md('notes') + 'More.\n');
 		expect(screen.getByRole('button', { name: 'logo.png' })).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Save skill' })).toBeEnabled();
+		expect(api.skills.update).not.toHaveBeenCalled();
 
-		await userEvent.click(screen.getByRole('button', { name: 'undo the fill' }));
+		await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
 		expect(screen.getByRole('textbox', { name: /SKILL\.md/ })).toHaveValue(md('notes'));
+		expect(filled()).not.toBeInTheDocument();
 
 		// Filled and saved: nothing left to undo.
 		await offer({
@@ -128,30 +131,28 @@ describe('the skill page’s assistant', () => {
 		vi.mocked(api.skills.update).mockResolvedValue(aSkill());
 		await userEvent.click(screen.getByRole('button', { name: 'Save skill' }));
 		await waitFor(() => expect(api.skills.update).toHaveBeenCalled());
-		await waitFor(() =>
-			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('')
-		);
+		await waitFor(() => expect(filled()).not.toBeInTheDocument());
 	});
 
-	it('still opens the skill when the conversation cannot move', async () => {
-		page.params.skillId = 'new';
-		vi.mocked(api.skills.create).mockResolvedValue(aSkill({ id: 'sk9', name: 'my-skill' }));
-		vi.mocked(api.assistant.setSubject).mockRejectedValue(new Error('gone'));
-		render(Page);
-		await openIt();
-		await userEvent.type(screen.getByLabelText('Name'), 'my-skill');
-		await userEvent.click(screen.getByRole('button', { name: 'Create skill' }));
-		await waitFor(() => expect(goto).toHaveBeenCalled());
-	});
-
-	it('reads an attached workshop’s repositories: a session of its own', async () => {
+	it('picks, inside the modal, a workshop whose repositories it reads', async () => {
 		page.params.skillId = 'new';
 		fleet.projects = [aProject({ id: 'p1', name: 'shop' })];
 		render(Page);
+		const picker = 'Read a workshop’s repositories';
+		expect(screen.queryByRole('combobox', { name: picker })).not.toBeInTheDocument();
 		await openIt();
 		expect(panel().dataset.workshop).toBe('');
-		await userEvent.click(screen.getByRole('combobox', { name: 'Read a workshop’s repositories' }));
+		await userEvent.click(within(panel()).getByRole('combobox', { name: picker }));
 		await userEvent.click(screen.getByRole('option', { name: 'shop' }));
 		expect(panel().dataset.workshop).toBe('p1');
+	});
+
+	it('offers no workshop picker without workshops', async () => {
+		page.params.skillId = 'new';
+		render(Page);
+		await openIt();
+		expect(
+			screen.queryByRole('combobox', { name: 'Read a workshop’s repositories' })
+		).not.toBeInTheDocument();
 	});
 });

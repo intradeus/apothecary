@@ -96,14 +96,17 @@ the UI or with the API directly:
 
 The in-app assistant reaches the same server with a token of its own,
 minted per answer and holding the read tools only. Two more tools are its
-alone, bound to its conversation, and no other token lists them:
+alone, bound to its conversation, and no other token lists them; each
+conversation lists one of the two:
 
-- `fill` puts a proposal in the page beside it (a flow's YAML, a ticket's
-  fields, a skill's files, a dashboard's panels), unsaved;
-- `request` asks you to confirm acts: each one of the write tools above,
-  with its arguments. The panel shows them; **Do it** runs them in order,
-  as you, through the same routes, until one fails, and the assistant
-  learns what came of them with your next message.
+- `fill`, for a page's assistant (*Fill with the assistant*), puts a
+  proposal in the page it was opened on (a flow's YAML, a ticket's fields,
+  a skill's files, a dashboard's panels), unsaved;
+- `request`, for the assistant behind the button on every page, asks you
+  to confirm acts: each one of the write tools above, with its arguments.
+  The drawer shows them; **Do it** runs them in order, as you, through the
+  same routes, until one fails, and the assistant learns what came of them
+  with your next message.
 
 ## What it is not
 

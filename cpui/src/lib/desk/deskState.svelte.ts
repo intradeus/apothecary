@@ -34,16 +34,39 @@ import {
 
 const KEY = 'apothecary.desk.v1';
 
+/** Views the desk had once: a saved layout loses them, keeping its other
+ *  tabs, rather than failing whole. */
+const RETIRED: readonly unknown[] = ['assistant'];
+
+/** The saved tree without the retired views; a leaf that held only those is
+ *  gone (undefined), and norm() mends the split it leaves. Anything
+ *  malformed passes through as it is, for validTree to refuse. */
+function stripRetired(n: unknown): unknown {
+	if (!n || typeof n !== 'object') return n;
+	const m = n as { k?: unknown; tabs?: unknown; c?: unknown; s?: unknown };
+	if (m.k === 'leaf' && Array.isArray(m.tabs)) {
+		const tabs = m.tabs.filter((v) => !RETIRED.includes(v));
+		return tabs.length || !m.tabs.length ? { ...m, tabs } : undefined;
+	}
+	if (m.k === 'split' && Array.isArray(m.c) && Array.isArray(m.s) && m.c.length === m.s.length) {
+		const sizes = m.s;
+		const kept = m.c.map((c, i) => [stripRetired(c), sizes[i]]).filter(([c]) => c !== undefined);
+		return { ...m, c: kept.map(([c]) => c), s: kept.map(([, s]) => s) };
+	}
+	return n;
+}
+
 function load(): { tree: Tree; preset: LayoutId } {
 	try {
 		const saved = JSON.parse(localStorage.getItem(KEY) || 'null') as {
 			tree?: unknown;
 			preset?: string;
 		} | null;
-		if (saved && saved.tree !== undefined && validTree(saved.tree)) {
-			bumpIds(saved.tree);
+		const tree = stripRetired(saved?.tree);
+		if (saved && tree !== undefined && validTree(tree)) {
+			bumpIds(tree);
 			return {
-				tree: norm(saved.tree),
+				tree: norm(tree),
 				preset:
 					saved.preset && (isPreset(saved.preset) || saved.preset === 'custom')
 						? (saved.preset as LayoutId)

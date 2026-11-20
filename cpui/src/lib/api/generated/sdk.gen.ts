@@ -614,9 +614,6 @@ import type {
 	SetAssistantModelData,
 	SetAssistantModelErrors,
 	SetAssistantModelResponses,
-	SetAssistantSubjectData,
-	SetAssistantSubjectErrors,
-	SetAssistantSubjectResponses,
 	SetEgressRuleData,
 	SetEgressRuleErrors,
 	SetEgressRuleResponses,
@@ -739,7 +736,10 @@ import type {
 	ValidateFlowResponses,
 	WaitRunData,
 	WaitRunErrors,
-	WaitRunResponses
+	WaitRunResponses,
+	WarmAssistantData,
+	WarmAssistantErrors,
+	WarmAssistantResponses
 } from './types.gen';
 
 export type Options<
@@ -1163,7 +1163,9 @@ export const getAssistant = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Pick the harness integration (one's own) the assistant runs on, and the model it starts with
+ * Pick the harness integration (one's own) the assistant runs on, the model it starts with and the skillsets it installs
+ *
+ * Applies to sessions opened from now on: an open one keeps what it started with.
  */
 export const setAssistantChoice = <ThrowOnError extends boolean = false>(
 	options: Options<SetAssistantChoiceData, ThrowOnError>
@@ -1227,7 +1229,7 @@ export const refreshAssistantRepos = <ThrowOnError extends boolean = false>(
 /**
  * Open the session about a subject: one's latest about it, or a new one
  *
- * kind is flow, ticket or skill; subject the flow's name, the ticket's key, the skill's id, or a draft id before the first save. A flow's or a ticket's session names its workshop.
+ * kind is flow, ticket, skill, run, dashboard (a page's session, which fills it) or general (the assistant button's, which acts by requests); subject the flow's name, the ticket's key, the skill's id, the run's id, the dashboard's id, or a draft id before the first save. A flow's, a ticket's or a run's session names its workshop. fresh opens a new session even when one exists.
  */
 export const openAssistantSession = <ThrowOnError extends boolean = false>(
 	options: Options<OpenAssistantSessionData, ThrowOnError>
@@ -1496,37 +1498,6 @@ export const requestAssistantActs = <ThrowOnError extends boolean = false>(
 	});
 
 /**
- * Move a draft's session to what it was saved as
- */
-export const setAssistantSubject = <ThrowOnError extends boolean = false>(
-	options: Options<SetAssistantSubjectData, ThrowOnError>
-): RequestResult<SetAssistantSubjectResponses, SetAssistantSubjectErrors, ThrowOnError> =>
-	(options.client ?? client).put<
-		SetAssistantSubjectResponses,
-		SetAssistantSubjectErrors,
-		ThrowOnError
-	>({
-		security: [
-			{
-				in: 'cookie',
-				name: 'apothecary_session',
-				type: 'apiKey'
-			},
-			{
-				key: 'personalToken',
-				scheme: 'bearer',
-				type: 'http'
-			}
-		],
-		url: '/api/assistant/sessions/{id}/subject',
-		...options,
-		headers: {
-			'Content-Type': 'application/json',
-			...options.headers
-		}
-	});
-
-/**
  * Server-sent event stream of one's assistant
  *
  * Every session's answers as they are written (delta), messages as they land, a session's state, fills for the page, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.
@@ -1552,6 +1523,31 @@ export const streamAssistant = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/assistant/stream',
+		...options
+	});
+
+/**
+ * Start one's assistant pod ahead of a question
+ *
+ * Called as the person starts typing a question, so its answer does not wait for the pod. Returns at once; one warm runs at a time. 409 when no harness is chosen.
+ */
+export const warmAssistant = <ThrowOnError extends boolean = false>(
+	options?: Options<WarmAssistantData, ThrowOnError>
+): RequestResult<WarmAssistantResponses, WarmAssistantErrors, ThrowOnError> =>
+	(options?.client ?? client).post<WarmAssistantResponses, WarmAssistantErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/warm',
 		...options
 	});
 

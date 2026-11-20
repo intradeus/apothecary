@@ -26,6 +26,9 @@ type Page struct {
 	Presets []string
 	// FillSchema is the fill tool's input: this page's fill and nothing else.
 	FillSchema map[string]any
+	// Acts: a session on this page may request acts for the person to
+	// confirm. Only the global assistant's does; a page's session fills.
+	Acts bool
 	// Repos: a session on this page reads its workshop's repositories.
 	Repos bool
 }
@@ -40,19 +43,24 @@ type Checks interface {
 	DashboardPanels(ctx context.Context, person string, panels json.RawMessage) error
 }
 
-// commonInstructions open every page's.
-const commonInstructions = `You are the Apothecary assistant, beside a page of the Apothecary web app. Apothecary runs AI agents on repositories: a workshop is a project (its repositories, flows, tickets and settings), a flow is a YAML document that says what a run does, a ticket is a piece of work a run starts on, a skill is instructions and files an agent is given.
+// commonInstructions open every page's: what Apothecary is and what the
+// agent reads.
+const commonInstructions = `You are the Apothecary assistant, in the Apothecary web app. Apothecary runs AI agents on repositories: a workshop is a project (its repositories, flows, tickets and settings), a flow is a YAML document that says what a run does, a ticket is a piece of work a run starts on, a skill is instructions and files an agent is given.
 
-You can read, never change: the workshop's repositories in your working directory (your own read and search tools), their history (the git tool), and the platform (the apothecary tools: workshops, tickets, flows, skills, runs, analytics). You act in two ways, both through the person:
-- fill puts what you propose into the person's page, for them to read, change and save. Nothing is saved until they save it; never say it is. Call fill with the whole of what the page should hold, not a difference. If fill answers with errors, correct them and call it again.
-- request asks the person to confirm acts on the platform: filing tickets, starting or steering runs, saving flows, skills or dashboards (each act one of the platform's write tools, with its arguments). They see each act and confirm or decline; you learn what came of them in their next message. Never say an act is done before you learn it was. Put every act the person asked for in one request.
+You can read, never change: the workshop's repositories in your working directory (your own read and search tools), their history (the git tool), and the platform (the apothecary tools: workshops, tickets, flows, skills, runs, analytics).`
 
-Then tell the person, briefly, what you filled or asked and why. When the person asks a question that needs no change, answer it and call neither.`
+// fillInstructions open a page's: its session's one way to act is to fill
+// the page.
+const fillInstructions = commonInstructions + `
+
+You were opened on a page, to fill it. Your one way to act is fill: it puts what you propose into the person's page, for them to read, change and save. Nothing is saved until they save it; never say it is. Call fill with the whole of what the page should hold, not a difference. If fill answers with errors, correct them and call it again.
+
+The page as it stands, unsaved edits included, is in your context: start from it. When the person asks to tidy or reformat it, keep what it says and change only its form. Fill whenever you can; ask the person back only when you cannot fill without knowing more. Then tell the person, briefly, what you filled and why.`
 
 var pages = map[Kind]Page{
 	KindFlow: {
 		Kind: KindFlow,
-		Instructions: commonInstructions + `
+		Instructions: fillInstructions + `
 
 This page is a flow's editor. A fill replaces the editor's whole YAML document. Read the flow schema (get_flow_schema) and the built-in flows (list_flow_templates) when you need the language; validate_flow checks a document without filling it. Keep what the person did not ask to change exactly as it is.`,
 		Presets: []string{
@@ -72,13 +80,13 @@ This page is a flow's editor. A fill replaces the editor's whole YAML document. 
 	},
 	KindTicket: {
 		Kind: KindTicket,
-		Instructions: commonInstructions + `
+		Instructions: fillInstructions + `
 
 This page is a ticket's form. A fill sets any of its fields: title (one line), goal (what done looks like, in Markdown: the agent working the ticket reads it), change_type, type_id (one of the workshop's issue types). Leave out a field you do not mean to change. Read the repositories to make the goal precise: name the files, the behaviour, how to check it.`,
 		Presets: []string{
 			"Turn my notes into a ticket: a title, a goal and its type.",
 			"Make the goal precise: name the files and how to check the change.",
-			"Is this already done in the repository?",
+			"Tidy the formatting, change nothing else.",
 		},
 		FillSchema: map[string]any{
 			"type": "object",
@@ -94,13 +102,13 @@ This page is a ticket's form. A fill sets any of its fields: title (one line), g
 	},
 	KindSkill: {
 		Kind: KindSkill,
-		Instructions: commonInstructions + `
+		Instructions: fillInstructions + `
 
 This page is a skill's editor. A skill is a folder: SKILL.md, which opens with YAML frontmatter holding name and description (when an agent should use the skill), then its instructions in Markdown; and any support files. A fill sets the skill's name and its files (each a path and its whole content); the name must match SKILL.md's. A file you leave out of a fill is removed, except a file that is not text (an image, an archive), which stays. When the person attached a workshop, its repositories are in your working directory: read them to make the skill fit the code it is for.`,
 		Presets: []string{
 			"Write SKILL.md from my description.",
 			"Make the description say precisely when to use this skill.",
-			"Review this skill: what is unclear or missing?",
+			"Tidy the formatting, change nothing else.",
 		},
 		FillSchema: map[string]any{
 			"type": "object",
@@ -120,9 +128,9 @@ This page is a skill's editor. A skill is a folder: SKILL.md, which opens with Y
 	},
 	KindRun: {
 		Kind: KindRun,
-		Instructions: commonInstructions + `
+		Instructions: fillInstructions + `
 
-This page is a run: get_run, wait_run and read_run_journal show its stages, attempts, verdicts, costs and failures; list_runs and the analytics tools show how its flow's other runs went. When the person wants the run's flow changed, call fill with the flow's name and its whole new YAML (get_flow gives it as it is now, which may be newer than the version this run started on): it opens in the flow editor, unsaved. Steering the run itself (retry, pause, abort) is a request.`,
+This page is a run: get_run, wait_run and read_run_journal show its stages, attempts, verdicts, costs and failures; list_runs and the analytics tools show how its flow's other runs went. When the person wants the run's flow changed, call fill with the flow's name and its whole new YAML (get_flow gives it as it is now, which may be newer than the version this run started on): it opens in the flow editor, unsaved. You do not steer the run: retrying, pausing or aborting it is the global assistant's, behind the assistant button at the top right of every page.`,
 		Presets: []string{
 			"Why did this run fail?",
 			"Change the flow so this failure does not happen again.",
@@ -141,7 +149,7 @@ This page is a run: get_run, wait_run and read_run_journal show its stages, atte
 	},
 	KindDashboard: {
 		Kind: KindDashboard,
-		Instructions: commonInstructions + `
+		Instructions: fillInstructions + `
 
 This page is a dashboard's editor. A dashboard is panels, each a query over the analytics catalog (get_analytics_catalog: its grains, dimensions and measures) with a visualization and a width on a 12-column grid; get_dashboard shows one, and query_analytics runs a panel's query so you can check it answers. A fill replaces the dashboard's panels, in order.`,
 		Presets: []string{
@@ -163,12 +171,16 @@ This page is a dashboard's editor. A dashboard is panels, each a query over the 
 		Kind: KindGeneral,
 		Instructions: commonInstructions + `
 
-You were opened from the command palette, beside no page: there is no page to fill. Answer from what you read, and act through request.`,
+You were opened from the assistant button, which is on every page of the web app: you fill no page. You act through request: it asks the person to confirm acts on the platform (filing or updating tickets, starting, pausing, resuming, retrying or aborting runs, saving flows, skills, skillsets, automations, dashboards or scorecards), each act one of the platform's write tools with its arguments. They see each act and confirm or decline; you learn what came of them in their next message. Never say an act is done before you learn it was. Put every act the person asked for in one request.
+
+Then tell the person, briefly, what you asked and why. When the person asks a question that needs no change, answer it and request nothing.`,
 		Presets: []string{
 			"What needs my attention?",
 			"Which runs failed today, and why?",
-			"File a ticket from my notes.",
+			"Start a run on this ticket.",
+			"Retry the failed run.",
 		},
+		Acts: true,
 		// A workshop the person names: its repositories.
 		Repos: true,
 	},

@@ -2,11 +2,22 @@
 	// The run's top bar (DESIGN 4.5, 7.1): one glass strip. The title block —
 	// breadcrumb, a small title, a status line — then two inset groups that keep
 	// the RUN's lifecycle and the WORKSPACE's apart, then the MR island. The
-	// title gives context; the windows hold the information.
+	// title gives context; the windows hold the information. Beside the title,
+	// the run's local assistant: it reads the run, its journal and its flow's
+	// other runs, and proposes a change to its flow, which opens in the flow
+	// editor against the flow as it is now (the run keeps the version it
+	// started on).
 	import { goto } from '$app/navigation';
+	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
+	import FillButton from '$lib/assistant/FillButton.svelte';
+	import { HandoffGuard } from '$lib/assistant/fillGuard.svelte';
+	import { stashFlowFill } from '$lib/assistant/handoff';
 	import { to } from '$lib/core/urls';
+	import { I } from '$lib/design/icons';
+	import { runFill, type RunFill } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import { shortId } from '$lib/core/format';
+	import Callout from '$lib/ui/Callout.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import type { DeskState } from '$lib/desk/deskState.svelte';
 	import RerunModal from './RerunModal.svelte';
@@ -44,10 +55,35 @@
 	let rebuildOpen = $state(false);
 	let rerunOpen = $state(false);
 	const act: HeaderAct = (which, fn) => actions.run(which, () => rs.act(fn));
+
+	let assistOpen = $state(false);
+	const guard = new HandoffGuard<RunFill>(runFill);
+	/** The run as the person sees it, for the question. */
+	const pageState = () => ({
+		run: run.id,
+		title: run.title,
+		state: run.state,
+		flow: run.flowName,
+		flow_hash: run.flowHash,
+		current_stage: run.currentStage,
+		paused: run.pause?.reason,
+		open_pings: rs.pendingPings.length,
+		merge_requests: run.mrs.map((m) => m.url)
+	});
+	function openInEditor(ws: string, f: RunFill) {
+		stashFlowFill(ws, f.flow, f.yaml);
+		guard.revert();
+		void goto(to.flow(ws, f.flow));
+	}
 </script>
 
 <header class="rh glass">
 	<RunTitle {rs} />
+	{#if run.projectId}
+		<div class="assist">
+			<FillButton {guard} onclick={() => (assistOpen = true)} />
+		</div>
+	{/if}
 
 	<div class="groups">
 		<RunControls {rs} {actions} {act} onrerun={() => (rerunOpen = true)} {onretried} />
@@ -57,6 +93,35 @@
 </header>
 
 <EnvMenu {rs} anchor={envBtn} bind:open={envOpen} />
+
+{#if run.projectId}
+	{@const ws = run.projectId}
+	<FillAssistant
+		bind:open={assistOpen}
+		kind="run"
+		subject={run.id}
+		workshop={ws}
+		{guard}
+		{pageState}
+	>
+		{#snippet handoff()}
+			{#if guard.handoff}
+				{@const f = guard.handoff}
+				<Callout hue="accent" glyph={I.info} ondismiss={() => guard.revert()}>
+					<div class="col">
+						<span>{t('assistant.handoff', { flow: f.flow })}</span>
+						<div class="row">
+							<button class="btn-primary btn-sm" onclick={() => openInEditor(ws, f)}
+								>{t('assistant.openInEditor')}</button
+							>
+						</div>
+					</div>
+				</Callout>
+			{/if}
+		{/snippet}
+	</FillAssistant>
+{/if}
+
 <RebuildMenu {rs} {desk} {act} anchor={rebuildBtn} bind:open={rebuildOpen} />
 
 <RerunModal
@@ -77,10 +142,14 @@
 		z-index: var(--z-bar);
 		flex: none;
 		border-radius: var(--r-pane);
-		padding: 8px 10px 8px 16px;
+		/* The trailing edge stays clear of the global assistant's button. */
+		padding: 8px var(--assistant-inset) 8px 16px;
 		display: flex;
 		align-items: center;
 		gap: 8px;
+	}
+	.assist {
+		flex: none;
 	}
 	.groups {
 		flex: none;
@@ -111,7 +180,7 @@
 	@container runpage (max-width: 1000px) {
 		.rh {
 			flex-wrap: wrap;
-			padding-right: 10px;
+			padding-right: var(--assistant-inset);
 		}
 		.groups {
 			justify-content: flex-start;
@@ -120,7 +189,7 @@
 	}
 	@container runpage (max-width: 760px) {
 		.rh {
-			padding: 10px 12px;
+			padding: 10px var(--assistant-inset) 10px 12px;
 		}
 		.groups {
 			flex-basis: 100%;

@@ -126,29 +126,6 @@ export class FillGuard<T> implements PageGuard {
 	}
 }
 
-/** A page with nothing to fill (the command palette's): every fill is
- *  refused, so the panel only answers and requests. */
-export class NoFill implements PageGuard {
-	readonly changed: string[] = [];
-	readonly pending = null;
-	asking = $state(false);
-	ask() {
-		this.asking = true;
-	}
-	answered() {
-		this.asking = false;
-	}
-	offer(): boolean {
-		return false;
-	}
-	applyNow(): boolean {
-		return false;
-	}
-	applyPending() {}
-	discardPending() {}
-	revert() {}
-}
-
 /** A page whose fill belongs on another page (a run's change to its flow,
  *  opened in the flow editor): the fill is held for the person to take
  *  there, not applied here. */

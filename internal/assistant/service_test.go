@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,8 @@ import (
 
 	"apothecary/internal/ports/assistantport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
+	"apothecary/internal/skills"
 )
 
 // fakeAgentHost is the shim sidecar's agent API in memory: start, session,
@@ -146,12 +149,20 @@ type fakePods struct {
 	fetches int
 	state   assistantport.Status
 	ensureE error
+	// hold, when set, keeps Ensure waiting until it closes.
+	hold chan struct{}
+	// writeFail refuses a write to a path holding it.
+	writeFail string
 }
 
 func (p *fakePods) Ensure(_ context.Context, _ string, hosts []string) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
 	p.ensured = append(p.ensured, hosts)
+	hold := p.hold
+	p.mu.Unlock()
+	if hold != nil {
+		<-hold
+	}
 	return p.ensureE
 }
 func (p *fakePods) Status(context.Context, string) (assistantport.Status, error) { return p.state, nil }
@@ -182,6 +193,9 @@ func (p *fakePods) Fetch(_ context.Context, _ string, items []assistantport.Fetc
 func (p *fakePods) WriteFile(_ context.Context, _, path string, data []byte, _ uint32) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if p.writeFail != "" && strings.Contains(path, p.writeFail) {
+		return errors.New("disk full")
+	}
 	p.files[path] = string(data)
 	return nil
 }
@@ -349,7 +363,7 @@ func answered(t *testing.T, svc *Service, id string, n int) {
 func TestATurn(t *testing.T) {
 	w := newWorld(t, "claude-code")
 	ctx := context.Background()
-	s, msgs, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1")
+	s, msgs, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", false)
 	if err != nil || len(msgs) != 0 || s.Integration != "int-1" || s.Model != "acme/two" {
 		t.Fatalf("open = %+v, %v, %v", s, msgs, err)
 	}
@@ -376,11 +390,7 @@ func TestATurn(t *testing.T) {
 		if errs, err := w.svc.Fill(ctx, live.TokenID, "u1", s.ID, json.RawMessage(`{"title":"Fix the login page","type_id":"bug"}`)); err != nil || len(errs) > 0 {
 			t.Errorf("a good fill = %v, %v", errs, err)
 		}
-		// The person saves the draft as a ticket and picks a model while it
-		// answers: the turn's end keeps both.
-		if _, err := w.svc.Rebind(ctx, "u1", s.ID, "APO-12"); err != nil {
-			t.Errorf("rebind mid-turn = %v", err)
-		}
+		// The person picks a model while it answers: the turn's end keeps it.
 		if _, err := w.svc.SetModel(ctx, "u1", s.ID, "acme/one"); err != nil {
 			t.Errorf("model mid-turn = %v", err)
 		}
@@ -461,7 +471,7 @@ func TestATurn(t *testing.T) {
 		t.Errorf("ensure hosts = %v", hosts)
 	}
 
-	if after, _, _ := w.svc.Store.AssistantSession(ctx, s.ID); after.Subject != "APO-12" || after.Model != "acme/one" || after.HarnessSession != "h-1" {
+	if after, _, _ := w.svc.Store.AssistantSession(ctx, s.ID); after.Model != "acme/one" || after.HarnessSession != "h-1" {
 		t.Errorf("after the turn = %+v: the mid-turn changes are lost", after)
 	}
 	// The turn's token went with it: a process left running fills nothing.
@@ -474,7 +484,7 @@ func TestATurn(t *testing.T) {
 	if _, err := w.svc.Fill(ctx, "tok-1", "u1", s.ID, json.RawMessage(`{"title":"late"}`)); !errors.Is(err, ErrNotYours) {
 		t.Errorf("a fill after the turn = %v", err)
 	}
-	if sid, _, ok := w.svc.FillTool(ctx, "tok-1"); ok {
+	if sid, _, _, ok := w.svc.FillTool(ctx, "tok-1"); ok {
 		t.Errorf("the fill tool after the turn: bound to %s", sid)
 	}
 	// A second turn: no instructions again, the session loaded, a token of
@@ -504,13 +514,22 @@ func TestATurn(t *testing.T) {
 func TestOpenAndOwnership(t *testing.T) {
 	w := newWorld(t, "opencode")
 	ctx := context.Background()
-	a, _, err := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder")
+	a, _, err := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", false)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder")
+	b, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", false)
 	if a.ID != b.ID {
 		t.Error("the same subject opened two sessions")
+	}
+	// Fresh: a new session each time, which a plain open then finds.
+	c, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", true)
+	d, msgs, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", true)
+	if c.ID == a.ID || d.ID == c.ID || len(msgs) != 0 {
+		t.Errorf("fresh opens = %s, %s after %s", c.ID, d.ID, a.ID)
+	}
+	if latest, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", false); latest.ID != d.ID {
+		t.Errorf("a plain open after fresh ones = %s, want %s", latest.ID, d.ID)
 	}
 	for name, args := range map[string][3]string{
 		"a bad kind":              {"widget", "w1", "x"},
@@ -518,11 +537,11 @@ func TestOpenAndOwnership(t *testing.T) {
 		"a flow with no workshop": {"flow", "", "x"},
 		"a workshop out of reach": {"ticket", "w-denied", "x"},
 	} {
-		if _, _, err := w.svc.Open(ctx, "u1", Kind(args[0]), args[1], args[2]); err == nil {
+		if _, _, err := w.svc.Open(ctx, "u1", Kind(args[0]), args[1], args[2], false); err == nil {
 			t.Errorf("%s: opened", name)
 		}
 	}
-	if _, _, err := w.svc.Open(ctx, "u1", KindSkill, "", "skill-1"); err != nil {
+	if _, _, err := w.svc.Open(ctx, "u1", KindSkill, "", "skill-1", false); err != nil {
 		t.Errorf("a skill with no workshop: %v", err)
 	}
 	// Another person reaches none of it.
@@ -530,7 +549,6 @@ func TestOpenAndOwnership(t *testing.T) {
 		"messages": func() error { _, err := w.svc.Messages(ctx, "u2", a.ID, 0); return err }(),
 		"send":     func() error { _, err := w.svc.Send(ctx, "u2", a.ID, "hi", nil); return err }(),
 		"model":    func() error { _, err := w.svc.SetModel(ctx, "u2", a.ID, "x"); return err }(),
-		"rebind":   func() error { _, err := w.svc.Rebind(ctx, "u2", a.ID, "y"); return err }(),
 		"cancel":   w.svc.Cancel(ctx, "u2", a.ID),
 		"fill":     func() error { _, err := w.svc.Fill(ctx, "tok-1", "u2", a.ID, json.RawMessage(`{}`)); return err }(),
 	} {
@@ -541,12 +559,8 @@ func TestOpenAndOwnership(t *testing.T) {
 	if s, err := w.svc.SetModel(ctx, "u1", a.ID, " acme/one "); err != nil || s.Model != "acme/one" {
 		t.Errorf("set model = %+v, %v", s, err)
 	}
-	draft, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-9")
-	if s, err := w.svc.Rebind(ctx, "u1", draft.ID, "APO-12"); err != nil || s.Subject != "APO-12" {
-		t.Errorf("rebind = %+v, %v", s, err)
-	}
-	if found, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "APO-12"); found.ID != draft.ID {
-		t.Error("the saved ticket does not find its draft's conversation")
+	if s, _, err := w.svc.Open(ctx, "u1", KindFlow, "w-denied", "x", true); err == nil {
+		t.Errorf("a fresh session out of reach = %+v", s)
 	}
 	if err := w.svc.Cancel(ctx, "u1", a.ID); err != nil {
 		t.Errorf("cancel with nothing running = %v", err)
@@ -559,7 +573,7 @@ func TestSendNeedsAChoice(t *testing.T) {
 	if err := w.store.SaveAssistantChoice(ctx, Choice{UserID: "u1"}); err != nil {
 		t.Fatal(err)
 	}
-	s, _, _ := w.svc.Open(ctx, "u1", KindSkill, "", "skill-1")
+	s, _, _ := w.svc.Open(ctx, "u1", KindSkill, "", "skill-1", false)
 	if _, err := w.svc.Send(ctx, "u1", s.ID, "hi", nil); !errors.Is(err, ErrNoChoice) {
 		t.Errorf("no harness chosen = %v", err)
 	}
@@ -586,7 +600,7 @@ func TestATurnThatFails(t *testing.T) {
 	w := newWorld(t, "claude-code")
 	ctx := context.Background()
 	w.pods.ensureE = errors.New("the node cannot confine a session")
-	s, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder")
+	s, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", false)
 	if _, err := w.svc.Send(ctx, "u1", s.ID, "hi", nil); err != nil {
 		t.Fatal(err)
 	}
@@ -597,7 +611,7 @@ func TestATurnThatFails(t *testing.T) {
 	}
 	// A harness the assistant does not run.
 	w2 := newWorld(t, "codex")
-	s2, _, _ := w2.svc.Open(ctx, "u1", KindFlow, "w1", "builder")
+	s2, _, _ := w2.svc.Open(ctx, "u1", KindFlow, "w1", "builder", false)
 	w2.svc.Send(ctx, "u1", s2.ID, "hi", nil)
 	frames(t, w2.svc, "u1", idle)
 	if all, _ := w2.svc.Messages(ctx, "u1", s2.ID, 0); !strings.Contains(all[1].Error, "does not run on codex") {
@@ -671,16 +685,16 @@ func TestWatchResumes(t *testing.T) {
 func TestTokenIsRemintedWhenOld(t *testing.T) {
 	w := newWorld(t, "claude-code")
 	ctx := context.Background()
-	s, _, _ := w.svc.Open(ctx, "u1", KindSkill, "", "skill-1")
+	s, _, _ := w.svc.Open(ctx, "u1", KindSkill, "", "skill-1", false)
 	tok, err := w.svc.token(ctx, &s)
 	if err != nil || tok != "apo_secret-1" || !slices.Equal(w.tokens.grants[0], []string{"skill:read", FillAction}) || w.tokens.scopes[0] != nil {
 		t.Fatalf("skill token = %s %v %v %v", tok, err, w.tokens.grants, w.tokens.scopes)
 	}
-	sid, schema, ok := w.svc.FillTool(ctx, s.TokenID)
-	if !ok || sid != s.ID || schema["required"] == nil {
-		t.Errorf("fill tool = %s %v %v", sid, schema, ok)
+	sid, schema, acts, ok := w.svc.FillTool(ctx, s.TokenID)
+	if !ok || sid != s.ID || schema["required"] == nil || acts {
+		t.Errorf("fill tool = %s %v %v %v", sid, schema, acts, ok)
 	}
-	if _, _, ok := w.svc.FillTool(ctx, "tok-unknown"); ok {
+	if _, _, _, ok := w.svc.FillTool(ctx, "tok-unknown"); ok {
 		t.Error("an unknown token has a fill tool")
 	}
 	w.svc.mu.Lock()
@@ -735,7 +749,7 @@ func TestASkillReadsAnAttachedWorkshop(t *testing.T) {
 	}{{"", 0, ""}, {"w1", 1, "/workshops/w1/api"}} {
 		w := newWorld(t, "claude-code")
 		ctx := context.Background()
-		s, _, err := w.svc.Open(ctx, "u1", KindSkill, tc.workshop, "skill-1")
+		s, _, err := w.svc.Open(ctx, "u1", KindSkill, tc.workshop, "skill-1", false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -762,7 +776,7 @@ func TestASkillReadsAnAttachedWorkshop(t *testing.T) {
 func TestARequestIsConfirmedAndReported(t *testing.T) {
 	w := newWorld(t, "claude-code")
 	ctx := context.Background()
-	s, _, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "T-1")
+	s, _, err := w.svc.Open(ctx, "u1", KindGeneral, "w1", "palette", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -877,7 +891,7 @@ func TestARequestIsConfirmedAndReported(t *testing.T) {
 func TestARequestDeclinedOrWaiting(t *testing.T) {
 	w := newWorld(t, "claude-code")
 	ctx := context.Background()
-	s, _, _ := w.svc.Open(ctx, "u1", KindGeneral, "", "palette")
+	s, _, _ := w.svc.Open(ctx, "u1", KindGeneral, "", "palette", false)
 	add := func(why string) Message {
 		m, err := w.store.AppendAssistantMessage(ctx, Message{SessionID: s.ID, Role: RoleAssistant, Text: "?",
 			Request: &Request{Why: why, State: RequestPending, Acts: []Act{{Tool: "create_ticket", Arguments: json.RawMessage(`{}`)}}}})
@@ -980,10 +994,10 @@ func TestNewPagesFill(t *testing.T) {
 	// A run's session names its workshop; a palette's needs none, and has no
 	// fill tool.
 	w := newWorld(t, "claude-code")
-	if _, _, err := w.svc.Open(ctx, "u1", KindRun, "", "r1"); !errors.Is(err, ErrInvalid) {
+	if _, _, err := w.svc.Open(ctx, "u1", KindRun, "", "r1", false); !errors.Is(err, ErrInvalid) {
 		t.Errorf("a run with no workshop = %v", err)
 	}
-	s, _, err := w.svc.Open(ctx, "u1", KindGeneral, "", "palette")
+	s, _, err := w.svc.Open(ctx, "u1", KindGeneral, "", "palette", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -992,7 +1006,371 @@ func TestNewPagesFill(t *testing.T) {
 		t.Fatal(err)
 	}
 	live, _, _ := w.store.AssistantSession(ctx, s.ID)
-	if sid, schema, ok := w.svc.FillTool(ctx, live.TokenID); !ok || sid != s.ID || schema != nil {
-		t.Errorf("the palette's bound tools = %s %v %v", sid, schema, ok)
+	if sid, schema, acts, ok := w.svc.FillTool(ctx, live.TokenID); !ok || sid != s.ID || schema != nil || !acts {
+		t.Errorf("the palette's bound tools = %s %v %v %v", sid, schema, acts, ok)
+	}
+}
+
+// A page's session fills: a request from it is refused, and nothing of it
+// is kept or shown.
+func TestAPageRequestsNothing(t *testing.T) {
+	ctx := context.Background()
+	for _, k := range Kinds {
+		if pages[k].Acts {
+			continue
+		}
+		t.Run(string(k), func(t *testing.T) {
+			w := newWorld(t, "claude-code")
+			s, _, err := w.svc.Open(ctx, "u1", k, "w1", "s-1", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			w.host.onPrompt = func(string) {
+				live, _, _ := w.svc.Store.AssistantSession(ctx, s.ID)
+				errs, err := w.svc.Propose(ctx, live.TokenID, "u1", s.ID, Request{Why: "Start it.",
+					Acts: []Act{{Tool: "start_run", Arguments: json.RawMessage(`{"id":"w1","key":"T-1"}`)}}})
+				if err != nil || len(errs) == 0 || !strings.Contains(errs[0], "global assistant") {
+					t.Errorf("a %s session's request = %v, %v", k, errs, err)
+				}
+			}
+			if _, err := w.svc.Send(ctx, "u1", s.ID, "start a run", nil); err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range frames(t, w.svc, "u1", idle) {
+				if f.Kind == "request" {
+					t.Errorf("a request frame from a %s session", k)
+				}
+			}
+			answered(t, w.svc, s.ID, 2)
+			if msgs, _ := w.svc.Store.AssistantMessages(ctx, s.ID, 0); msgs[1].Request != nil {
+				t.Errorf("a %s session kept a request: %+v", k, msgs[1].Request)
+			}
+		})
+	}
+}
+
+// A warm starts the pod once, with the harness's hosts, and returns at
+// once; a second while it runs starts nothing.
+func TestWarm(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, "claude-code")
+	w.pods.hold = make(chan struct{})
+	ensured := func() [][]string {
+		w.pods.mu.Lock()
+		defer w.pods.mu.Unlock()
+		return slices.Clone(w.pods.ensured)
+	}
+	if err := w.svc.Warm(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for len(ensured()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if err := w.svc.Warm(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	if got := ensured(); len(got) != 1 || !slices.Equal(got[0], []string{"api.anthropic.com"}) {
+		t.Errorf("ensured while warming = %v", got)
+	}
+	close(w.pods.hold)
+	for time.Now().Before(deadline) {
+		w.svc.mu.Lock()
+		warming := w.svc.warming["u1"]
+		w.svc.mu.Unlock()
+		if !warming {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	// Done: the next warm starts one again.
+	if err := w.svc.Warm(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	for len(ensured()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if got := ensured(); len(got) != 2 {
+		t.Errorf("ensured after the first warm ended = %v", got)
+	}
+
+	if err := (&Service{Store: NewMemStore()}).Warm(ctx, "u1"); !errors.Is(err, ErrNotEnabled) {
+		t.Errorf("no pods = %v", err)
+	}
+	if err := w.svc.Warm(ctx, "u2"); !errors.Is(err, ErrNoChoice) {
+		t.Errorf("no choice = %v", err)
+	}
+}
+
+// fakeSkills is a library: a ref resolves to v3 unless it is gone or
+// another's; every pin holds one skill, "tickets", with two files.
+type fakeSkills struct {
+	mu     sync.Mutex
+	trees  int
+	treesE error
+}
+
+func (f *fakeSkills) ResolveSkillsets(_ context.Context, _ string, refs []skills.Ref) ([]event.SkillsetPin, error) {
+	var out []event.SkillsetPin
+	for _, r := range refs {
+		if r.ID == "set-gone" || strings.HasPrefix(r.ID, "theirs") {
+			return nil, fmt.Errorf("skillset %s: not found", r.ID)
+		}
+		seq := r.Seq
+		if seq == 0 {
+			seq = 3
+		}
+		out = append(out, event.SkillsetPin{ID: r.ID, Name: "name-" + r.ID, Seq: seq, Hash: "h-" + r.ID})
+	}
+	return out, nil
+}
+
+func (f *fakeSkills) SkillTrees(_ context.Context, pins []event.SkillsetPin) ([]skills.Tree, error) {
+	f.mu.Lock()
+	f.trees++
+	f.mu.Unlock()
+	if f.treesE != nil {
+		return nil, f.treesE
+	}
+	var out []skills.Tree
+	if len(pins) > 0 {
+		out = append(out, skills.Tree{Name: "tickets", Files: []envport.TreeFile{
+			{Path: "SKILL.md", Data: []byte("---\nname: tickets\ndescription: How we write tickets.\n---\n")},
+			{Path: "refs/style.md", Data: []byte("Short titles.")},
+		}})
+	}
+	return out, nil
+}
+
+// A choice names the person's own skillsets, on a server that keeps them;
+// a new session pins them as they are then, one gone since left out, and
+// keeps its pins whatever the choice becomes.
+func TestSkillsetsArePinnedAtOpen(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, "claude-code")
+	if err := w.svc.SetChoice(ctx, "u1", Choice{Integration: "int-1", Skillsets: []skills.Ref{{ID: "set-1"}}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("skillsets on a server with none = %v", err)
+	}
+	w.svc.Skills = &fakeSkills{}
+	if err := w.svc.SetChoice(ctx, "u1", Choice{Integration: "int-1", Skillsets: []skills.Ref{{ID: "theirs-1"}}}); !errors.Is(err, ErrInvalid) {
+		t.Errorf("another's skillset = %v", err)
+	}
+	if err := w.svc.SetChoice(ctx, "u1", Choice{Integration: "int-1", Skillsets: []skills.Ref{{ID: "set-1"}, {ID: "set-1", Seq: 2}, {ID: "set-2", Seq: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := w.store.AssistantChoice(ctx, "u1"); !slices.Equal(c.Skillsets, []skills.Ref{{ID: "set-1"}, {ID: "set-2", Seq: 1}}) {
+		t.Errorf("the choice's skillsets = %+v", c.Skillsets)
+	}
+	// One deleted since it was chosen: left out, the rest pinned.
+	if err := w.store.SaveAssistantChoice(ctx, Choice{UserID: "u1", Integration: "int-1",
+		Skillsets: []skills.Ref{{ID: "set-1"}, {ID: "set-gone"}, {ID: "set-2", Seq: 1}}}); err != nil {
+		t.Fatal(err)
+	}
+	s, _, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []event.SkillsetPin{{ID: "set-1", Name: "name-set-1", Seq: 3, Hash: "h-set-1"}, {ID: "set-2", Name: "name-set-2", Seq: 1, Hash: "h-set-2"}}
+	if !slices.Equal(s.Skillsets, want) {
+		t.Errorf("pins = %+v", s.Skillsets)
+	}
+	if err := w.svc.SetChoice(ctx, "u1", Choice{Integration: "int-1"}); err != nil {
+		t.Fatal(err)
+	}
+	if again, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", false); again.ID != s.ID || !slices.Equal(again.Skillsets, want) {
+		t.Errorf("an open session after the choice changed = %+v", again.Skillsets)
+	}
+	if fresh, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", true); fresh.Skillsets != nil {
+		t.Errorf("a new session after the choice changed = %+v", fresh.Skillsets)
+	}
+}
+
+// A turn installs the session's pinned skills into its harness's skills
+// directory in the session's home, once; a session with none installs
+// nothing.
+func TestATurnInstallsItsSkills(t *testing.T) {
+	ctx := context.Background()
+	for kind, dir := range map[string]string{"claude-code": ".claude/skills", "opencode": ".config/opencode/skills"} {
+		t.Run(kind, func(t *testing.T) {
+			w := newWorld(t, kind)
+			lib := &fakeSkills{}
+			w.svc.Skills = lib
+			bare, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "bare", false)
+			if err := w.store.SaveAssistantChoice(ctx, Choice{UserID: "u1", Integration: "int-1", Skillsets: []skills.Ref{{ID: "set-1"}}}); err != nil {
+				t.Fatal(err)
+			}
+			s, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", false)
+			if _, err := w.svc.Send(ctx, "u1", s.ID, "write the ticket", nil); err != nil {
+				t.Fatal(err)
+			}
+			answered(t, w.svc, s.ID, 2)
+			root := "/state/" + s.ID + "/" + dir + "/"
+			file := func(p string) (string, bool) {
+				w.pods.mu.Lock()
+				defer w.pods.mu.Unlock()
+				c, ok := w.pods.files[p]
+				return c, ok
+			}
+			if c, ok := file(root + "tickets/SKILL.md"); !ok || !strings.Contains(c, "name: tickets") {
+				t.Errorf("SKILL.md = %q, %v (files %v)", c, ok, slices.Sorted(maps.Keys(w.pods.files)))
+			}
+			if c, _ := file(root + "tickets/refs/style.md"); c != "Short titles." {
+				t.Errorf("a support file = %q", c)
+			}
+			if c, _ := file(root + skillsMarker); !strings.Contains(c, "set-1 v3 h-set-1") {
+				t.Errorf("the marker = %q", c)
+			}
+			// The second turn finds the marker: nothing is written again.
+			w.pods.mu.Lock()
+			delete(w.pods.files, root+"tickets/SKILL.md")
+			w.pods.mu.Unlock()
+			if _, err := w.svc.Send(ctx, "u1", s.ID, "again", nil); err != nil {
+				t.Fatal(err)
+			}
+			answered(t, w.svc, s.ID, 4)
+			if _, ok := file(root + "tickets/SKILL.md"); ok || lib.trees != 1 {
+				t.Errorf("the second turn installed again (%d loads)", lib.trees)
+			}
+			// No pins: no skills.
+			if _, err := w.svc.Send(ctx, "u1", bare.ID, "hi", nil); err != nil {
+				t.Fatal(err)
+			}
+			answered(t, w.svc, bare.ID, 2)
+			w.pods.mu.Lock()
+			defer w.pods.mu.Unlock()
+			for p := range w.pods.files {
+				if strings.HasPrefix(p, "/state/"+bare.ID+"/"+dir) {
+					t.Errorf("a session with no skillsets wrote %s", p)
+				}
+			}
+		})
+	}
+}
+
+// Skills that cannot be loaded or written fail the turn, saying so; a
+// warm that cannot start the pod or open the harness says so too.
+func TestSkillsAndWarmsThatFail(t *testing.T) {
+	ctx := context.Background()
+	for name, c := range map[string]struct {
+		lib   *fakeSkills
+		write string
+		want  string
+	}{
+		"the library": {lib: &fakeSkills{treesE: errors.New("blob gone")}, want: "your skills: blob gone"},
+		"the pod":     {lib: &fakeSkills{}, write: "/tickets/", want: "install skill tickets: disk full"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t, "claude-code")
+			w.svc.Skills = c.lib
+			w.pods.writeFail = c.write
+			if err := w.store.SaveAssistantChoice(ctx, Choice{UserID: "u1", Integration: "int-1", Skillsets: []skills.Ref{{ID: "set-1"}}}); err != nil {
+				t.Fatal(err)
+			}
+			s, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", true)
+			if _, err := w.svc.Send(ctx, "u1", s.ID, "write it", nil); err != nil {
+				t.Fatal(err)
+			}
+			answered(t, w.svc, s.ID, 2)
+			if msgs, _ := w.svc.Messages(ctx, "u1", s.ID, 0); !strings.Contains(msgs[1].Error, c.want) {
+				t.Errorf("the answer's error = %q", msgs[1].Error)
+			}
+		})
+	}
+
+	w := newWorld(t, "claude-code")
+	if err := w.store.SaveAssistantChoice(ctx, Choice{UserID: "u2", Integration: "int-gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.svc.Warm(ctx, "u2"); err == nil || !strings.Contains(err.Error(), "your harness integration") {
+		t.Errorf("a warm on a harness gone = %v", err)
+	}
+	w.pods.ensureE = errors.New("no node")
+	if err := w.svc.Warm(ctx, "u1"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		w.svc.mu.Lock()
+		warming := w.svc.warming["u1"]
+		w.svc.mu.Unlock()
+		if !warming {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if err := w.svc.Warm(ctx, "u1"); err != nil {
+		t.Errorf("a warm after one that failed = %v", err)
+	}
+}
+
+// flakyStore fails one of its reads or writes.
+type flakyStore struct {
+	*MemStore
+	fail string
+}
+
+var errStore = errors.New("the database is away")
+
+func (s flakyStore) FindAssistantSession(ctx context.Context, u string, k Kind, w, sub string) (Session, bool, error) {
+	if s.fail == "find" {
+		return Session{}, false, errStore
+	}
+	return s.MemStore.FindAssistantSession(ctx, u, k, w, sub)
+}
+
+func (s flakyStore) AssistantChoice(ctx context.Context, u string) (Choice, error) {
+	if s.fail == "choice" {
+		return Choice{}, errStore
+	}
+	return s.MemStore.AssistantChoice(ctx, u)
+}
+
+func (s flakyStore) SaveAssistantSession(ctx context.Context, v Session) error {
+	if s.fail == "save" {
+		return errStore
+	}
+	return s.MemStore.SaveAssistantSession(ctx, v)
+}
+
+func (s flakyStore) AssistantSession(ctx context.Context, id string) (Session, bool, error) {
+	if s.fail == "get" {
+		return Session{}, false, errStore
+	}
+	return s.MemStore.AssistantSession(ctx, id)
+}
+
+// A store that fails is the caller's error: no session half-opened, no
+// warm, no status made up.
+func TestAStoreThatFails(t *testing.T) {
+	ctx := context.Background()
+	for _, fail := range []string{"find", "choice", "save", "get"} {
+		w := newWorld(t, "claude-code")
+		w.svc.Store = flakyStore{MemStore: w.store, fail: fail}
+		if s, _, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "T-1", false); !errors.Is(err, errStore) {
+			t.Errorf("open with %s failing = %+v, %v", fail, s, err)
+		}
+	}
+	w := newWorld(t, "claude-code")
+	w.svc.Store = flakyStore{MemStore: w.store, fail: "choice"}
+	if err := w.svc.Warm(ctx, "u1"); !errors.Is(err, errStore) {
+		t.Errorf("a warm = %v", err)
+	}
+	if _, err := w.svc.Status(ctx, "u1", ""); !errors.Is(err, errStore) {
+		t.Errorf("the status = %v", err)
+	}
+	// A token whose session is gone binds no tool.
+	s, _, _ := w.svc.Open(ctx, "u1", KindGeneral, "", "palette", true)
+	if s.ID != "" {
+		t.Fatalf("opened %+v with no choice to read", s)
+	}
+	w.svc.Store = w.store
+	s, _, _ = w.svc.Open(ctx, "u1", KindGeneral, "", "palette", true)
+	if _, err := w.svc.Token(ctx, "u1", s.ID); err != nil {
+		t.Fatal(err)
+	}
+	live, _, _ := w.store.AssistantSession(ctx, s.ID)
+	w.svc.Store = flakyStore{MemStore: w.store, fail: "get"}
+	if _, _, _, ok := w.svc.FillTool(ctx, live.TokenID); ok {
+		t.Error("a token whose session cannot be read binds a tool")
 	}
 }

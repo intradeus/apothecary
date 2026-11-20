@@ -71,7 +71,9 @@
 		align-items: center;
 		flex: none;
 		margin: var(--shell-gap) var(--shell-gap) 0;
-		padding: 12px 12px 12px 16px;
+		/* The trailing edge keeps clear of the assistant's floating button,
+		   wrapped or not: only the padding, never the column's width. */
+		padding: 12px var(--assistant-inset) 12px 16px;
 		border-radius: var(--r-pane);
 	}
 	.ph:not(:has(.lead)) {
