@@ -2,6 +2,7 @@ package analytics
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -35,13 +36,21 @@ type Store interface {
 	ListDashboards(ctx context.Context, userID string) ([]Dashboard, error)
 	GetDashboard(ctx context.Context, id string) (Dashboard, error)
 	// PutDashboard creates or replaces a dashboard; replacing keeps its
-	// owner and creation time.
-	PutDashboard(ctx context.Context, d Dashboard) error
+	// owner and creation time. In the same write it appends a version (by
+	// c) when the name, filters or panels differ from the latest one.
+	PutDashboard(ctx context.Context, d Dashboard, c Change) error
 	DeleteDashboard(ctx context.Context, id string) error
 	ListScorecards(ctx context.Context, userID string) ([]Scorecard, error)
 	GetScorecard(ctx context.Context, id string) (Scorecard, error)
-	PutScorecard(ctx context.Context, s Scorecard) error
+	PutScorecard(ctx context.Context, s Scorecard, c Change) error
 	DeleteScorecard(ctx context.Context, id string) error
+	// ListDashboardVersions is a stored dashboard's kept versions, newest
+	// first (ErrNotFound: no such dashboard); GetDashboardVersion one of
+	// them (ErrNotFound: no such dashboard or seq). Likewise scorecards.
+	ListDashboardVersions(ctx context.Context, id string) ([]DashboardVersion, error)
+	GetDashboardVersion(ctx context.Context, id string, seq int) (DashboardVersion, error)
+	ListScorecardVersions(ctx context.Context, id string) ([]ScorecardVersion, error)
+	GetScorecardVersion(ctx context.Context, id string, seq int) (ScorecardVersion, error)
 }
 
 // Service answers a person's analytics: queries over their own runs, and
@@ -237,13 +246,13 @@ func (s *Service) GetDashboard(ctx context.Context, id string) (Dashboard, error
 	return s.Store.GetDashboard(ctx, id)
 }
 
-func (s *Service) CreateDashboard(ctx context.Context, userID string, in DashboardInput) (Dashboard, error) {
+func (s *Service) CreateDashboard(ctx context.Context, userID string, in DashboardInput, c Change) (Dashboard, error) {
 	if err := s.checkDashboard(ctx, userID, &in); err != nil {
 		return Dashboard{}, err
 	}
 	now := s.now()
 	d := Dashboard{ID: s.newID(), UserID: userID, Name: in.Name, Filters: in.Filters, Panels: in.Panels, CreatedAt: now, UpdatedAt: now}
-	if err := s.Store.PutDashboard(ctx, d); err != nil {
+	if err := s.Store.PutDashboard(ctx, d, c); err != nil {
 		return Dashboard{}, err
 	}
 	return d, nil
@@ -251,7 +260,7 @@ func (s *Service) CreateDashboard(ctx context.Context, userID string, in Dashboa
 
 // UpdateDashboard replaces a dashboard's name, filters and panels; its
 // owner never changes.
-func (s *Service) UpdateDashboard(ctx context.Context, id string, in DashboardInput) (Dashboard, error) {
+func (s *Service) UpdateDashboard(ctx context.Context, id string, in DashboardInput, c Change) (Dashboard, error) {
 	if isBuiltin(id) {
 		return Dashboard{}, fmt.Errorf("dashboard %s: %w", id, ErrReadOnly)
 	}
@@ -263,7 +272,7 @@ func (s *Service) UpdateDashboard(ctx context.Context, id string, in DashboardIn
 		return Dashboard{}, err
 	}
 	d.Name, d.Filters, d.Panels, d.UpdatedAt = in.Name, in.Filters, in.Panels, s.now()
-	if err := s.Store.PutDashboard(ctx, d); err != nil {
+	if err := s.Store.PutDashboard(ctx, d, c); err != nil {
 		return Dashboard{}, err
 	}
 	return d, nil
@@ -274,6 +283,97 @@ func (s *Service) DeleteDashboard(ctx context.Context, id string) error {
 		return fmt.Errorf("dashboard %s: %w", id, ErrReadOnly)
 	}
 	return s.Store.DeleteDashboard(ctx, id)
+}
+
+// DashboardVersions is a dashboard's kept versions, newest first, each
+// with what changed against the one before it. A built-in has none.
+func (s *Service) DashboardVersions(ctx context.Context, id string) ([]DashboardVersion, error) {
+	if isBuiltin(id) {
+		if _, ok := builtinDashboard(id); ok {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("dashboard %s: %w", id, ErrNotFound)
+	}
+	vs, err := s.Store.ListDashboardVersions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := range vs {
+		if i == len(vs)-1 {
+			vs[i].Oldest = true
+			break
+		}
+		cur, prev := &vs[i], &vs[i+1]
+		if cur.Name != prev.Name {
+			cur.Changed = append(cur.Changed, "name")
+		}
+		if !slices.Equal(cur.Filters, prev.Filters) {
+			cur.Changed = append(cur.Changed, "filters")
+		}
+		if pc := panelChanges(prev.Panels, cur.Panels); pc != (PanelChanges{}) {
+			cur.Changed = append(cur.Changed, "panels")
+			cur.PanelChanges = &pc
+		}
+	}
+	return vs, nil
+}
+
+// panelChanges counts panels added, removed and changed (same id, another
+// title, query, viz or width) from before to after.
+func panelChanges(before, after []Panel) PanelChanges {
+	var pc PanelChanges
+	old := make(map[string]Panel, len(before))
+	for _, p := range before {
+		old[p.ID] = p
+	}
+	seen := make(map[string]bool, len(after))
+	for _, p := range after {
+		seen[p.ID] = true
+		o, ok := old[p.ID]
+		switch {
+		case !ok:
+			pc.Added++
+		case !sameJSON(o, p):
+			pc.Changed++
+		}
+	}
+	for _, p := range before {
+		if !seen[p.ID] {
+			pc.Removed++
+		}
+	}
+	return pc
+}
+
+// sameJSON compares two values as stored (jsonb), so an empty and a nil
+// slice inside a query do not count as a change.
+func sameJSON(a, b any) bool {
+	ja, errA := json.Marshal(a)
+	jb, errB := json.Marshal(b)
+	return errA == nil && errB == nil && string(ja) == string(jb)
+}
+
+// DashboardVersion is one kept version of a stored dashboard.
+func (s *Service) DashboardVersion(ctx context.Context, id string, seq int) (DashboardVersion, error) {
+	if isBuiltin(id) {
+		return DashboardVersion{}, fmt.Errorf("dashboard %s version %d: %w", id, seq, ErrNotFound)
+	}
+	return s.Store.GetDashboardVersion(ctx, id, seq)
+}
+
+// RestoreDashboardVersion saves a kept version's content as the dashboard's
+// current one, checked as any save is (ErrInvalid when the catalog moved
+// on): a new version, restored from seq; history is never rewritten.
+func (s *Service) RestoreDashboardVersion(ctx context.Context, id string, seq int, c Change) (Dashboard, error) {
+	if isBuiltin(id) {
+		return Dashboard{}, fmt.Errorf("dashboard %s: %w", id, ErrReadOnly)
+	}
+	v, err := s.Store.GetDashboardVersion(ctx, id, seq)
+	if err != nil {
+		return Dashboard{}, err
+	}
+	c.RestoredFrom = seq
+	return s.UpdateDashboard(ctx, id, DashboardInput{Name: v.Name, Filters: v.Filters, Panels: v.Panels}, c)
 }
 
 // checkDashboard validates and normalises a dashboard as saved: a name,
@@ -388,13 +488,13 @@ func (s *Service) ownScorecard(ctx context.Context, userID, id string) (Scorecar
 	return sc, nil
 }
 
-func (s *Service) CreateScorecard(ctx context.Context, userID string, in ScorecardInput) (Scorecard, error) {
+func (s *Service) CreateScorecard(ctx context.Context, userID string, in ScorecardInput, c Change) (Scorecard, error) {
 	if err := checkScorecard(&in); err != nil {
 		return Scorecard{}, err
 	}
 	now := s.now()
 	sc := Scorecard{ID: s.newID(), UserID: userID, Name: in.Name, Terms: in.Terms, CreatedAt: now, UpdatedAt: now}
-	if err := s.Store.PutScorecard(ctx, sc); err != nil {
+	if err := s.Store.PutScorecard(ctx, sc, c); err != nil {
 		return Scorecard{}, err
 	}
 	return sc, nil
@@ -402,7 +502,7 @@ func (s *Service) CreateScorecard(ctx context.Context, userID string, in Scoreca
 
 // UpdateScorecard replaces a scorecard's name and terms; its owner never
 // changes.
-func (s *Service) UpdateScorecard(ctx context.Context, id string, in ScorecardInput) (Scorecard, error) {
+func (s *Service) UpdateScorecard(ctx context.Context, id string, in ScorecardInput, c Change) (Scorecard, error) {
 	if isBuiltin(id) {
 		return Scorecard{}, fmt.Errorf("scorecard %s: %w", id, ErrReadOnly)
 	}
@@ -414,7 +514,7 @@ func (s *Service) UpdateScorecard(ctx context.Context, id string, in ScorecardIn
 		return Scorecard{}, err
 	}
 	sc.Name, sc.Terms, sc.UpdatedAt = in.Name, in.Terms, s.now()
-	if err := s.Store.PutScorecard(ctx, sc); err != nil {
+	if err := s.Store.PutScorecard(ctx, sc, c); err != nil {
 		return Scorecard{}, err
 	}
 	return sc, nil
@@ -425,6 +525,57 @@ func (s *Service) DeleteScorecard(ctx context.Context, id string) error {
 		return fmt.Errorf("scorecard %s: %w", id, ErrReadOnly)
 	}
 	return s.Store.DeleteScorecard(ctx, id)
+}
+
+// ScorecardVersions is a scorecard's kept versions, newest first, each
+// with what changed against the one before it. A built-in has none.
+func (s *Service) ScorecardVersions(ctx context.Context, id string) ([]ScorecardVersion, error) {
+	if isBuiltin(id) {
+		if _, ok := builtinScorecard(id); ok {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scorecard %s: %w", id, ErrNotFound)
+	}
+	vs, err := s.Store.ListScorecardVersions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := range vs {
+		if i == len(vs)-1 {
+			vs[i].Oldest = true
+			break
+		}
+		cur, prev := &vs[i], &vs[i+1]
+		if cur.Name != prev.Name {
+			cur.Changed = append(cur.Changed, "name")
+		}
+		if !sameJSON(cur.Terms, prev.Terms) {
+			cur.Changed = append(cur.Changed, "terms")
+		}
+	}
+	return vs, nil
+}
+
+// ScorecardVersion is one kept version of a stored scorecard.
+func (s *Service) ScorecardVersion(ctx context.Context, id string, seq int) (ScorecardVersion, error) {
+	if isBuiltin(id) {
+		return ScorecardVersion{}, fmt.Errorf("scorecard %s version %d: %w", id, seq, ErrNotFound)
+	}
+	return s.Store.GetScorecardVersion(ctx, id, seq)
+}
+
+// RestoreScorecardVersion saves a kept version's terms as the scorecard's
+// current ones, checked as any save is: a new version, restored from seq.
+func (s *Service) RestoreScorecardVersion(ctx context.Context, id string, seq int, c Change) (Scorecard, error) {
+	if isBuiltin(id) {
+		return Scorecard{}, fmt.Errorf("scorecard %s: %w", id, ErrReadOnly)
+	}
+	v, err := s.Store.GetScorecardVersion(ctx, id, seq)
+	if err != nil {
+		return Scorecard{}, err
+	}
+	c.RestoredFrom = seq
+	return s.UpdateScorecard(ctx, id, ScorecardInput{Name: v.Name, Terms: v.Terms}, c)
 }
 
 // checkScorecard validates a scorecard as saved: a name, 1–8 terms, each a

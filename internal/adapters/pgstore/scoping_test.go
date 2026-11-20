@@ -208,17 +208,17 @@ func TestTicketsScopeAndLifecycle(t *testing.T) {
 			CreatedAt: at, UpdatedAt: at}
 	}
 	for _, tk := range []confstore.Ticket{mk("t1", "u1", "100", testNow), mk("t2", "u1", "200", testNow.Add(time.Hour)), mk("t3", "u2", "300", testNow)} {
-		if err := s.UpsertTicket(ctx, tk); err != nil {
+		if err := s.UpsertTicket(ctx, tk, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 			t.Fatal(err)
 		}
 	}
 	// The same issue is one record, whoever records it second.
-	if err := s.UpsertTicket(ctx, mk("t4", "u2", "100", testNow)); !errors.Is(err, confstore.ErrConflict) {
+	if err := s.UpsertTicket(ctx, mk("t4", "u2", "100", testNow), confstore.Change{Kind: confstore.AuthorUser}); !errors.Is(err, confstore.ErrConflict) {
 		t.Errorf("second record of an issue = %v, want ErrConflict", err)
 	}
 	bad := mk("t5", "u1", "500", testNow)
 	bad.StatusID = "ghost"
-	if err := s.UpsertTicket(ctx, bad); !errors.Is(err, confstore.ErrInvalid) {
+	if err := s.UpsertTicket(ctx, bad, confstore.Change{Kind: confstore.AuthorUser}); !errors.Is(err, confstore.ErrInvalid) {
 		t.Errorf("ticket on a missing status = %v, want ErrInvalid", err)
 	}
 	got, err := s.GetTicket(ctx, "t1")
@@ -248,7 +248,7 @@ func TestTicketsScopeAndLifecycle(t *testing.T) {
 	at := testNow.Add(2 * time.Hour)
 	seen := confstore.TicketSeen{RemoteID: "100", Key: "NEW-1", URL: "https://t.local/NEW-1", Title: "Renamed", Goal: "g2",
 		Type: "Bug", Labels: []string{"x"}}
-	if err := s.SetTicketSeen(ctx, "t1", seen, "", trackerport.ChangeFix, at); err != nil {
+	if err := s.SetTicketSeen(ctx, "t1", seen, "", trackerport.ChangeFix, at, confstore.Change{Kind: confstore.AuthorSync}); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = s.GetTicket(ctx, "t1")
@@ -257,10 +257,10 @@ func TestTicketsScopeAndLifecycle(t *testing.T) {
 		!got.UpdatedAt.Equal(at) || got.RemoteID != "100" || got.BaseBranch != "b" {
 		t.Errorf("after seen = %+v", got)
 	}
-	if err := s.SetTicketSeen(ctx, "ghost", seen, "", trackerport.ChangeFix, at); !errors.Is(err, confstore.ErrNotFound) {
+	if err := s.SetTicketSeen(ctx, "ghost", seen, "", trackerport.ChangeFix, at, confstore.Change{Kind: confstore.AuthorSync}); !errors.Is(err, confstore.ErrNotFound) {
 		t.Errorf("seen of a missing ticket = %v", err)
 	}
-	if err := s.SetTicketSeen(ctx, "t1", seen, "ghost", trackerport.ChangeFix, at); !errors.Is(err, confstore.ErrInvalid) {
+	if err := s.SetTicketSeen(ctx, "t1", seen, "ghost", trackerport.ChangeFix, at, confstore.Change{Kind: confstore.AuthorSync}); !errors.Is(err, confstore.ErrInvalid) {
 		t.Errorf("seen with a missing type = %v", err)
 	}
 
@@ -303,7 +303,7 @@ func TestListInternalTickets(t *testing.T) {
 		mk("d", "Logout", "in1-todo", 2), // same instant as c: id breaks the tie
 		{ID: "r", UserID: "u1", Title: "remote login", SourceID: "jira", SourceKind: "jira", RemoteID: "1", CreatedAt: testNow, UpdatedAt: testNow},
 	} {
-		if err := s.UpsertTicket(ctx, tk); err != nil {
+		if err := s.UpsertTicket(ctx, tk, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 			t.Fatal(err)
 		}
 	}

@@ -130,6 +130,8 @@ changes something says so to the client (`readOnlyHint` false), and
 | `list_workshops`, `get_workshop`, `list_workshop_branches` | reads workshops and their repository's branches |
 | `list_tickets`, `get_ticket`, `list_ticket_comments`, `list_ticket_statuses`, `list_ticket_types` | reads a workshop's tickets, from its ticket source |
 | `create_ticket`, `update_ticket` | files and edits a ticket on a workshop's built-in tracker |
+| `list_ticket_versions`, `get_ticket_version` | reads a ticket's kept versions (the newest 100 saves that changed it), who made each and what it changed |
+| `restore_ticket_version` | restores one on the built-in tracker, as a new version (a remote tracker's issue is changed there) |
 | `list_flows`, `get_flow`, `list_flow_versions`, `get_flow_version` | reads a workshop's flows and their saved versions |
 | `list_flow_templates`, `get_flow_schema`, `validate_flow` | reads the built-in flows and the flow schema; checks a flow's YAML |
 | `create_flow`, `update_flow` | saves a workshop's flow |
@@ -142,3 +144,5 @@ changes something says so to the client (`readOnlyHint` false), and
 | `get_analytics_catalog`, `list_dashboards`, `get_dashboard`, `list_scorecards`, `get_scorecard` | reads the analytics catalog and your dashboards and scorecards |
 | `query_analytics`, `analytics_values`, `drill_analytics` | runs an analytics query over your runs, a dimension's values, and the runs behind a number |
 | `create_dashboard`, `update_dashboard`, `create_scorecard`, `update_scorecard` | writes them |
+| `list_dashboard_versions`, `get_dashboard_version`, `list_scorecard_versions`, `get_scorecard_version` | reads a dashboard's or scorecard's kept versions (the newest 100 saves that changed it) and what each changed |
+| `restore_dashboard_version`, `restore_scorecard_version` | restores one, as a new version |

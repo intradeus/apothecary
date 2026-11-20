@@ -45,6 +45,10 @@ type ticketBody struct {
 	TypeID        string   `json:"type_id,omitempty"`
 	Labels        []string `json:"labels,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids"`
+	// Assisted says the save holds an assistant's fill: the version it
+	// makes is authored assistant (saved by the caller). Not stored on the
+	// ticket.
+	Assisted bool `json:"assisted,omitempty"`
 }
 
 // TicketRow is one issue of a workshop's ticket source as its list shows it,
@@ -471,7 +475,7 @@ func (s *Server) createWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 	t, err := s.tickets().Create(r.Context(), confstore.Ticket{
 		UserID: ws.project.UserID, Title: body.Title, Goal: body.Goal, BaseBranch: body.BaseBranch,
 		ChangeType: trackerport.ChangeType(body.ChangeType), StatusID: body.StatusID, TypeID: body.TypeID, Labels: body.Labels,
-	}, auth.UserID(r.Context()), body.AttachmentIDs)
+	}, confstore.ByUser(r.Context(), auth.UserID(r.Context()), body.Assisted), body.AttachmentIDs)
 	if err != nil {
 		confErr(w, err)
 		return
@@ -512,7 +516,7 @@ func (s *Server) updateWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 			ws.fail(w, err)
 			return
 		}
-		if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{BaseBranch: body.BaseBranch}, "", nil); err != nil {
+		if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{BaseBranch: body.BaseBranch}, confstore.ByUser(ctx, auth.UserID(ctx), body.Assisted), nil); err != nil {
 			confErr(w, err)
 			return
 		}
@@ -529,7 +533,7 @@ func (s *Server) updateWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 	if _, err := s.tickets().Update(ctx, rec.ID, confstore.Ticket{
 		Title: body.Title, Goal: body.Goal, BaseBranch: body.BaseBranch,
 		ChangeType: trackerport.ChangeType(body.ChangeType), TypeID: body.TypeID,
-	}, auth.UserID(ctx), body.AttachmentIDs); err != nil {
+	}, confstore.ByUser(ctx, auth.UserID(ctx), body.Assisted), body.AttachmentIDs); err != nil {
 		confErr(w, err)
 		return
 	}
@@ -556,6 +560,157 @@ func (s *Server) deleteWorkshopTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// TicketVersionSummary is one version of a ticket as its history lists it:
+// who made it (author_handle: a person's, when the author is one), when, and
+// the fields that differ from the version before it.
+type TicketVersionSummary struct {
+	Seq   int    `json:"seq"`
+	Title string `json:"title"`
+	confstore.Change
+	AuthorHandle string    `json:"author_handle,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
+	Changed      []string  `json:"changed,omitempty"`
+	Oldest       bool      `json:"oldest,omitempty"`
+}
+
+// TicketVersionView is one version of a ticket in full.
+type TicketVersionView struct {
+	confstore.TicketVersion
+	AuthorHandle string `json:"author_handle,omitempty"`
+}
+
+// authorHandles resolves the handles of versions' authors (tickets',
+// dashboards', scorecards'), each user once per request.
+type authorHandles struct {
+	s    *Server
+	seen map[string]string
+}
+
+func (s *Server) authorHandles() authorHandles {
+	return authorHandles{s: s, seen: map[string]string{}}
+}
+
+// of is the handle of a version's author: a person's — kind user or
+// assistant — else "" (a run, a sync, the backfill, a user that is gone).
+func (h authorHandles) of(ctx context.Context, kind, authorID string) string {
+	if (kind != string(confstore.AuthorUser) && kind != string(confstore.AuthorAssistant)) || authorID == "" || h.s.Auth == nil {
+		return ""
+	}
+	v, ok := h.seen[authorID]
+	if !ok {
+		if u, err := h.s.Auth.GetUser(ctx, authorID); err == nil {
+			v = u.Handle
+		}
+		h.seen[authorID] = v
+	}
+	return v
+}
+
+// versionSeq is the route's version number.
+func versionSeq(w http.ResponseWriter, r *http.Request) (int, bool) {
+	seq, err := strconv.Atoi(r.PathValue("seq"))
+	if err != nil || seq < 1 {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("version %q: a positive number", r.PathValue("seq")))
+		return 0, false
+	}
+	return seq, true
+}
+
+// listWorkshopTicketVersions is a ticket's history, newest first; a remote
+// issue without a record has none.
+func (s *Server) listWorkshopTicketVersions(w http.ResponseWriter, r *http.Request) {
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	_, rec, err := s.issueAt(r.Context(), ws, r.PathValue("key"), false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	out := []TicketVersionSummary{}
+	if rec == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	list, err := s.Conf.TicketVersions(r.Context(), rec.ID)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	h := s.authorHandles()
+	for _, v := range list {
+		out = append(out, TicketVersionSummary{Seq: v.Seq, Title: v.Title, Change: v.Change,
+			AuthorHandle: h.of(r.Context(), string(v.Kind), v.AuthorID), CreatedAt: v.CreatedAt, Changed: v.Changed, Oldest: v.Oldest})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// getWorkshopTicketVersion is one version of a ticket, in full.
+func (s *Server) getWorkshopTicketVersion(w http.ResponseWriter, r *http.Request) {
+	seq, ok := versionSeq(w, r)
+	if !ok {
+		return
+	}
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	_, rec, err := s.issueAt(r.Context(), ws, r.PathValue("key"), false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	if rec == nil {
+		writeErr(w, http.StatusNotFound, fmt.Sprintf("ticket %s has no history: Apothecary holds no record of it", r.PathValue("key")))
+		return
+	}
+	v, err := s.Conf.TicketVersion(r.Context(), rec.ID, seq)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, TicketVersionView{TicketVersion: v, AuthorHandle: s.authorHandles().of(r.Context(), string(v.Kind), v.AuthorID)})
+}
+
+// restoreWorkshopTicketVersion makes an internal ticket's content an old
+// version's again, as a new version. A remote issue's content is its
+// tracker's: refused, so no later sync undoes a restore.
+func (s *Server) restoreWorkshopTicketVersion(w http.ResponseWriter, r *http.Request) {
+	seq, ok := versionSeq(w, r)
+	if !ok {
+		return
+	}
+	ws, ok := s.workshop(w, r)
+	if !ok {
+		return
+	}
+	if !ws.internal() {
+		writeErr(w, http.StatusBadRequest, fmt.Sprintf("workshop %s reads its tickets from %s (%s): a ticket's content is that tracker's, so an old version cannot be restored here; change the issue there",
+			ws.project.Name, ws.source.Name, ws.source.Kind))
+		return
+	}
+	ctx := r.Context()
+	_, rec, err := s.issueAt(ctx, ws, r.PathValue("key"), false)
+	if err != nil {
+		ws.fail(w, err)
+		return
+	}
+	v, err := s.Conf.TicketVersion(ctx, rec.ID, seq)
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	if !checkBaseBranch(w, v.BaseBranch) {
+		return
+	}
+	if _, err := s.tickets().Restore(ctx, rec.ID, seq, confstore.ByUser(ctx, auth.UserID(ctx), false)); err != nil {
+		confErr(w, err)
+		return
+	}
+	s.writeTicketAt(w, r, http.StatusOK, ws, rec.ID)
 }
 
 // startWorkshopTicketRun starts a new run (attempt) on an issue of the
@@ -752,6 +907,22 @@ func (s *Server) ticketRoutes() []Route {
 			Summary: "Delete an internal ticket",
 			Doc:     "A remote issue is its tracker's (400).",
 			Handler: s.deleteWorkshopTicket, Status: http.StatusNoContent, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite},
+		{Method: "GET", Path: one + "/versions", ID: "listWorkshopTicketVersions", Tag: tagTickets,
+			Summary: "A ticket's history, newest first",
+			Doc: "Each save that changed its title, goal, base branch, change type, type or labels made a version: who made it (a person, an assistant's work a person saved, a run, or its tracker's sync), when, and the fields that changed from the version before. " +
+				"The newest 100 are kept. A remote issue without a record has none.",
+			Handler: s.listWorkshopTicketVersions, Returns: []TicketVersionSummary{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead,
+			Tool: &Tool{Name: "list_ticket_versions", Doc: "A ticket's history, newest first: each version's number (seq), who made it, when, and which fields changed.", Args: map[string]string{"id": argWorkshop, "key": argTicket}}},
+		{Method: "GET", Path: one + "/versions/{seq}", ID: "getWorkshopTicketVersion", Tag: tagTickets,
+			Summary: "One version of a ticket, in full",
+			Handler: s.getWorkshopTicketVersion, Returns: TicketVersionView{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead,
+			Tool: &Tool{Name: "get_ticket_version", Doc: "One version of a ticket: its title, goal, base branch, change type, type and labels as that save left them.", Args: map[string]string{"id": argWorkshop, "key": argTicket, "seq": argTicketVersion}}},
+		{Method: "POST", Path: one + "/versions/{seq}/restore", ID: "restoreWorkshopTicketVersion", Tag: tagTickets,
+			Summary: "Restore an old version of a ticket",
+			Doc: "Its content becomes the version's again, saved as a new version (history is never rewritten); content equal to the version already changes nothing. " +
+				"A type no longer on the tracker gives way to its change type's. A remote issue's content is its tracker's (400).",
+			Handler: s.restoreWorkshopTicketVersion, Returns: TicketDetail{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketWrite,
+			Tool: &Tool{Name: "restore_ticket_version", Doc: "Restore an old version of a built-in tracker's ticket: its content becomes that version's again, as a new version. A remote tracker's issue is refused: change it there.", Args: map[string]string{"id": argWorkshop, "key": argTicket, "seq": argTicketVersion}}},
 		{Method: "GET", Path: one + "/attachments", ID: "getWorkshopTicketAttachments", Tag: tagTickets,
 			Summary: "Files of a ticket: its record's, and the remote issue's",
 			Handler: s.getWorkshopTicketAttachments, Returns: TicketAttachments{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.TicketRead},

@@ -12,11 +12,79 @@ import (
 // Mem's trackers: the status and type lists, a ticket's tracker state,
 // comments and links — each held to what the SQL in pgstore does.
 
-// dropOrphans is ON DELETE CASCADE from tickets: their comments and links go.
-// Callers hold m.mu.
+// dropOrphans is ON DELETE CASCADE from tickets: their comments, links and
+// versions go. Callers hold m.mu.
 func (m *Mem) dropOrphans() {
 	maps.DeleteFunc(m.comments, func(_ string, c TicketComment) bool { _, ok := m.tickets[c.TicketID]; return !ok })
 	maps.DeleteFunc(m.links, func(_ string, l TicketLink) bool { _, ok := m.tickets[l.TicketID]; return !ok })
+	maps.DeleteFunc(m.tktVersions, func(id string, _ []TicketVersion) bool { _, ok := m.tickets[id]; return !ok })
+}
+
+// ticketContent is a version of what t holds now (no author, seq or time).
+func ticketContent(t Ticket) TicketVersion {
+	return TicketVersion{TicketID: t.ID, Title: t.Title, Goal: t.Goal, BaseBranch: t.BaseBranch,
+		ChangeType: t.ChangeType, TypeID: t.TypeID, Labels: slices.Clone(t.Labels)}
+}
+
+// sameTicketContent reports whether two versions hold the same content.
+func sameTicketContent(a, b TicketVersion) bool {
+	return a.Title == b.Title && a.Goal == b.Goal && a.BaseBranch == b.BaseBranch &&
+		a.ChangeType == b.ChangeType && a.TypeID == b.TypeID && slices.Equal(a.Labels, b.Labels)
+}
+
+// appendTicketVersion is the version a ticket write appends, as pg's: when
+// the stored t differs from the latest version, then the newest
+// MaxTicketVersions kept. Callers hold m.mu.
+func (m *Mem) appendTicketVersion(t Ticket, c Change, at time.Time) {
+	v := ticketContent(t)
+	list := m.tktVersions[t.ID]
+	if n := len(list); n > 0 {
+		if sameTicketContent(list[n-1], v) {
+			return
+		}
+		v.Seq = list[n-1].Seq
+	}
+	v.Seq++
+	v.Change, v.CreatedAt = c, pgTime(at)
+	list = append(list, v)
+	if len(list) > MaxTicketVersions {
+		list = slices.Clone(list[len(list)-MaxTicketVersions:])
+	}
+	m.tktVersions[t.ID] = list
+}
+
+// storedVersion is a version as its row reads back.
+func storedVersion(v TicketVersion) TicketVersion {
+	v.Labels = slices.Clone(v.Labels)
+	if len(v.Labels) == 0 {
+		v.Labels = nil
+	}
+	return v
+}
+
+func (m *Mem) ListTicketVersions(_ context.Context, ticketID string) ([]TicketVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.tickets[ticketID]; !ok {
+		return nil, notFound("ticket", ticketID)
+	}
+	var out []TicketVersion
+	list := m.tktVersions[ticketID]
+	for i := len(list) - 1; i >= 0; i-- {
+		out = append(out, storedVersion(list[i]))
+	}
+	return out, nil
+}
+
+func (m *Mem) GetTicketVersion(_ context.Context, ticketID string, seq int) (TicketVersion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, v := range m.tktVersions[ticketID] {
+		if v.Seq == seq {
+			return storedVersion(v), nil
+		}
+	}
+	return TicketVersion{}, notFound("ticket version", fmt.Sprintf("%s/%d", ticketID, seq))
 }
 
 func byPosition[T any](rows []T, pos func(T) int, id func(T) string) {
@@ -220,7 +288,7 @@ func (m *Mem) SetTicketStatus(_ context.Context, id, statusID, by string, at tim
 	return nil
 }
 
-func (m *Mem) SetTicketLabels(_ context.Context, id string, labels []string, union bool, at time.Time) ([]string, error) {
+func (m *Mem) SetTicketLabels(_ context.Context, id string, labels []string, union bool, at time.Time, c Change) ([]string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tickets[id]
@@ -239,6 +307,7 @@ func (m *Mem) SetTicketLabels(_ context.Context, id string, labels []string, uni
 	t.Labels, t.UpdatedAt = next, pgTime(at)
 	t = storedTicket(t)
 	m.tickets[id] = t
+	m.appendTicketVersion(t, c, at)
 	return slices.Clone(t.Labels), nil
 }
 

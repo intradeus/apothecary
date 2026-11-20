@@ -16,6 +16,9 @@ var (
 	// ErrTimeout is a query the database gave up on (the 5s statement
 	// timeout): the caller narrows it.
 	ErrTimeout = errors.New("query timed out")
+	// ErrConflict is a write another writer beat (two saves taking the
+	// same version number): the caller retries.
+	ErrConflict = errors.New("conflict")
 )
 
 // invalidError is-matches ErrInvalid without polluting the message.
@@ -195,4 +198,56 @@ type Scorecard struct {
 type ScorecardInput struct {
 	Name  string `json:"name"`
 	Terms []Term `json:"terms"`
+}
+
+// AuthorKind is who wrote a version.
+type AuthorKind string
+
+const (
+	AuthorUser      AuthorKind = "user"
+	AuthorAssistant AuthorKind = "assistant"
+	AuthorBackfill  AuthorKind = "backfill"
+)
+
+// Change is who makes a write, and the version it restores (0: none).
+type Change struct {
+	Kind         AuthorKind `json:"author_kind"`
+	AuthorID     string     `json:"author_id"`
+	RestoredFrom int        `json:"restored_from,omitempty"`
+}
+
+// PanelChanges counts a version's panels against the version before it,
+// by panel id.
+type PanelChanges struct {
+	Added   int `json:"added"`
+	Removed int `json:"removed"`
+	Changed int `json:"changed"`
+}
+
+// DashboardVersion is one kept state of a dashboard's name, filters and
+// panels. Changed (field names differing from the version before it),
+// PanelChanges and Oldest are filled by the service's list.
+type DashboardVersion struct {
+	DashboardID string   `json:"dashboard_id"`
+	Seq         int      `json:"seq"`
+	Name        string   `json:"name"`
+	Filters     []string `json:"filters"`
+	Panels      []Panel  `json:"panels"`
+	Change
+	CreatedAt    time.Time     `json:"created_at"`
+	Changed      []string      `json:"changed,omitempty"`
+	PanelChanges *PanelChanges `json:"panel_changes,omitempty"`
+	Oldest       bool          `json:"oldest,omitempty"`
+}
+
+// ScorecardVersion is one kept state of a scorecard's name and terms.
+type ScorecardVersion struct {
+	ScorecardID string `json:"scorecard_id"`
+	Seq         int    `json:"seq"`
+	Name        string `json:"name"`
+	Terms       []Term `json:"terms"`
+	Change
+	CreatedAt time.Time `json:"created_at"`
+	Changed   []string  `json:"changed,omitempty"`
+	Oldest    bool      `json:"oldest,omitempty"`
 }

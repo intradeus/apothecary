@@ -501,7 +501,7 @@ func TestLiveTicketsMigration(t *testing.T) {
 		t.Errorf("the issue's record = %+v, %v", tk, err)
 	}
 	if err := s.UpsertTicket(ctx, confstore.Ticket{ID: "t7", Title: "again", SourceID: "jira1", SourceKind: "jira", RemoteID: "100",
-		CreatedAt: time.Now(), UpdatedAt: time.Now()}); !errors.Is(err, confstore.ErrConflict) {
+		CreatedAt: time.Now(), UpdatedAt: time.Now()}, confstore.Change{Kind: confstore.AuthorUser}); !errors.Is(err, confstore.ErrConflict) {
 		t.Errorf("another record of the issue = %v, want ErrConflict", err)
 	}
 
@@ -758,5 +758,61 @@ func TestSplitTokenActionsMigration(t *testing.T) {
 		if !slices.Equal(got[id], want) {
 			t.Errorf("%s = %v, want %v", id, got[id], want)
 		}
+	}
+}
+
+// 0017: history begins with what is there now — each ticket, dashboard and
+// scorecard gets one backfill version, seq 1, equal to its content.
+func TestVersionsMigration(t *testing.T) {
+	dsn := pgtest.Empty(t)
+	ctx := context.Background()
+	old := openSrc(t, dsn, upTo(t, 16))
+	if _, err := old.pool.Exec(ctx, `
+		INSERT INTO integrations (id, port, kind, name, created_at, updated_at, user_id) VALUES
+		  ('src1', 'ticketsource', 'internal', 'Apothecary tickets', now(), now(), 'u1');
+		INSERT INTO tracker_types (id, integration_id, remote_id, name, change_type, position) VALUES
+		  ('ty1', 'src1', 'bug', 'Bug', 'fix', 0);
+		INSERT INTO tickets (id, title, goal, base_branch, source_id, source_kind, created_at, updated_at, user_id, change_type, type_id, labels, remote_id) VALUES
+		  ('t1', 'one', 'the goal', 'main', 'src1', 'internal', now(), '2026-01-01T00:00:00Z', 'u1', 'fix', 'ty1', '{a,b}', 't1'),
+		  ('t2', 'two', '', '', 'src1', 'internal', now(), now(), 'u1', 'feat', NULL, '{}', 't2');
+		INSERT INTO analytics_dashboards (id, user_id, name, filters, panels) VALUES
+		  ('d1', 'u1', 'Costs', '["flow_name"]', '[{"id": "p1", "title": "x"}]');
+		INSERT INTO analytics_scorecards (id, user_id, name, terms) VALUES
+		  ('s1', 'u1', 'Speed', '[{"weight": 1}]')`); err != nil {
+		t.Fatal(err)
+	}
+	old.Close()
+
+	s := openDSN(t, dsn)
+	for _, c := range []struct{ what, query string }{
+		{"tickets", `SELECT count(*) FROM tickets t JOIN ticket_versions v ON v.ticket_id = t.id
+			WHERE v.seq = 1 AND v.author_kind = 'backfill' AND v.author_id = '' AND v.restored_from IS NULL
+			  AND (v.title, v.goal, v.base_branch, v.change_type, v.labels, v.created_at) = (t.title, t.goal, t.base_branch, t.change_type, t.labels, t.updated_at)
+			  AND v.type_id = COALESCE(t.type_id, '')`},
+		{"dashboards", `SELECT count(*) FROM analytics_dashboards d JOIN analytics_dashboard_versions v ON v.dashboard_id = d.id
+			WHERE v.seq = 1 AND v.author_kind = 'backfill' AND (v.name, v.filters, v.panels) = (d.name, d.filters, d.panels)`},
+		{"scorecards", `SELECT count(*) FROM analytics_scorecards c JOIN analytics_scorecard_versions v ON v.scorecard_id = c.id
+			WHERE v.seq = 1 AND v.author_kind = 'backfill' AND (v.name, v.terms) = (c.name, c.terms)`},
+	} {
+		var n int
+		if err := s.pool.QueryRow(ctx, c.query).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", c.what, err)
+		}
+		want := map[string]int{"tickets": 2, "dashboards": 1, "scorecards": 1}[c.what]
+		if n != want {
+			t.Errorf("%s with a backfill version equal to them = %d, want %d", c.what, n, want)
+		}
+	}
+	var total int
+	if err := s.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM ticket_versions) + (SELECT count(*) FROM analytics_dashboard_versions)
+		+ (SELECT count(*) FROM analytics_scorecard_versions)`).Scan(&total); err != nil || total != 4 {
+		t.Errorf("versions = %d, %v; want exactly one each", total, err)
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM tickets; DELETE FROM analytics_dashboards; DELETE FROM analytics_scorecards`); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM ticket_versions) + (SELECT count(*) FROM analytics_dashboard_versions)
+		+ (SELECT count(*) FROM analytics_scorecard_versions)`).Scan(&total); err != nil || total != 0 {
+		t.Errorf("versions left after their parents went = %d, %v", total, err)
 	}
 }

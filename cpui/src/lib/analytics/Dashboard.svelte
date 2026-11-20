@@ -25,6 +25,7 @@
 	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { dashboardFill } from '$lib/domain';
+	import DashboardHistory from './DashboardHistory.svelte';
 
 	let { id }: { id: string } = $props();
 
@@ -55,6 +56,9 @@
 			return panels ? dashboardFill(cur, { panels }) : null;
 		}
 	);
+	// Its saved versions beside it, outside the edit mode; a restore reloads it.
+	let showHistory = $state(false);
+
 	const pageState = () => ({
 		name: dash?.name,
 		editing,
@@ -125,11 +129,15 @@
 		busy = true;
 		saveError = '';
 		try {
-			dash = await api.analytics.dashboards.update(d.id, {
-				name: d.name,
-				filters: d.filters,
-				panels: $state.snapshot(draft) as PanelT[]
-			});
+			dash = await api.analytics.dashboards.update(
+				d.id,
+				{
+					name: d.name,
+					filters: d.filters,
+					panels: $state.snapshot(draft) as PanelT[]
+				},
+				guard.changed.length > 0
+			);
 			editing = false;
 			guard.settle();
 			toast(t('analytics.dashboard.saved'));
@@ -193,6 +201,14 @@
 				aria-pressed={showAssistant}
 				onclick={() => (showAssistant = !showAssistant)}>{t('assistant.open')}</button
 			>
+			<button
+				class="btn-lg"
+				class:btn-sel={showHistory && !editing}
+				aria-pressed={showHistory && !editing}
+				disabled={editing}
+				title={editing ? t('analytics.history.editing') : undefined}
+				onclick={() => (showHistory = !showHistory)}>{t('analytics.history.open')}</button
+			>
 		{/if}
 	{/snippet}
 </PageHeader>
@@ -224,6 +240,10 @@
 			<div class="assist">
 				<AssistantPanel kind="dashboard" subject={dash.id} {guard} {pageState} />
 			</div>
+		{/if}
+
+		{#if showHistory && !editing && !dash.builtin}
+			<DashboardHistory dashboard={dash} onrestored={load} />
 		{/if}
 
 		{#if saveError}

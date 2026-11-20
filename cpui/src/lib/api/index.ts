@@ -49,6 +49,8 @@ import type {
 	Catalog,
 	Dashboard,
 	DashboardDraft,
+	DashboardVersion,
+	DashboardVersionSummary,
 	DrillRun,
 	Grain,
 	MeasureRef,
@@ -125,6 +127,8 @@ import type {
 	SignalSpec,
 	TicketAttachments,
 	TicketComment,
+	TicketVersion,
+	TicketVersionSummary,
 	TicketDetail,
 	TicketDraft,
 	TicketPage,
@@ -194,7 +198,8 @@ const ticketBody = (t: TicketDraft): Wire.TicketRequest => ({
 	attachment_ids: t.attachmentIds ?? [],
 	...(t.statusId ? { status_id: t.statusId } : {}),
 	...(t.typeId ? { type_id: t.typeId } : {}),
-	...(t.labels?.length ? { labels: t.labels } : {})
+	...(t.labels?.length ? { labels: t.labels } : {}),
+	...(t.assisted ? { assisted: true } : {})
 });
 
 /** `refresh=1` reads the tracker now rather than the cached copy. */
@@ -957,6 +962,27 @@ export const tickets = {
 		map.toTicketDetail(
 			await unwrap(
 				gen.updateWorkshopTicket({ path: { id: projectId, key }, body: ticketBody(draft) })
+			)
+		),
+
+	/** The ticket's history, newest first (the newest is the ticket now). */
+	versions: async (projectId: string, key: string): Promise<TicketVersionSummary[]> =>
+		many(
+			await unwrap(gen.listWorkshopTicketVersions({ path: { id: projectId, key } })),
+			map.toTicketVersionSummary
+		),
+
+	version: async (projectId: string, key: string, seq: number): Promise<TicketVersion> =>
+		map.toTicketVersion(
+			await unwrap(gen.getWorkshopTicketVersion({ path: { id: projectId, key, seq: String(seq) } }))
+		),
+
+	/** Applies an old version as a new one. A remote record is refused (400),
+	 *  as is content no longer valid. */
+	restore: async (projectId: string, key: string, seq: number): Promise<TicketDetail> =>
+		map.toTicketDetail(
+			await unwrap(
+				gen.restoreWorkshopTicketVersion({ path: { id: projectId, key, seq: String(seq) } })
 			)
 		),
 
@@ -1874,7 +1900,8 @@ const queryBody = (q: AnalyticsQuery): Wire.AnalyticsQuery => ({
 		: {})
 });
 
-const dashboardBody = (d: DashboardDraft): Wire.DashboardInput => ({
+const dashboardBody = (d: DashboardDraft, assisted?: boolean): Wire.DashboardBody => ({
+	...(assisted ? { assisted } : {}),
 	name: d.name,
 	filters: d.filters,
 	panels: d.panels.map((p) => ({
@@ -1886,7 +1913,7 @@ const dashboardBody = (d: DashboardDraft): Wire.DashboardInput => ({
 	}))
 });
 
-const scorecardBody = (s: ScorecardDraft): Wire.ScorecardInput => ({
+const scorecardBody = (s: ScorecardDraft): Wire.ScorecardBody => ({
 	name: s.name,
 	terms: s.terms.map((t) => ({
 		measure: measureBody(t.measure),
@@ -1935,13 +1962,32 @@ export const analytics = {
 		get: async (id: string): Promise<Dashboard> =>
 			map.toDashboard(await unwrap(gen.getDashboard({ path: { id } }))),
 
-		create: async (d: DashboardDraft): Promise<Dashboard> =>
-			map.toDashboard(await unwrap(gen.createDashboard({ body: dashboardBody(d) }))),
+		/** `assisted`: the save holds the assistant's fill. */
+		create: async (d: DashboardDraft, assisted?: boolean): Promise<Dashboard> =>
+			map.toDashboard(await unwrap(gen.createDashboard({ body: dashboardBody(d, assisted) }))),
 
-		update: async (id: string, d: DashboardDraft): Promise<Dashboard> =>
-			map.toDashboard(await unwrap(gen.updateDashboard({ path: { id }, body: dashboardBody(d) }))),
+		update: async (id: string, d: DashboardDraft, assisted?: boolean): Promise<Dashboard> =>
+			map.toDashboard(
+				await unwrap(gen.updateDashboard({ path: { id }, body: dashboardBody(d, assisted) }))
+			),
 
-		remove: (id: string) => unwrapVoid(gen.deleteDashboard({ path: { id } }))
+		remove: (id: string) => unwrapVoid(gen.deleteDashboard({ path: { id } })),
+
+		/** Its saved versions, newest first; none on a built-in. */
+		versions: async (id: string): Promise<DashboardVersionSummary[]> =>
+			many(
+				await unwrap(gen.listDashboardVersions({ path: { id } })),
+				map.toDashboardVersionSummary
+			),
+
+		version: async (id: string, seq: number): Promise<DashboardVersion> =>
+			map.toDashboardVersion(
+				await unwrap(gen.getDashboardVersion({ path: { id, seq: String(seq) } }))
+			),
+
+		/** Saves version `seq`'s content as a new version. */
+		restore: async (id: string, seq: number): Promise<Dashboard> =>
+			map.toDashboard(await unwrap(gen.restoreDashboardVersion({ path: { id, seq: String(seq) } })))
 	},
 
 	scorecards: {

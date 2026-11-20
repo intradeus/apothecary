@@ -369,7 +369,7 @@ func mustSeedTicket(t *testing.T, s *Store, ticketID string) {
 	if err := s.UpsertTicket(ctx, confstore.Ticket{
 		ID: ticketID, Title: "T", SourceID: "fint1", SourceKind: confstore.KindInternal, RemoteID: ticketID,
 		CreatedAt: now, UpdatedAt: now,
-	}); err != nil {
+	}, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		t.Fatal(err)
 	}
 }

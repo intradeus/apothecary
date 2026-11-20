@@ -16,6 +16,7 @@ import (
 	"apothecary/internal/ports/agentport"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/trackerport"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runinput"
@@ -468,7 +469,7 @@ main:
 `
 	h, tracker := trackerHarness(t, doc)
 	h.tickets.handWritten("tk-2")
-	if _, err := h.tickets.conf.SetTicketLabels(context.Background(), "tk-2", []string{"backend"}, false); err != nil {
+	if _, err := h.tickets.conf.SetTicketLabels(context.Background(), "tk-2", []string{"backend"}, false, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		t.Fatal(err)
 	}
 	runID, err := h.e.CreateRun(context.Background(), runinput.Ticket{TicketID: "tk-2", Title: "T"}, "hw", testProject)

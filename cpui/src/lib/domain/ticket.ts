@@ -177,6 +177,8 @@ export interface TicketDraft {
 	labels?: string[];
 	typeId?: string;
 	attachmentIds?: string[];
+	/** The save carries an assistant's fill: its version is the assistant's. */
+	assisted?: boolean;
 }
 
 /** A ticket's status as a picker offers it. A status is set by its name. */
@@ -234,4 +236,82 @@ export function statusNames(tickets: Pick<TicketRow, 'status'>[]): string[] {
 /** A ticket list narrowed to one status name; '' keeps all. */
 export function withStatus<T extends Pick<TicketRow, 'status'>>(tickets: T[], name: string): T[] {
 	return name ? tickets.filter((t) => t.status === name) : tickets;
+}
+
+/** Who made a version: a person, an assistant's fill a person saved, a run,
+ *  the tracker sync, or the content as it stood when history began. */
+export type VersionAuthorKind = 'user' | 'assistant' | 'run' | 'sync' | 'backfill';
+export const VERSION_AUTHOR_KINDS: VersionAuthorKind[] = [
+	'user',
+	'assistant',
+	'run',
+	'sync',
+	'backfill'
+];
+
+/** id is the person (user, assistant), the run, or the ticket source (sync). */
+export interface VersionAuthor {
+	kind: VersionAuthorKind;
+	id: string;
+	handle?: string;
+}
+
+/** The versioned fields of a ticket, as a history summary names them. */
+export type TicketField = 'title' | 'goal' | 'base_branch' | 'change_type' | 'type' | 'labels';
+
+/** One entry of a ticket's history, newest first. changed names the fields
+ *  that differ from the version before it; oldest marks the first one kept. */
+export interface TicketVersionSummary {
+	seq: number;
+	title: string;
+	author: VersionAuthor;
+	restoredFrom?: number;
+	createdAt: string;
+	changed: string[];
+	oldest: boolean;
+}
+
+/** One version's whole content. */
+export interface TicketVersion extends TicketVersionSummary {
+	goal: string;
+	baseBranch: string;
+	changeType: ChangeType;
+	typeId: string;
+	labels: string[];
+}
+
+export interface FieldChange {
+	field: TicketField;
+	before: string;
+	after: string;
+}
+
+/** What restoring a version would change on the ticket now: each versioned
+ *  field that differs, before = the current value, after = the version's.
+ *  Labels compare as sets. typeName names a version's type id. */
+export function ticketChanges(
+	v: TicketVersion,
+	now: Pick<
+		TicketRow,
+		'title' | 'body' | 'baseBranch' | 'changeType' | 'typeId' | 'type' | 'labels'
+	>,
+	typeName: (id: string) => string = (id) => id
+): FieldChange[] {
+	const out: FieldChange[] = [];
+	const add = (field: TicketField, before: string, after: string) => {
+		if (before !== after) out.push({ field, before, after });
+	};
+	add('title', now.title, v.title);
+	add('goal', now.body, v.goal);
+	add('change_type', now.changeType, v.changeType);
+	if (now.typeId !== v.typeId)
+		out.push({
+			field: 'type',
+			before: now.type || now.typeId,
+			after: v.typeId ? typeName(v.typeId) : ''
+		});
+	const sorted = (l: string[]) => [...l].sort().join(', ');
+	add('labels', sorted(now.labels), sorted(v.labels));
+	add('base_branch', now.baseBranch, v.baseBranch);
+	return out;
 }

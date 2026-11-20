@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -21,12 +22,15 @@ type fakeStore struct {
 	projects  map[string]string
 	dash      map[string]Dashboard
 	cards     map[string]Scorecard
+	dashVers  map[string][]DashboardVersion // oldest first
+	cardVers  map[string][]ScorecardVersion
 	labelErr  error
 	labelAsks [][]string
 }
 
 func newFake() *fakeStore {
-	return &fakeStore{dash: map[string]Dashboard{}, cards: map[string]Scorecard{}}
+	return &fakeStore{dash: map[string]Dashboard{}, cards: map[string]Scorecard{},
+		dashVers: map[string][]DashboardVersion{}, cardVers: map[string][]ScorecardVersion{}}
 }
 
 func (f *fakeStore) RunQuery(_ context.Context, c Compiled) ([]Row, error) {
@@ -72,12 +76,42 @@ func (f *fakeStore) GetDashboard(_ context.Context, id string) (Dashboard, error
 	return d, nil
 }
 
-func (f *fakeStore) PutDashboard(_ context.Context, d Dashboard) error {
+func (f *fakeStore) PutDashboard(_ context.Context, d Dashboard, c Change) error {
+	if f.err != nil {
+		return f.err
+	}
 	if old, ok := f.dash[d.ID]; ok {
 		d.UserID, d.CreatedAt = old.UserID, old.CreatedAt
 	}
 	f.dash[d.ID] = d
-	return f.err
+	vs := f.dashVers[d.ID]
+	if n := len(vs); n > 0 && vs[n-1].Name == d.Name && sameJSON(vs[n-1].Filters, d.Filters) && sameJSON(vs[n-1].Panels, d.Panels) {
+		return nil
+	}
+	seq := 1
+	if n := len(vs); n > 0 {
+		seq = vs[n-1].Seq + 1
+	}
+	f.dashVers[d.ID] = append(vs, DashboardVersion{DashboardID: d.ID, Seq: seq, Name: d.Name, Filters: d.Filters, Panels: d.Panels, Change: c, CreatedAt: d.UpdatedAt})
+	return nil
+}
+
+func (f *fakeStore) ListDashboardVersions(_ context.Context, id string) ([]DashboardVersion, error) {
+	if _, ok := f.dash[id]; !ok {
+		return nil, fmt.Errorf("dashboard %s: %w", id, ErrNotFound)
+	}
+	vs := slices.Clone(f.dashVers[id])
+	slices.Reverse(vs)
+	return vs, nil
+}
+
+func (f *fakeStore) GetDashboardVersion(_ context.Context, id string, seq int) (DashboardVersion, error) {
+	for _, v := range f.dashVers[id] {
+		if v.Seq == seq {
+			return v, nil
+		}
+	}
+	return DashboardVersion{}, fmt.Errorf("dashboard %s version %d: %w", id, seq, ErrNotFound)
 }
 
 func (f *fakeStore) DeleteDashboard(_ context.Context, id string) error {
@@ -106,12 +140,42 @@ func (f *fakeStore) GetScorecard(_ context.Context, id string) (Scorecard, error
 	return s, nil
 }
 
-func (f *fakeStore) PutScorecard(_ context.Context, s Scorecard) error {
+func (f *fakeStore) PutScorecard(_ context.Context, s Scorecard, c Change) error {
+	if f.err != nil {
+		return f.err
+	}
 	if old, ok := f.cards[s.ID]; ok {
 		s.UserID, s.CreatedAt = old.UserID, old.CreatedAt
 	}
 	f.cards[s.ID] = s
-	return f.err
+	vs := f.cardVers[s.ID]
+	if n := len(vs); n > 0 && vs[n-1].Name == s.Name && sameJSON(vs[n-1].Terms, s.Terms) {
+		return nil
+	}
+	seq := 1
+	if n := len(vs); n > 0 {
+		seq = vs[n-1].Seq + 1
+	}
+	f.cardVers[s.ID] = append(vs, ScorecardVersion{ScorecardID: s.ID, Seq: seq, Name: s.Name, Terms: s.Terms, Change: c, CreatedAt: s.UpdatedAt})
+	return nil
+}
+
+func (f *fakeStore) ListScorecardVersions(_ context.Context, id string) ([]ScorecardVersion, error) {
+	if _, ok := f.cards[id]; !ok {
+		return nil, fmt.Errorf("scorecard %s: %w", id, ErrNotFound)
+	}
+	vs := slices.Clone(f.cardVers[id])
+	slices.Reverse(vs)
+	return vs, nil
+}
+
+func (f *fakeStore) GetScorecardVersion(_ context.Context, id string, seq int) (ScorecardVersion, error) {
+	for _, v := range f.cardVers[id] {
+		if v.Seq == seq {
+			return v, nil
+		}
+	}
+	return ScorecardVersion{}, fmt.Errorf("scorecard %s version %d: %w", id, seq, ErrNotFound)
 }
 
 func (f *fakeStore) DeleteScorecard(_ context.Context, id string) error {
@@ -128,6 +192,139 @@ func newService(f *fakeStore) *Service {
 	n := 0
 	return &Service{Store: f, Clock: func() time.Time { return testNow },
 		NewID: func() string { n++; return fmt.Sprintf("id%d", n) }}
+}
+
+var byU1 = Change{Kind: AuthorUser, AuthorID: "u1"}
+
+func TestDashboardVersions(t *testing.T) {
+	f := newFake()
+	s := newService(f)
+	ctx := context.Background()
+	panel := func(id, title string) Panel {
+		return Panel{ID: id, Title: title, Viz: "bar", Width: 6, Query: Query{Grain: GrainRuns, GroupBy: []string{"flow_name"},
+			Measures: []MeasureRef{{Field: "cost_usd", Agg: AggSum}}}}
+	}
+	d, err := s.CreateDashboard(ctx, "u1", DashboardInput{Name: "Mine", Panels: []Panel{panel("a", "A"), panel("b", "B"), panel("c", "C")}}, byU1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// b removed, c retitled, d and e added; the filters too.
+	assisted := Change{Kind: AuthorAssistant, AuthorID: "u1"}
+	if _, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "Mine", Filters: []string{"flow_name"},
+		Panels: []Panel{panel("a", "A"), panel("c", "C2"), panel("d", "D"), panel("e", "E")}}, assisted); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "Renamed", Filters: []string{"flow_name"},
+		Panels: []Panel{panel("a", "A"), panel("c", "C2"), panel("d", "D"), panel("e", "E")}}, byU1); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := s.DashboardVersions(ctx, d.ID)
+	if err != nil || len(vs) != 3 {
+		t.Fatalf("versions = %+v, %v", vs, err)
+	}
+	if !slices.Equal(vs[0].Changed, []string{"name"}) || vs[0].PanelChanges != nil || vs[0].Oldest {
+		t.Errorf("rename = %+v", vs[0])
+	}
+	if !slices.Equal(vs[1].Changed, []string{"filters", "panels"}) || vs[1].PanelChanges == nil ||
+		*vs[1].PanelChanges != (PanelChanges{Added: 2, Removed: 1, Changed: 1}) || vs[1].Kind != AuthorAssistant {
+		t.Errorf("panels = %+v %+v", vs[1], vs[1].PanelChanges)
+	}
+	if vs[2].Changed != nil || !vs[2].Oldest {
+		t.Errorf("oldest = %+v", vs[2])
+	}
+	v, err := s.DashboardVersion(ctx, d.ID, 1)
+	if err != nil || len(v.Panels) != 3 {
+		t.Errorf("version 1 = %+v, %v", v, err)
+	}
+	// A restore saves the old content as a new version.
+	got, err := s.RestoreDashboardVersion(ctx, d.ID, 1, byU1)
+	if err != nil || got.Name != "Mine" || len(got.Panels) != 3 {
+		t.Fatalf("restore = %+v, %v", got, err)
+	}
+	if last := f.dashVers[d.ID][3]; last.RestoredFrom != 1 || last.Seq != 4 {
+		t.Errorf("restored version = %+v", last)
+	}
+	// Restoring what is current appends nothing.
+	if _, err := s.RestoreDashboardVersion(ctx, d.ID, 4, byU1); err != nil || len(f.dashVers[d.ID]) != 4 {
+		t.Errorf("restore current = %v, %d versions", err, len(f.dashVers[d.ID]))
+	}
+	if _, err := s.RestoreDashboardVersion(ctx, d.ID, 9, byU1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing seq = %v", err)
+	}
+	// Content the catalog no longer allows is refused, nothing appended.
+	f.dashVers[d.ID] = append(f.dashVers[d.ID], DashboardVersion{DashboardID: d.ID, Seq: 5, Name: "Old",
+		Panels: []Panel{{ID: "x", Title: "X", Viz: "pie", Width: 6, Query: panel("x", "X").Query}}})
+	if _, err := s.RestoreDashboardVersion(ctx, d.ID, 5, byU1); !errors.Is(err, ErrInvalid) || len(f.dashVers[d.ID]) != 5 {
+		t.Errorf("invalid restore = %v, %d versions", err, len(f.dashVers[d.ID]))
+	}
+	if _, err := s.DashboardVersions(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing = %v", err)
+	}
+	// A built-in has no history and is not restored.
+	if vs, err := s.DashboardVersions(ctx, "builtin-overview"); err != nil || vs != nil {
+		t.Errorf("built-in versions = %+v, %v", vs, err)
+	}
+	if _, err := s.DashboardVersions(ctx, "builtin-nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown built-in = %v", err)
+	}
+	if _, err := s.DashboardVersion(ctx, "builtin-overview", 1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("built-in version = %v", err)
+	}
+	if _, err := s.RestoreDashboardVersion(ctx, "builtin-overview", 1, byU1); !errors.Is(err, ErrReadOnly) {
+		t.Errorf("built-in restore = %v", err)
+	}
+}
+
+func TestScorecardVersions(t *testing.T) {
+	f := newFake()
+	s := newService(f)
+	ctx := context.Background()
+	terms := func(w float64) []Term {
+		return []Term{{Measure: MeasureRef{Field: "success_rate"}, Direction: DirHigher, Weight: w}}
+	}
+	sc, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "s", Terms: terms(1)}, byU1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "s", Terms: terms(2)}, byU1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "t", Terms: terms(2)}, byU1); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := s.ScorecardVersions(ctx, sc.ID)
+	if err != nil || len(vs) != 3 || !slices.Equal(vs[0].Changed, []string{"name"}) || !slices.Equal(vs[1].Changed, []string{"terms"}) || !vs[2].Oldest || vs[2].Changed != nil {
+		t.Fatalf("versions = %+v, %v", vs, err)
+	}
+	if v, err := s.ScorecardVersion(ctx, sc.ID, 1); err != nil || v.Terms[0].Weight != 1 {
+		t.Errorf("version 1 = %+v, %v", v, err)
+	}
+	got, err := s.RestoreScorecardVersion(ctx, sc.ID, 1, byU1)
+	if err != nil || got.Name != "s" || got.Terms[0].Weight != 1 || f.cardVers[sc.ID][3].RestoredFrom != 1 {
+		t.Fatalf("restore = %+v, %v", got, err)
+	}
+	if _, err := s.RestoreScorecardVersion(ctx, sc.ID, 9, byU1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing seq = %v", err)
+	}
+	f.cardVers[sc.ID] = append(f.cardVers[sc.ID], ScorecardVersion{ScorecardID: sc.ID, Seq: 5, Name: "Old"})
+	if _, err := s.RestoreScorecardVersion(ctx, sc.ID, 5, byU1); !errors.Is(err, ErrInvalid) || len(f.cardVers[sc.ID]) != 5 {
+		t.Errorf("invalid restore = %v, %d versions", err, len(f.cardVers[sc.ID]))
+	}
+	if vs, err := s.ScorecardVersions(ctx, "builtin-fastest"); err != nil || vs != nil {
+		t.Errorf("built-in versions = %+v, %v", vs, err)
+	}
+	if _, err := s.ScorecardVersions(ctx, "builtin-nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown built-in = %v", err)
+	}
+	if _, err := s.ScorecardVersion(ctx, "builtin-fastest", 1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("built-in version = %v", err)
+	}
+	if _, err := s.RestoreScorecardVersion(ctx, "builtin-fastest", 1, byU1); !errors.Is(err, ErrReadOnly) {
+		t.Errorf("built-in restore = %v", err)
+	}
+	if _, err := s.ScorecardVersions(ctx, "nope"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("missing = %v", err)
+	}
 }
 
 func TestQueryTruncatesFlagsAndLabels(t *testing.T) {
@@ -252,7 +449,7 @@ func TestDashboardsCRUD(t *testing.T) {
 	from := testNow.AddDate(0, -1, 0)
 	panel := Panel{Title: "Spend", Viz: "bar", Width: 6, Query: Query{Grain: GrainRuns, GroupBy: []string{"flow_name"},
 		Measures: []MeasureRef{{Field: "cost_usd", Agg: AggSum}}, Time: TimeRange{From: &from, To: &from, Bucket: BucketWeek}}}
-	d, err := s.CreateDashboard(ctx, "u1", DashboardInput{Name: "  Mine  ", Panels: []Panel{panel, panel}})
+	d, err := s.CreateDashboard(ctx, "u1", DashboardInput{Name: "  Mine  ", Panels: []Panel{panel, panel}}, byU1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +475,7 @@ func TestDashboardsCRUD(t *testing.T) {
 		t.Errorf("u2 sees %d", len(other))
 	}
 
-	up, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "Renamed", Filters: []string{"flow_name"}})
+	up, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "Renamed", Filters: []string{"flow_name"}}, byU1)
 	if err != nil || up.UserID != "u1" || up.Name != "Renamed" || len(up.Panels) != 0 || up.Filters[0] != "flow_name" {
 		t.Errorf("updated %+v %v", up, err)
 	}
@@ -287,7 +484,7 @@ func TestDashboardsCRUD(t *testing.T) {
 	}
 
 	for _, id := range []string{"builtin-overview", "builtin-nope"} {
-		if _, err := s.UpdateDashboard(ctx, id, DashboardInput{Name: "x"}); !errors.Is(err, ErrReadOnly) {
+		if _, err := s.UpdateDashboard(ctx, id, DashboardInput{Name: "x"}, byU1); !errors.Is(err, ErrReadOnly) {
 			t.Errorf("update %s = %v", id, err)
 		}
 		if err := s.DeleteDashboard(ctx, id); !errors.Is(err, ErrReadOnly) {
@@ -297,7 +494,7 @@ func TestDashboardsCRUD(t *testing.T) {
 	if _, err := s.GetDashboard(ctx, "builtin-nope"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown built-in = %v", err)
 	}
-	if _, err := s.UpdateDashboard(ctx, "nope", DashboardInput{Name: "x"}); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateDashboard(ctx, "nope", DashboardInput{Name: "x"}, byU1); !errors.Is(err, ErrNotFound) {
 		t.Errorf("update missing = %v", err)
 	}
 	if err := s.DeleteDashboard(ctx, d.ID); err != nil {
@@ -335,7 +532,7 @@ func TestDashboardValidation(t *testing.T) {
 		})}},
 	}
 	for _, c := range cases {
-		_, err := s.CreateDashboard(context.Background(), "u1", c.in)
+		_, err := s.CreateDashboard(context.Background(), "u1", c.in, byU1)
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), c.token) {
 			t.Errorf("%s: %v, want ErrInvalid naming %q", c.name, err, c.token)
 		}
@@ -344,11 +541,11 @@ func TestDashboardValidation(t *testing.T) {
 		t.Errorf("an invalid dashboard was stored: %v", f.dash)
 	}
 	if _, err := s.CreateDashboard(context.Background(), "u1", DashboardInput{Name: strings.Repeat("é", maxNameLen),
-		Panels: with(func(p *Panel) { p.Query.Score = &ScoreSpec{Scorecard: "builtin-balanced"} })}); err != nil {
+		Panels: with(func(p *Panel) { p.Query.Score = &ScoreSpec{Scorecard: "builtin-balanced"} })}, byU1); err != nil {
 		t.Errorf("valid dashboard: %v", err)
 	}
 	f.err = errors.New("down")
-	if _, err := s.CreateDashboard(context.Background(), "u1", DashboardInput{Name: "d"}); err == nil {
+	if _, err := s.CreateDashboard(context.Background(), "u1", DashboardInput{Name: "d"}, byU1); err == nil {
 		t.Error("store error swallowed")
 	}
 	if _, err := s.ListDashboards(context.Background(), "u1"); err == nil {
@@ -361,7 +558,7 @@ func TestScorecardsCRUD(t *testing.T) {
 	s := newService(f)
 	ctx := context.Background()
 	terms := []Term{{Measure: MeasureRef{Field: "response_ms", Agg: AggMedian}, Direction: DirLower, Weight: 2}}
-	sc, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "Quick answers", Terms: terms})
+	sc, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "Quick answers", Terms: terms}, byU1)
 	if err != nil || sc.UserID != "u1" || sc.ID != "id1" || sc.Builtin {
 		t.Fatalf("created %+v %v", sc, err)
 	}
@@ -373,17 +570,17 @@ func TestScorecardsCRUD(t *testing.T) {
 	if b, _ := s.GetScorecard(ctx, "builtin-cheapest"); b.Terms[0].Weight == 99 {
 		t.Error("built-in shared")
 	}
-	up, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "Renamed", Terms: terms})
+	up, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "Renamed", Terms: terms}, byU1)
 	if err != nil || up.UserID != "u1" || up.Name != "Renamed" {
 		t.Errorf("updated %+v %v", up, err)
 	}
-	if _, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "x"}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "x"}, byU1); !errors.Is(err, ErrInvalid) {
 		t.Errorf("no terms = %v", err)
 	}
-	if _, err := s.UpdateScorecard(ctx, "nope", ScorecardInput{Name: "x", Terms: terms}); !errors.Is(err, ErrNotFound) {
+	if _, err := s.UpdateScorecard(ctx, "nope", ScorecardInput{Name: "x", Terms: terms}, byU1); !errors.Is(err, ErrNotFound) {
 		t.Errorf("update missing = %v", err)
 	}
-	if _, err := s.UpdateScorecard(ctx, "builtin-fastest", ScorecardInput{Name: "x", Terms: terms}); !errors.Is(err, ErrReadOnly) {
+	if _, err := s.UpdateScorecard(ctx, "builtin-fastest", ScorecardInput{Name: "x", Terms: terms}, byU1); !errors.Is(err, ErrReadOnly) {
 		t.Errorf("update built-in = %v", err)
 	}
 	if err := s.DeleteScorecard(ctx, "builtin-fastest"); !errors.Is(err, ErrReadOnly) {
@@ -408,15 +605,15 @@ func TestScorecardsCRUD(t *testing.T) {
 		{"derived", []Term{{Measure: MeasureRef{Field: "success_rate", Agg: AggSum}, Direction: DirLower, Weight: 1}}},
 	}
 	for _, b := range bad {
-		if _, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "x", Terms: b.terms}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), b.token) {
+		if _, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "x", Terms: b.terms}, byU1); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), b.token) {
 			t.Errorf("%s: %v", b.token, err)
 		}
 	}
-	if _, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "", Terms: terms}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "", Terms: terms}, byU1); !errors.Is(err, ErrInvalid) {
 		t.Errorf("no name = %v", err)
 	}
 	f.err = errors.New("down")
-	if _, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "x", Terms: terms}); err == nil {
+	if _, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "x", Terms: terms}, byU1); err == nil {
 		t.Error("store error swallowed")
 	}
 	if _, err := s.ListScorecards(ctx, "u1"); err == nil {
@@ -466,20 +663,20 @@ func TestUpdatesReportStoreFailures(t *testing.T) {
 	f := newFake()
 	s := newService(f)
 	ctx := context.Background()
-	d, err := s.CreateDashboard(ctx, "u1", DashboardInput{Name: "d"})
+	d, err := s.CreateDashboard(ctx, "u1", DashboardInput{Name: "d"}, byU1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	terms := []Term{{Measure: MeasureRef{Field: "success_rate"}, Direction: DirHigher, Weight: 1}}
-	sc, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "s", Terms: terms})
+	sc, err := s.CreateScorecard(ctx, "u1", ScorecardInput{Name: "s", Terms: terms}, byU1)
 	if err != nil {
 		t.Fatal(err)
 	}
 	f.err = errors.New("down")
-	if _, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "renamed"}); err == nil {
+	if _, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "renamed"}, byU1); err == nil {
 		t.Error("dashboard update error swallowed")
 	}
-	if _, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "renamed", Terms: terms}); err == nil {
+	if _, err := s.UpdateScorecard(ctx, sc.ID, ScorecardInput{Name: "renamed", Terms: terms}, byU1); err == nil {
 		t.Error("scorecard update error swallowed")
 	}
 }
@@ -489,11 +686,11 @@ func TestUpdatesReportStoreFailures(t *testing.T) {
 func TestInvalidUpdateAndUnscoredRows(t *testing.T) {
 	f := newFake()
 	s := newService(f)
-	d, err := s.CreateDashboard(context.Background(), "u1", DashboardInput{Name: "d"})
+	d, err := s.CreateDashboard(context.Background(), "u1", DashboardInput{Name: "d"}, byU1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.UpdateDashboard(context.Background(), d.ID, DashboardInput{Name: ""}); !errors.Is(err, ErrInvalid) {
+	if _, err := s.UpdateDashboard(context.Background(), d.ID, DashboardInput{Name: ""}, byU1); !errors.Is(err, ErrInvalid) {
 		t.Errorf("invalid update = %v", err)
 	}
 	if f.dash[d.ID].Name != "d" {

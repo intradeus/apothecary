@@ -25,7 +25,7 @@ func TestAutomationValidates(t *testing.T) {
 	ctx := context.Background()
 	p := seedProject(t, svc)
 	tracker := seedTracker(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "T"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "T"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -84,7 +84,7 @@ func TestAutomationLifecycle(t *testing.T) {
 	svc, _ := newSvc(t)
 	ctx := context.Background()
 	p := seedProject(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "T"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "T"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
