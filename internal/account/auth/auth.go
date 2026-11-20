@@ -157,6 +157,24 @@ type SSHKey struct {
 	LastUsedAt  *time.Time `json:"last_used_at,omitempty"`
 }
 
+// TokenCall is one call a personal token made: a write through the API,
+// or a tool of the MCP face. The act itself names the token's person, as
+// one made in a browser does; this names the token.
+type TokenCall struct {
+	TokenID string    `json:"-"`
+	At      time.Time `json:"at"`
+	Method  string    `json:"method"`
+	// Route is the route's id (createWorkshopTicket); Path what was asked.
+	Route string `json:"route"`
+	Path  string `json:"path"`
+	// Tool is the MCP tool called, when the call came through the face.
+	Tool   string `json:"tool,omitempty"`
+	Status int    `json:"status"`
+}
+
+// KeepTokenCalls is how many calls a token's record keeps.
+const KeepTokenCalls = 200
+
 // DB is the persistence boundary, implemented by pgstore and by Mem.
 type DB interface {
 	CountUsers(ctx context.Context) (int, error)
@@ -203,6 +221,11 @@ type DB interface {
 	DeleteToken(ctx context.Context, userID, id string) error
 	TouchToken(ctx context.Context, id string, at time.Time) error
 	DeleteTokensOf(ctx context.Context, userID string) error
+	// RecordTokenCall keeps one call a token made, and only its token's
+	// last KeepTokenCalls; deleting the token deletes them.
+	RecordTokenCall(ctx context.Context, c TokenCall) error
+	// TokenCalls are a token's calls, newest first.
+	TokenCalls(ctx context.Context, tokenID string) ([]TokenCall, error)
 
 	// SSH keys: a duplicate fingerprint is ErrConflict; DeleteSSHKey is
 	// owner-scoped (another user's key is ErrNotFound).

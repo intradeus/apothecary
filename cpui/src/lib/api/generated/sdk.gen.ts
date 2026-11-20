@@ -53,6 +53,9 @@ import type {
 	AuthBrokerPostData,
 	AuthBrokerPostErrors,
 	AuthBrokerPostResponses,
+	CancelAssistantTurnData,
+	CancelAssistantTurnErrors,
+	CancelAssistantTurnResponses,
 	CancelEnvCheckData,
 	CancelEnvCheckErrors,
 	CancelEnvCheckResponses,
@@ -65,6 +68,9 @@ import type {
 	CompleteSignInData,
 	CompleteSignInErrors,
 	CompleteSignInResponses,
+	ConfirmAssistantRequestData,
+	ConfirmAssistantRequestErrors,
+	ConfirmAssistantRequestResponses,
 	CopyFlowData,
 	CopyFlowErrors,
 	CopyFlowResponses,
@@ -107,6 +113,9 @@ import type {
 	CreateWorkshopTicketData,
 	CreateWorkshopTicketErrors,
 	CreateWorkshopTicketResponses,
+	DeclineAssistantRequestData,
+	DeclineAssistantRequestErrors,
+	DeclineAssistantRequestResponses,
 	DeleteAutomationData,
 	DeleteAutomationErrors,
 	DeleteAutomationResponses,
@@ -176,12 +185,18 @@ import type {
 	ExposeRunPortData,
 	ExposeRunPortErrors,
 	ExposeRunPortResponses,
+	FillAssistantSessionData,
+	FillAssistantSessionErrors,
+	FillAssistantSessionResponses,
 	GetAnalyticsCatalogData,
 	GetAnalyticsCatalogErrors,
 	GetAnalyticsCatalogResponses,
 	GetAskData,
 	GetAskErrors,
 	GetAskResponses,
+	GetAssistantData,
+	GetAssistantErrors,
+	GetAssistantResponses,
 	GetAttachmentLimitsData,
 	GetAttachmentLimitsErrors,
 	GetAttachmentLimitsResponses,
@@ -368,6 +383,9 @@ import type {
 	ListAllFlowsData,
 	ListAllFlowsErrors,
 	ListAllFlowsResponses,
+	ListAssistantMessagesData,
+	ListAssistantMessagesErrors,
+	ListAssistantMessagesResponses,
 	ListAutomationsData,
 	ListAutomationsErrors,
 	ListAutomationsResponses,
@@ -416,6 +434,9 @@ import type {
 	ListMySshKeysData,
 	ListMySshKeysErrors,
 	ListMySshKeysResponses,
+	ListMyTokenCallsData,
+	ListMyTokenCallsErrors,
+	ListMyTokenCallsResponses,
 	ListMyTokensData,
 	ListMyTokensErrors,
 	ListMyTokensResponses,
@@ -491,6 +512,9 @@ import type {
 	NewAskThreadData,
 	NewAskThreadErrors,
 	NewAskThreadResponses,
+	OpenAssistantSessionData,
+	OpenAssistantSessionErrors,
+	OpenAssistantSessionResponses,
 	OpenEditorData,
 	OpenEditorErrors,
 	OpenEditorResponses,
@@ -521,6 +545,9 @@ import type {
 	RaisePingData,
 	RaisePingErrors,
 	RaisePingResponses,
+	ReadRunHistoryData,
+	ReadRunHistoryErrors,
+	ReadRunHistoryResponses,
 	ReadRunJournalData,
 	ReadRunJournalEntryData,
 	ReadRunJournalEntryErrors,
@@ -530,6 +557,9 @@ import type {
 	RebuildWorkspaceData,
 	RebuildWorkspaceErrors,
 	RebuildWorkspaceResponses,
+	RefreshAssistantReposData,
+	RefreshAssistantReposErrors,
+	RefreshAssistantReposResponses,
 	RefreshSkillData,
 	RefreshSkillErrors,
 	RefreshSkillResponses,
@@ -551,6 +581,9 @@ import type {
 	ReportObservedPortsData,
 	ReportObservedPortsErrors,
 	ReportObservedPortsResponses,
+	RequestAssistantActsData,
+	RequestAssistantActsErrors,
+	RequestAssistantActsResponses,
 	RerunRunData,
 	RerunRunErrors,
 	RerunRunResponses,
@@ -566,12 +599,24 @@ import type {
 	RetryRunData,
 	RetryRunErrors,
 	RetryRunResponses,
+	SendAssistantMessageData,
+	SendAssistantMessageErrors,
+	SendAssistantMessageResponses,
 	SendRunMessageData,
 	SendRunMessageErrors,
 	SendRunMessageResponses,
 	SetAskModelData,
 	SetAskModelErrors,
 	SetAskModelResponses,
+	SetAssistantChoiceData,
+	SetAssistantChoiceErrors,
+	SetAssistantChoiceResponses,
+	SetAssistantModelData,
+	SetAssistantModelErrors,
+	SetAssistantModelResponses,
+	SetAssistantSubjectData,
+	SetAssistantSubjectErrors,
+	SetAssistantSubjectResponses,
 	SetEgressRuleData,
 	SetEgressRuleErrors,
 	SetEgressRuleResponses,
@@ -624,6 +669,10 @@ import type {
 	StreamAskErrors,
 	StreamAskResponse,
 	StreamAskResponses,
+	StreamAssistantData,
+	StreamAssistantErrors,
+	StreamAssistantResponse,
+	StreamAssistantResponses,
 	StreamRunEventsData,
 	StreamRunEventsErrors,
 	StreamRunEventsResponse,
@@ -687,7 +736,10 @@ import type {
 	UploadAttachmentsResponses,
 	ValidateFlowData,
 	ValidateFlowErrors,
-	ValidateFlowResponses
+	ValidateFlowResponses,
+	WaitRunData,
+	WaitRunErrors,
+	WaitRunResponses
 } from './types.gen';
 
 export type Options<
@@ -1085,6 +1137,422 @@ export const analyticsValues = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * One's assistant: whether it can run and why not, its harness and models, its pod, a workshop's repositories
+ */
+export const getAssistant = <ThrowOnError extends boolean = false>(
+	options?: Options<GetAssistantData, ThrowOnError>
+): RequestResult<GetAssistantResponses, GetAssistantErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetAssistantResponses, GetAssistantErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant',
+		...options
+	});
+
+/**
+ * Pick the harness integration (one's own) the assistant runs on, and the model it starts with
+ */
+export const setAssistantChoice = <ThrowOnError extends boolean = false>(
+	options: Options<SetAssistantChoiceData, ThrowOnError>
+): RequestResult<SetAssistantChoiceResponses, SetAssistantChoiceErrors, ThrowOnError> =>
+	(options.client ?? client).put<
+		SetAssistantChoiceResponses,
+		SetAssistantChoiceErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/choice',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Fetch a workshop's repositories into one's assistant pod now
+ */
+export const refreshAssistantRepos = <ThrowOnError extends boolean = false>(
+	options: Options<RefreshAssistantReposData, ThrowOnError>
+): RequestResult<RefreshAssistantReposResponses, RefreshAssistantReposErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		RefreshAssistantReposResponses,
+		RefreshAssistantReposErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/repos/refresh',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Open the session about a subject: one's latest about it, or a new one
+ *
+ * kind is flow, ticket or skill; subject the flow's name, the ticket's key, the skill's id, or a draft id before the first save. A flow's or a ticket's session names its workshop.
+ */
+export const openAssistantSession = <ThrowOnError extends boolean = false>(
+	options: Options<OpenAssistantSessionData, ThrowOnError>
+): RequestResult<OpenAssistantSessionResponses, OpenAssistantSessionErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		OpenAssistantSessionResponses,
+		OpenAssistantSessionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Stop the session's answer
+ */
+export const cancelAssistantTurn = <ThrowOnError extends boolean = false>(
+	options: Options<CancelAssistantTurnData, ThrowOnError>
+): RequestResult<CancelAssistantTurnResponses, CancelAssistantTurnErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		CancelAssistantTurnResponses,
+		CancelAssistantTurnErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/cancel',
+		...options
+	});
+
+/**
+ * Fill the session's page: checked, then sent to the page once; nothing is saved
+ *
+ * Only the session's own token (the one its agent holds) fills it: 403 for any other. A fill that fails its check is ok false with its errors.
+ */
+export const fillAssistantSession = <ThrowOnError extends boolean = false>(
+	options: Options<FillAssistantSessionData, ThrowOnError>
+): RequestResult<FillAssistantSessionResponses, FillAssistantSessionErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		FillAssistantSessionResponses,
+		FillAssistantSessionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/fill',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * A session's messages, after a sequence
+ */
+export const listAssistantMessages = <ThrowOnError extends boolean = false>(
+	options: Options<ListAssistantMessagesData, ThrowOnError>
+): RequestResult<ListAssistantMessagesResponses, ListAssistantMessagesErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListAssistantMessagesResponses,
+		ListAssistantMessagesErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/messages',
+		...options
+	});
+
+/**
+ * Ask: the question is recorded, its answer arrives on the stream
+ *
+ * context is the page as it stands, unsaved edits included. 409 while the session answers, or when no harness is chosen.
+ */
+export const sendAssistantMessage = <ThrowOnError extends boolean = false>(
+	options: Options<SendAssistantMessageData, ThrowOnError>
+): RequestResult<SendAssistantMessageResponses, SendAssistantMessageErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		SendAssistantMessageResponses,
+		SendAssistantMessageErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/messages',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Run the acts an answer asked for, in order, as the caller, until one fails
+ *
+ * Each act goes through its route as if the caller called it: their actions decide. Answers the message with each act's status and result; 409 for a request decided already or being decided.
+ */
+export const confirmAssistantRequest = <ThrowOnError extends boolean = false>(
+	options: Options<ConfirmAssistantRequestData, ThrowOnError>
+): RequestResult<ConfirmAssistantRequestResponses, ConfirmAssistantRequestErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		ConfirmAssistantRequestResponses,
+		ConfirmAssistantRequestErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/messages/{seq}/confirm',
+		...options
+	});
+
+/**
+ * Decline the acts an answer asked for: none runs
+ */
+export const declineAssistantRequest = <ThrowOnError extends boolean = false>(
+	options: Options<DeclineAssistantRequestData, ThrowOnError>
+): RequestResult<DeclineAssistantRequestResponses, DeclineAssistantRequestErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		DeclineAssistantRequestResponses,
+		DeclineAssistantRequestErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/messages/{seq}/decline',
+		...options
+	});
+
+/**
+ * Pick the model the session answers with from its next question
+ */
+export const setAssistantModel = <ThrowOnError extends boolean = false>(
+	options: Options<SetAssistantModelData, ThrowOnError>
+): RequestResult<SetAssistantModelResponses, SetAssistantModelErrors, ThrowOnError> =>
+	(options.client ?? client).put<SetAssistantModelResponses, SetAssistantModelErrors, ThrowOnError>(
+		{
+			security: [
+				{
+					in: 'cookie',
+					name: 'apothecary_session',
+					type: 'apiKey'
+				},
+				{
+					key: 'personalToken',
+					scheme: 'bearer',
+					type: 'http'
+				}
+			],
+			url: '/api/assistant/sessions/{id}/model',
+			...options,
+			headers: {
+				'Content-Type': 'application/json',
+				...options.headers
+			}
+		}
+	);
+
+/**
+ * Ask the person to confirm acts: each a write tool of the MCP face, with its arguments; nothing runs until they do
+ *
+ * Only the session's own token, while its question is answered. Each act's tool must be a write tool and its arguments must fit its input; ok false with the errors otherwise. The person confirms or declines in the panel; the session's next prompt says what came of it.
+ */
+export const requestAssistantActs = <ThrowOnError extends boolean = false>(
+	options: Options<RequestAssistantActsData, ThrowOnError>
+): RequestResult<RequestAssistantActsResponses, RequestAssistantActsErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		RequestAssistantActsResponses,
+		RequestAssistantActsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/request',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Move a draft's session to what it was saved as
+ */
+export const setAssistantSubject = <ThrowOnError extends boolean = false>(
+	options: Options<SetAssistantSubjectData, ThrowOnError>
+): RequestResult<SetAssistantSubjectResponses, SetAssistantSubjectErrors, ThrowOnError> =>
+	(options.client ?? client).put<
+		SetAssistantSubjectResponses,
+		SetAssistantSubjectErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}/subject',
+		...options,
+		headers: {
+			'Content-Type': 'application/json',
+			...options.headers
+		}
+	});
+
+/**
+ * Server-sent event stream of one's assistant
+ *
+ * Every session's answers as they are written (delta), messages as they land, a session's state, fills for the page, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.
+ */
+export const streamAssistant = <ThrowOnError extends boolean = false>(
+	options?: Options<StreamAssistantData, ThrowOnError, StreamAssistantResponse>
+): Promise<ServerSentEventsResult<StreamAssistantResponses>> =>
+	(options?.client ?? client).sse.get<
+		StreamAssistantResponses,
+		StreamAssistantErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/stream',
+		...options
 	});
 
 /**
@@ -2528,6 +2996,31 @@ export const deleteMyToken = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/me/tokens/{id}',
+		...options
+	});
+
+/**
+ * What one of one's tokens did, newest first: its writes and its MCP tool calls, refused or done (its last 200)
+ *
+ * The act itself names the token's person, as one made in a browser does; this names the token.
+ */
+export const listMyTokenCalls = <ThrowOnError extends boolean = false>(
+	options: Options<ListMyTokenCallsData, ThrowOnError>
+): RequestResult<ListMyTokenCallsResponses, ListMyTokenCallsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListMyTokenCallsResponses, ListMyTokenCallsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/me/tokens/{id}/calls',
 		...options
 	});
 
@@ -4895,6 +5388,31 @@ export const downloadRunFiles = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * The run's journal as a person reads it: every record, or one entry by its reference
+ *
+ * What journal_read gives the run's own agents, for whoever may read the run: with no ref every decision, note and attempt's record with its verdict; with ref (<stage>#<n> (review#5), <stage>#<n>/decision#<k>, <stage>#<n>/note#<k>, run, or run/decision#<k>) one entry whole, an attempt with its outputs and its log.
+ */
+export const readRunHistory = <ThrowOnError extends boolean = false>(
+	options: Options<ReadRunHistoryData, ThrowOnError>
+): RequestResult<ReadRunHistoryResponses, ReadRunHistoryErrors, ThrowOnError> =>
+	(options.client ?? client).get<ReadRunHistoryResponses, ReadRunHistoryErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/history',
+		...options
+	});
+
+/**
  * Hand the task back to the agent
  *
  * Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.
@@ -5532,6 +6050,31 @@ export const getRunSsh = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/ssh',
+		...options
+	});
+
+/**
+ * Wait for a run to change: its state, its open questions, its merge requests
+ *
+ * Answers when the run differs from seen (what an earlier answer returned; none: the run as it is now), or when timeout seconds pass (default 50, at most 55): changed says which. A run that has ended answers at once. Pass seen back to wait for the next change without missing one between calls.
+ */
+export const waitRun = <ThrowOnError extends boolean = false>(
+	options: Options<WaitRunData, ThrowOnError>
+): RequestResult<WaitRunResponses, WaitRunErrors, ThrowOnError> =>
+	(options.client ?? client).get<WaitRunResponses, WaitRunErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/wait',
 		...options
 	});
 

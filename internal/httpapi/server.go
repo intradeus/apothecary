@@ -19,6 +19,7 @@ import (
 	"apothecary/internal/account/authz"
 	"apothecary/internal/account/logins"
 	"apothecary/internal/analytics"
+	"apothecary/internal/assistant"
 	"apothecary/internal/engine"
 	"apothecary/internal/engine/ask"
 	"apothecary/internal/engine/authsink"
@@ -126,6 +127,9 @@ type Server struct {
 	// Analytics answers the run-analytics queries and keeps the person's
 	// dashboards and scorecards (TODO 23); nil disables its routes.
 	Analytics *analytics.Service
+	// Assistant is the conversation beside the flow, ticket and skill
+	// pages (docs/assistant-plan.md); nil disables its routes.
+	Assistant *assistant.Service
 	// Notices is the feed of setup problems a person must act on (TODO 51);
 	// nil disables its routes.
 	Notices *notices.Service

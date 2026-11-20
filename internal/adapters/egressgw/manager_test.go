@@ -88,7 +88,12 @@ func newFakeGateway(t *testing.T) *fakeGateway {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(http.ResponseWriter, *http.Request) {})
 	mux.HandleFunc("GET /policy", func(w http.ResponseWriter, _ *http.Request) { json.NewEncoder(w).Encode(g.policy) })
-	mux.HandleFunc("PUT /policy", func(w http.ResponseWriter, r *http.Request) { json.NewDecoder(r.Body).Decode(&g.policy) })
+	// A PUT replaces the policy, as the gateway's does.
+	mux.HandleFunc("PUT /policy", func(w http.ResponseWriter, r *http.Request) {
+		var f policyfile.File
+		json.NewDecoder(r.Body).Decode(&f)
+		g.policy = f
+	})
 	mux.HandleFunc("PUT /runs/{run}", func(w http.ResponseWriter, r *http.Request) {
 		var rr policyfile.RunRoute
 		json.NewDecoder(r.Body).Decode(&rr)
@@ -369,5 +374,21 @@ func TestPruneRunsReportsGatewayFailures(t *testing.T) {
 	pruned, err := NewManager(h).PruneRuns(ctx, "p", live)
 	if err == nil || !slices.Equal(pruned, []string{"b"}) || h.detaches != 1 {
 		t.Errorf("pruned %v, err %v, detaches %d (a refused detach keeps its link)", pruned, err, h.detaches)
+	}
+}
+
+func TestSetPolicyReplacesThePolicy(t *testing.T) {
+	gw := newFakeGateway(t)
+	gw.policy = policyfile.File{Mode: policyfile.ModeDeny, Domains: []string{"x.io"}, BlockedDomains: []string{"y.io"}}
+	m := NewManager(&fakeHost{gw: gw, up: true})
+	ctx := context.Background()
+	if err := m.SetPolicy(ctx, "acme", policyfile.File{Domains: []string{"api.anthropic.com", "github.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	if gw.policy.Mode != policyfile.ModeAllow || !slices.Equal(gw.policy.Domains, []string{"api.anthropic.com", "github.com"}) || len(gw.policy.BlockedDomains) != 0 {
+		t.Errorf("policy = %+v", gw.policy)
+	}
+	if err := NewManager(&fakeHost{gw: gw}).SetPolicy(ctx, "acme", policyfile.File{}); !errors.Is(err, ErrNoGateway) {
+		t.Errorf("no gateway = %v", err)
 	}
 }

@@ -358,6 +358,6 @@ func (s *Server) pingRoutes() []Route {
 			Handler: s.getPingCuration, Returns: CurationView{}, Scope: ScopePing, Action: authz.RunRead},
 		{Method: "POST", Path: "/api/pings/{pid}/answer", ID: "answerPing", Tag: tagPings,
 			Summary: "Answer a question",
-			Handler: s.answerPing, Body: AnswerPingRequest{}, Returns: AnswerAccepted{}, Scope: ScopePing, Action: authz.RunOperate},
+			Handler: s.answerPing, Body: AnswerPingRequest{}, Returns: AnswerAccepted{}, Scope: ScopePing, Action: authz.RunAnswer},
 	}
 }

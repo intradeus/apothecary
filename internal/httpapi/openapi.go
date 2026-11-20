@@ -355,6 +355,16 @@ var typeNameOverrides = map[string]string{
 	"analytics.Term":          "ScorecardTerm",
 	"httpapi.ValuesRequest":   "AnalyticsValuesRequest",
 	"httpapi.DrillRequest":    "AnalyticsDrillRequest",
+	"assistant.Choice":        "AssistantChoice",
+	"assistant.Integration":   "AssistantIntegration",
+	"assistant.Message":       "AssistantMessage",
+	"assistant.Request":       "AssistantRequest",
+	"assistant.Act":           "AssistantAct",
+	"assistant.Status":        "AssistantStatus",
+	"assistant.Session":       "AssistantSession",
+	"assistant.RepoView":      "AssistantRepo",
+	"assistant.PageView":      "AssistantPage",
+	"assistantport.Status":    "AssistantPodStatus",
 }
 
 func (n *typeNamer) name(t reflect.Type) string {

@@ -66,6 +66,10 @@ type Route struct {
 	Auth   Access
 	Scope  Scope
 	Action authz.Action
+
+	// Tool declares the route a tool on the engine's MCP face (mcp.go):
+	// what a model calls it and reads about it. nil: not a tool.
+	Tool *Tool
 }
 
 // conf / kinds / cpui are the registration gates.
@@ -95,6 +99,7 @@ const (
 	tagAnalytics    = "analytics"
 	tagNotices      = "notices"
 	tagSwarm        = "swarm"
+	tagAssistant    = "assistant"
 )
 
 var (
@@ -133,6 +138,7 @@ func (s *Server) routes() []Route {
 		s.ticketRoutes(),
 		s.flowRoutes(),
 		s.analyticsRoutes(),
+		s.assistantRoutes(),
 		s.swarmRoutes(),
 		s.healthRoutes(),
 	)
@@ -173,6 +179,18 @@ func (s *Server) Handler() http.Handler {
 	// The workspace's browser MCP stream, upgraded likewise: see
 	// serveBrowserMCP (it checks the run token itself, before the upgrade).
 	mux.HandleFunc("GET /api/runs/{id}/browser-mcp", s.serveBrowserMCP)
+	// The engine's MCP face (mcp.go): JSON-RPC, so outside the table; its
+	// tools are the table's routes that declare one. GET and DELETE are
+	// registered to answer 405 rather than fall through to the UI.
+	mcp := s.traced(Route{Method: "POST", Path: "/mcp", ID: "mcp"}, s.serveMCP)
+	mux.Handle("POST /mcp", mcp)
+	mux.HandleFunc("GET /mcp", s.serveMCP)
+	mux.HandleFunc("DELETE /mcp", s.serveMCP)
+	// An MCP client refused a token looks for OAuth metadata here. There is
+	// none: the face takes a static token. Answer that, rather than the UI.
+	mux.HandleFunc("GET /.well-known/", func(w http.ResponseWriter, r *http.Request) {
+		writeErr(w, http.StatusNotFound, "no such document: the MCP server at /mcp takes a personal token as a bearer header, with no OAuth")
+	})
 	// The document and its viewer are public: an API an engine documents is
 	// not a secret, and the page needs them before anyone signs in.
 	mux.HandleFunc("GET /api/openapi.json", s.getOpenAPIJSON)

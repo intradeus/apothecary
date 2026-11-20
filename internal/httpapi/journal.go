@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"apothecary/internal/account/authz"
 	"apothecary/internal/engine"
 	"apothecary/internal/run/ref"
 )
@@ -27,6 +28,28 @@ func (s *Server) journalRoutes() []Route {
 			Query:   []Param{{Name: "file", Doc: "an output the attempt lists in beside, by its name: its bytes instead of the entry"}},
 			Handler: s.getJournal, Returns: engine.JournalEntry{},
 			Auth: AccessRunToken},
+		{Method: "GET", Path: "/api/runs/{id}/history", ID: "readRunHistory", Tag: tagRuns,
+			Summary: "The run's journal as a person reads it: every record, or one entry by its reference",
+			Doc:     "What journal_read gives the run's own agents, for whoever may read the run: with no ref every decision, note and attempt's record with its verdict; with ref (" + ref.Grammar + ") one entry whole, an attempt with its outputs and its log.",
+			Query:   []Param{{Name: "ref", Doc: "an entry's reference; none: the whole journal"}},
+			Handler: s.getRunHistory, Returns: engine.JournalEntry{}, Scope: ScopeRun, Action: authz.RunRead,
+			Tool: &Tool{Name: "read_run_journal", Doc: "A run's journal: with no ref, every stage's attempts with their verdicts, decisions and notes; with ref (review#5, build#3/decision#1) one entry whole, an attempt with its outputs and its log. Why a run failed is here.",
+				Args: map[string]string{"id": "The run's id, from list_runs.", "ref": "An entry's reference, from the whole journal; none: the whole journal."}}},
+	}
+}
+
+// getRunHistory is the journal for a person: the run's reader, not its token.
+func (s *Server) getRunHistory(w http.ResponseWriter, r *http.Request) {
+	e, err := s.Runs.JournalRead(r.Context(), r.PathValue("id"), r.URL.Query().Get("ref"))
+	switch {
+	case errors.Is(err, ref.ErrMalformed):
+		writeErr(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, engine.ErrJournalEntryNotFound):
+		writeErr(w, http.StatusNotFound, err.Error())
+	case err != nil:
+		writeErr(w, http.StatusInternalServerError, err.Error())
+	default:
+		writeJSON(w, http.StatusOK, e)
 	}
 }
 

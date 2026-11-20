@@ -1013,7 +1013,7 @@ describe('Desk', () => {
 			const probe = await setup(desk);
 
 			expect(windows()).toHaveLength(1);
-			expect(windows()[0]).toHaveLength(15);
+			expect(windows()[0]).toHaveLength(16);
 			expect(probe.place('session').visible).toBe(true);
 			expect(gutters()).toHaveLength(0);
 			expect(screen.queryByRole('button')).not.toBeInTheDocument();

@@ -26,3 +26,30 @@ export const languageFor = (path: string): 'markdown' | 'plain' =>
 
 /** The spec's name grammar, as the form checks it before the engine does. */
 export const SKILL_NAME = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+/** A file as the editor holds it: text when it reads as UTF-8, else the
+ *  bytes stay opaque. */
+export type EditFile = { path: string; bytes: Uint8Array; mode?: number; text: string | null };
+
+/** The editor's text files, as an assistant reads and fills them. */
+export const textFiles = (files: EditFile[]): { path: string; content: string }[] =>
+	files.flatMap((f) => (f.text === null ? [] : [{ path: f.path, content: f.text }]));
+
+/** An assistant's fill over the editor's files: its files become the text
+ *  files (a file's mode kept by path); a file that is not text stays unless
+ *  the fill writes that path. */
+export function fillFiles(
+	files: EditFile[],
+	next: { path: string; content: string }[]
+): EditFile[] {
+	const kept = files.filter((f) => f.text === null && !next.some((n) => n.path === f.path));
+	return [
+		...next.map((n) => ({
+			path: n.path,
+			bytes: new Uint8Array(),
+			mode: files.find((f) => f.path === n.path)?.mode,
+			text: n.content
+		})),
+		...kept
+	];
+}

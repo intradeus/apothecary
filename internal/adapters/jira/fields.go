@@ -158,6 +158,9 @@ func (c *Client) coerce(key string, f fieldJSON, value string) (any, error) {
 
 // SetFields writes the named fields in one PUT.
 func (c *Client) SetFields(ctx context.Context, key string, fields map[string]string) error {
+	if err := c.inScope(key); err != nil {
+		return err
+	}
 	key = strings.TrimSpace(key)
 	names := make([]string, 0, len(fields))
 	for name := range fields {
@@ -186,6 +189,9 @@ func (c *Client) SetFields(ctx context.Context, key string, fields map[string]st
 // Fields reads the named fields' current values, rendered as the text
 // SetFields accepts (lists comma-joined), so append mode can merge.
 func (c *Client) Fields(ctx context.Context, key string, names []string) (map[string]string, error) {
+	if err := c.inScope(key); err != nil {
+		return nil, err
+	}
 	key = strings.TrimSpace(key)
 	resolved := map[string]fieldJSON{}
 	ids := make([]string, 0, len(names))

@@ -267,6 +267,33 @@ describe('changing the document', () => {
 	});
 });
 
+describe('the assistant', () => {
+	it('reads the flow as it stands: the text, or the graph written out', async () => {
+		const ed = await opened();
+		ed.switchTab('yaml');
+		ed.yaml = NEWER;
+		expect(ed.currentYAML()).toBe(NEWER);
+		ed.tab = 'graph';
+		edit(ed);
+		expect(ed.currentYAML()).toContain('run: changed');
+	});
+
+	it('fills the text tab, unsaved, and drops the stale checks', async () => {
+		const ed = await opened();
+		edit(ed);
+		ed.notice = { tone: 'info', text: 'x' };
+		ed.validation = { ok: true, title: 'Valid' };
+		ed.applyYAML(NEWER);
+		expect(ed.tab).toBe('yaml');
+		expect(ed.yaml).toBe(NEWER);
+		expect(ed.graphDirty).toBe(false);
+		expect(ed.validation).toBeNull();
+		expect(ed.notice).toBeNull();
+		expect(ed.dirty).toBe(true);
+		expect(ed.currentYAML()).toBe(NEWER);
+	});
+});
+
 describe('the tabs', () => {
 	it('writes the document out on the way to the text, only when it changed', async () => {
 		const ed = await opened();
@@ -423,7 +450,9 @@ describe('save', () => {
 		edit(ed);
 		const yaml = docToYaml(ed.doc!);
 		flows.save.mockResolvedValue(savedFlow({ yaml }));
+		const before = ed.replaced;
 		await ed.save();
+		expect(ed.replaced).toBe(before + 1);
 		expect(flows.save).toHaveBeenCalledWith('p1', 'builder', yaml, { nodes: ed.layout });
 		expect(ed.yaml).toBe(yaml);
 		expect(ed.dirty).toBe(false);
@@ -911,9 +940,11 @@ describe('loading a version', () => {
 
 	it('puts it in the text, saved by Save', async () => {
 		const ed = await opened();
+		const loaded = ed.replaced;
 		ed.showVersions = true;
 		flows.version.mockResolvedValue({ ...v, yaml: NEWER });
 		await ed.loadVersion(v);
+		expect(ed.replaced).toBe(loaded + 1);
 		expect(flows.version).toHaveBeenCalledWith('p1', v.hash);
 		expect(ed.yaml).toBe(NEWER);
 		expect(ed.tab).toBe('yaml');

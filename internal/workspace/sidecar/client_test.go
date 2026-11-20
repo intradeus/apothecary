@@ -607,3 +607,32 @@ func TestTerminalProxySplicesAnUpgrade(t *testing.T) {
 		t.Fatalf("echo = %q, %v", line, err)
 	}
 }
+
+// An agent host that takes a token gets it on every request, the event
+// stream's included.
+func TestNewWithHeaderSendsItEverywhere(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.Path+" "+r.Header.Get("X-Token"))
+		if r.URL.Path == "/agent/events" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+	c := NewWithHeader(tcpDialer{addr: strings.TrimPrefix(srv.URL, "http://")}, "X-Token", "t0k")
+	ctx := context.Background()
+	if _, err := c.Health(ctx); err != nil {
+		t.Fatal(err)
+	}
+	evs, _, err := c.Events(ctx, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range evs {
+	}
+	if len(got) != 2 || got[0] != "/health t0k" || got[1] != "/agent/events t0k" {
+		t.Errorf("requests = %v", got)
+	}
+}

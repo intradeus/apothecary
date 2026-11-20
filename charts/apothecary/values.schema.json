@@ -21,6 +21,7 @@
             "shim": { "type": "string" },
             "tools": { "type": "string" },
             "gateway": { "type": "string" },
+            "assistant": { "type": "string" },
             "browser": { "type": "string" }
           }
         }
@@ -112,6 +113,17 @@
         "description": "unprivileged sandboxes need workspaces.runtimeClassName (e.g. sysbox-runc); or set workspaces.privileged: true on a cluster of your own",
         "properties": { "runtimeClassName": { "minLength": 1 } },
         "required": ["runtimeClassName"]
+      }
+    },
+    "assistant": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "idle": { "type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+$" },
+        "volumeDays": { "type": "integer", "minimum": 0 },
+        "volumeSize": { "type": "string", "minLength": 1 },
+        "storageClass": { "type": "string" }
       }
     },
     "engine": {

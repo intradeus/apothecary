@@ -1799,8 +1799,31 @@ describe('accounts', () => {
 			)
 		).toMatchObject({ actions: ['run:read'], projectIds: ['p1'] });
 		expect(
-			map.toPermission({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true })
-		).toEqual({ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true });
+			map.toPermission({
+				action: 'run:read',
+				kind: 'run',
+				doc: 'See runs.',
+				grantable: true,
+				purposes: ['read']
+			})
+		).toEqual({
+			action: 'run:read',
+			kind: 'run',
+			doc: 'See runs.',
+			grantable: true,
+			purposes: ['read']
+		});
+		expect(
+			map.toPermission({ action: 'x:y', kind: 'x', doc: '', grantable: false, purposes: null })
+				.purposes
+		).toEqual([]);
+		expect(map.toAssistantRequest({ why: 'w', state: 'running', acts: null }).state).toBe(
+			'running'
+		);
+		expect(map.toAssistantRequest({ why: 'w', state: 'odd', acts: null }).state).toBe('pending');
+		expect(
+			map.toTokenCall({ at: AT, method: 'POST', route: 'r', path: '/p', status: 201, tool: '' })
+		).toEqual({ at: AT, method: 'POST', route: 'r', path: '/p', status: 201, tool: undefined });
 		expect(
 			map.toToken(
 				wire<Wire.Token>({ id: 't', name: 'n', prefix: 'p', created_at: AT, idle_seconds: 604800 })

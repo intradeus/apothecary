@@ -16,6 +16,12 @@ import type * as Wire from './generated/types.gen';
 import { ApiError, unwrap, unwrapOptional, unwrapVoid } from './client';
 import * as map from './mappers';
 import type {
+	AssistantFrame,
+	AssistantKind,
+	AssistantMessage,
+	AssistantRepo,
+	AssistantSession,
+	AssistantStatus,
 	AskFrame,
 	AskMessage,
 	AskSession,
@@ -28,6 +34,7 @@ import type {
 	Permission,
 	SshKey,
 	Token,
+	TokenCall,
 	TokenGrant,
 	User,
 	UserRole
@@ -45,6 +52,7 @@ import type {
 	DrillRun,
 	Grain,
 	MeasureRef,
+	Panel,
 	Scorecard,
 	ScorecardDraft,
 	TimeRange
@@ -448,6 +456,178 @@ export const runs = {
 	/** Hand the task back: the hold closes on the record and the agent gets
 	 *  the handback prompt (after its turn in flight, if one). */
 	release: (id: string) => unwrapVoid(gen.releaseRun({ path: { id } }))
+};
+
+// --- the assistant (beside the flow, ticket and skill pages) ------------------
+
+export const assistant = {
+	/** Whether it can run (and why not), on what, the pod, and a workshop's
+	 *  repositories as their last fetch left them. */
+	status: async (workshop?: string): Promise<AssistantStatus> =>
+		map.toAssistantStatus(
+			await unwrap(gen.getAssistant({ query: workshop ? { workshop } : undefined }))
+		),
+	/** Pick the harness integration (one's own) and the model to start with. */
+	setChoice: (integration: string, model = '') =>
+		unwrapVoid(gen.setAssistantChoice({ body: { integration, model } })),
+	/** The session about a subject (one's latest, or a new one), its
+	 *  messages, and whether it is answering now. */
+	open: async (
+		kind: AssistantKind,
+		subject: string,
+		workshop?: string
+	): Promise<{ session: AssistantSession; messages: AssistantMessage[]; busy: boolean }> => {
+		const w = await unwrap(
+			gen.openAssistantSession({ body: { kind, subject, workshop_id: workshop || undefined } })
+		);
+		return {
+			session: map.toAssistantSession(w.session),
+			messages: many(w.messages, map.toAssistantMessage),
+			busy: w.busy
+		};
+	},
+	messages: async (id: string, after = 0): Promise<AssistantMessage[]> =>
+		many(
+			await unwrap(gen.listAssistantMessages({ path: { id }, query: { after } })),
+			map.toAssistantMessage
+		),
+	/** Ask; the answer arrives on the stream. context is the page as it
+	 *  stands, unsaved edits included. */
+	send: async (id: string, text: string, context?: unknown): Promise<AssistantMessage> =>
+		map.toAssistantMessage(
+			await unwrap(gen.sendAssistantMessage({ path: { id }, body: { text, context } }))
+		),
+	cancel: (id: string) => unwrapVoid(gen.cancelAssistantTurn({ path: { id } })),
+	/** Run the acts an answer asked for, as the caller, in order until one
+	 *  fails; answers the message with what came of each. */
+	confirm: async (id: string, seq: number): Promise<AssistantMessage> =>
+		map.toAssistantMessage(
+			await unwrap(gen.confirmAssistantRequest({ path: { id, seq: String(seq) } }))
+		),
+	/** A dashboard fill's panels (the engine's shape, as get_dashboard
+	 *  shows them) as the editor holds them, each with an id; null when the
+	 *  fill is not a list of panels. */
+	panelsOf: (fill: unknown): Panel[] | null => {
+		const list = (fill as { panels?: unknown } | null)?.panels;
+		if (!Array.isArray(list)) return null;
+		try {
+			return list.map((w, i) => {
+				const p = map.toPanel(w as Wire.Panel);
+				return { ...p, id: p.id || `filled-${Date.now().toString(36)}-${i}` };
+			});
+		} catch {
+			return null;
+		}
+	},
+	/** Decline the acts an answer asked for: none runs. */
+	decline: async (id: string, seq: number): Promise<AssistantMessage> =>
+		map.toAssistantMessage(
+			await unwrap(gen.declineAssistantRequest({ path: { id, seq: String(seq) } }))
+		),
+	setModel: async (id: string, model: string): Promise<AssistantSession> =>
+		map.toAssistantSession(await unwrap(gen.setAssistantModel({ path: { id }, body: { model } }))),
+	/** A draft's session follows what it was saved as. */
+	setSubject: async (id: string, subject: string): Promise<AssistantSession> =>
+		map.toAssistantSession(
+			await unwrap(gen.setAssistantSubject({ path: { id }, body: { subject } }))
+		),
+	refresh: async (workshop: string): Promise<AssistantRepo[]> =>
+		many(
+			await unwrap(gen.refreshAssistantRepos({ body: { workshop_id: workshop } })),
+			map.toAssistantRepo
+		),
+	/** Follow one's assistant from now: every session's answers as they
+	 *  are written, messages, state, fills, fetches. A reconnect resumes
+	 *  from the last frame seen; a gap frame says some were lost (reload). */
+	stream(onFrame: (f: AssistantFrame) => void): () => void {
+		// -1: not connected yet, so from now (nothing kept is replayed).
+		let after = -1;
+		let es: EventSource;
+		let retry: ReturnType<typeof setTimeout> | undefined;
+		const open = () => {
+			const source = new EventSource(
+				after < 0 ? '/api/assistant/stream' : `/api/assistant/stream?after=${after}`
+			);
+			es = source;
+			const on = (name: string, fn: (w: Record<string, unknown>, seq: number) => void) =>
+				source.addEventListener(name, (m) => {
+					const w = JSON.parse((m as MessageEvent).data) as Record<string, unknown>;
+					const seq = typeof w.seq === 'number' ? w.seq : 0;
+					if (seq) after = Math.max(after, seq);
+					fn(w, seq);
+				});
+			const str = (v: unknown) => (typeof v === 'string' ? v : '');
+			on('message', (w, seq) => {
+				if (!w.message) return;
+				onFrame({
+					kind: 'message',
+					seq,
+					sessionId: str(w.session),
+					message: map.toAssistantMessage(w.message as Wire.AssistantMessage)
+				});
+			});
+			on('delta', (w, seq) =>
+				onFrame({
+					kind: 'delta',
+					seq,
+					sessionId: str(w.session),
+					text: str(w.text),
+					tool: str(w.tool) || undefined
+				})
+			);
+			on('state', (w, seq) =>
+				onFrame({ kind: 'state', seq, sessionId: str(w.session), busy: !!w.busy })
+			);
+			on('status', (w, seq) =>
+				onFrame({ kind: 'status', seq, sessionId: str(w.session), text: str(w.text) })
+			);
+			on('fill', (w, seq) =>
+				onFrame({
+					kind: 'fill',
+					seq,
+					sessionId: str(w.session),
+					page: w.page === 'ticket' || w.page === 'skill' ? w.page : 'flow',
+					subject: str(w.subject),
+					fill: w.fill
+				})
+			);
+			on('repos', (w, seq) =>
+				onFrame({
+					kind: 'repos',
+					seq,
+					workshop: str(w.workshop),
+					text: str(w.text) || undefined,
+					repos: Array.isArray(w.repos)
+						? (w.repos as Wire.AssistantRepo[]).map(map.toAssistantRepo)
+						: undefined
+				})
+			);
+			// Where the stream starts. A position past it is from before the
+			// engine restarted: start again from it.
+			on('head', (w) => {
+				const head = typeof w.seq === 'number' ? w.seq : 0;
+				if (after < 0 || after > head) after = head;
+			});
+			on('request', (w, seq) => {
+				if (!w.message) return;
+				onFrame({
+					kind: 'request',
+					seq,
+					sessionId: str(w.session),
+					message: map.toAssistantMessage(w.message as Wire.AssistantMessage)
+				});
+			});
+			on('gap', () => onFrame({ kind: 'gap' }));
+			source.onerror = () => {
+				if (source.readyState === EventSource.CLOSED) retry = setTimeout(open, STREAM_RETRY_MS);
+			};
+		};
+		open();
+		return () => {
+			clearTimeout(retry);
+			es.close();
+		};
+	}
 };
 
 // --- ask (read-only sessions beside the run) ----------------------------------
@@ -1507,6 +1687,11 @@ export const auth = {
 
 	tokens: async (): Promise<Token[]> => many(await unwrap(gen.listMyTokens()), map.toToken),
 
+	/** What one of one's tokens did, newest first: its writes and its MCP
+	 *  tool calls, refused or done (its last 200). */
+	tokenCalls: async (id: string): Promise<TokenCall[]> =>
+		many(await unwrap(gen.listMyTokenCalls({ path: { id } })), map.toTokenCall),
+
 	/** Mint a token with what it may do; the secret is in the answer and
 	 *  nowhere else. A limited token with no workshop chosen reaches every
 	 *  workshop its actions apply to. */
@@ -1797,6 +1982,7 @@ export const api = {
 	auth,
 	users,
 	ask,
+	assistant,
 	skills,
 	skillsets,
 	analytics,

@@ -20,7 +20,7 @@
 	const project = $derived(fleet.projectById.get(ed.projectId));
 	const workshopName = $derived(project?.name ?? '…');
 
-	/** Clone, delete and save need project:write in the flow's workshop. */
+	/** Clone, delete and save need project:author in the flow's workshop. */
 	const canWrite = $derived(ed.canWrite);
 	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 
@@ -83,6 +83,12 @@
 					>{t('page.flow.validate')}{#if validation?.warnings?.length}<span
 							class="pill sm mono tint-attention">{validation.warnings.length}</span
 						>{/if}</button
+				>
+				<button
+					class="btn-sm"
+					class:btn-sel={ed.showAssistant}
+					aria-pressed={ed.showAssistant}
+					onclick={() => (ed.showAssistant = !ed.showAssistant)}>{t('assistant.open')}</button
 				>
 				<button
 					class="btn-sm"

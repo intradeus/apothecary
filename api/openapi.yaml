@@ -350,6 +350,312 @@ components:
         - messages
         - threads
       type: object
+    AssistantAct:
+      properties:
+        arguments: {}
+        result:
+          type: string
+        status:
+          type: integer
+        title:
+          type: string
+        tool:
+          type: string
+      required:
+        - arguments
+        - tool
+      type: object
+    AssistantActIn:
+      properties:
+        arguments:
+          additionalProperties: {}
+          nullable: true
+          type: object
+        tool:
+          type: string
+      required:
+        - arguments
+        - tool
+      type: object
+    AssistantActsRequest:
+      properties:
+        acts:
+          items:
+            $ref: '#/components/schemas/AssistantActIn'
+          nullable: true
+          type: array
+        why:
+          type: string
+      required:
+        - acts
+        - why
+      type: object
+    AssistantChoice:
+      properties:
+        integration:
+          type: string
+        model:
+          type: string
+      required:
+        - integration
+        - model
+      type: object
+    AssistantChoiceRequest:
+      properties:
+        integration:
+          type: string
+        model:
+          type: string
+      required:
+        - integration
+        - model
+      type: object
+    AssistantFillRequest:
+      properties:
+        fill: {}
+      required:
+        - fill
+      type: object
+    AssistantFillResult:
+      properties:
+        errors:
+          items:
+            type: string
+          type: array
+        ok:
+          type: boolean
+      required:
+        - ok
+      type: object
+    AssistantIntegration:
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+        name:
+          type: string
+      required:
+        - id
+        - kind
+        - name
+      type: object
+    AssistantMessage:
+      properties:
+        at:
+          format: date-time
+          type: string
+        cost_usd:
+          format: double
+          type: number
+        error:
+          type: string
+        fill: {}
+        request:
+          $ref: '#/components/schemas/AssistantRequest'
+        role:
+          type: string
+        seq:
+          format: int64
+          type: integer
+        session_id:
+          type: string
+        text:
+          type: string
+      required:
+        - at
+        - role
+        - seq
+        - session_id
+        - text
+      type: object
+    AssistantMessageRequest:
+      properties:
+        context: {}
+        text:
+          type: string
+      required:
+        - text
+      type: object
+    AssistantModelRequest:
+      properties:
+        model:
+          type: string
+      required:
+        - model
+      type: object
+    AssistantOpenRequest:
+      properties:
+        kind:
+          type: string
+        subject:
+          type: string
+        workshop_id:
+          type: string
+      required:
+        - kind
+        - subject
+      type: object
+    AssistantPage:
+      properties:
+        presets:
+          items:
+            type: string
+          nullable: true
+          type: array
+        repos:
+          type: boolean
+      required:
+        - presets
+        - repos
+      type: object
+    AssistantPodStatus:
+      properties:
+        error:
+          type: string
+        state:
+          type: string
+      required:
+        - state
+      type: object
+    AssistantRefreshRequest:
+      properties:
+        workshop_id:
+          type: string
+      required:
+        - workshop_id
+      type: object
+    AssistantRepo:
+      properties:
+        at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        head:
+          type: string
+        name:
+          type: string
+        ok:
+          type: boolean
+        workshop:
+          type: string
+      required:
+        - at
+        - name
+        - ok
+        - workshop
+      type: object
+    AssistantRequest:
+      properties:
+        acts:
+          items:
+            $ref: '#/components/schemas/AssistantAct'
+          nullable: true
+          type: array
+        reported:
+          type: boolean
+        state:
+          type: string
+        why:
+          type: string
+      required:
+        - acts
+        - state
+        - why
+      type: object
+    AssistantSession:
+      properties:
+        created_at:
+          format: date-time
+          type: string
+        id:
+          type: string
+        integration:
+          type: string
+        kind:
+          type: string
+        model:
+          type: string
+        subject:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        user_id:
+          type: string
+        workshop:
+          type: string
+      required:
+        - created_at
+        - id
+        - kind
+        - subject
+        - updated_at
+        - user_id
+      type: object
+    AssistantSessionView:
+      properties:
+        busy:
+          type: boolean
+        messages:
+          items:
+            $ref: '#/components/schemas/AssistantMessage'
+          nullable: true
+          type: array
+        session:
+          $ref: '#/components/schemas/AssistantSession'
+      required:
+        - busy
+        - messages
+        - session
+      type: object
+    AssistantStatus:
+      properties:
+        choice:
+          $ref: '#/components/schemas/AssistantChoice'
+        enabled:
+          type: boolean
+        integrations:
+          items:
+            $ref: '#/components/schemas/AssistantIntegration'
+          nullable: true
+          type: array
+        models:
+          items:
+            type: string
+          nullable: true
+          type: array
+        pages:
+          additionalProperties:
+            $ref: '#/components/schemas/AssistantPage'
+          nullable: true
+          type: object
+        pod:
+          $ref: '#/components/schemas/AssistantPodStatus'
+        reason:
+          type: string
+        repos:
+          items:
+            $ref: '#/components/schemas/AssistantRepo'
+          nullable: true
+          type: array
+      required:
+        - choice
+        - enabled
+        - integrations
+        - models
+        - pages
+        - pod
+        - repos
+      type: object
+    AssistantSubjectRequest:
+      properties:
+        subject:
+          type: string
+      required:
+        - subject
+      type: object
     Attachment:
       properties:
         chat:
@@ -2600,11 +2906,17 @@ components:
           type: boolean
         kind:
           type: string
+        purposes:
+          items:
+            type: string
+          nullable: true
+          type: array
       required:
         - action
         - doc
         - grantable
         - kind
+        - purposes
       type: object
     PhaseInfo:
       properties:
@@ -3668,6 +3980,19 @@ components:
         - state
         - ticket_title
         - updated_at
+      type: object
+    RunWait:
+      properties:
+        changed:
+          type: boolean
+        run:
+          $ref: '#/components/schemas/RunView'
+        seen:
+          type: string
+      required:
+        - changed
+        - run
+        - seen
       type: object
     SSHKey:
       properties:
@@ -4797,6 +5122,28 @@ components:
         - id
         - name
         - prefix
+      type: object
+    TokenCall:
+      properties:
+        at:
+          format: date-time
+          type: string
+        method:
+          type: string
+        path:
+          type: string
+        route:
+          type: string
+        status:
+          type: integer
+        tool:
+          type: string
+      required:
+        - at
+        - method
+        - path
+        - route
+        - status
       type: object
     TokenCreated:
       properties:
@@ -6003,6 +6350,684 @@ paths:
       tags:
         - analytics
       x-apothecary-action: analytics:read
+  /api/assistant:
+    get:
+      operationId: getAssistant
+      parameters:
+        - description: the workshop whose repositories to report
+          in: query
+          name: workshop
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantStatus'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'One''s assistant: whether it can run and why not, its harness and models, its pod, a workshop''s repositories'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:read
+  /api/assistant/choice:
+    put:
+      operationId: setAssistantChoice
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantChoiceRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantChoice'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Pick the harness integration (one's own) the assistant runs on, and the model it starts with
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/repos/refresh:
+    post:
+      operationId: refreshAssistantRepos
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantRefreshRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AssistantRepo'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Fetch a workshop's repositories into one's assistant pod now
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions:
+    post:
+      description: kind is flow, ticket or skill; subject the flow's name, the ticket's key, the skill's id, or a draft id before the first save. A flow's or a ticket's session names its workshop.
+      operationId: openAssistantSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantOpenRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantSessionView'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Open the session about a subject: one''s latest about it, or a new one'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/cancel:
+    post:
+      operationId: cancelAssistantTurn
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Stop the session's answer
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/fill:
+    post:
+      description: 'Only the session''s own token (the one its agent holds) fills it: 403 for any other. A fill that fails its check is ok false with its errors.'
+      operationId: fillAssistantSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantFillRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantFillResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Fill the session''s page: checked, then sent to the page once; nothing is saved'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:fill
+  /api/assistant/sessions/{id}/messages:
+    get:
+      operationId: listAssistantMessages
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: the last sequence already held
+          in: query
+          name: after
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/AssistantMessage'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A session's messages, after a sequence
+      tags:
+        - assistant
+      x-apothecary-action: assistant:read
+    post:
+      description: context is the page as it stands, unsaved edits included. 409 while the session answers, or when no harness is chosen.
+      operationId: sendAssistantMessage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantMessageRequest'
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantMessage'
+          description: Accepted
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Ask: the question is recorded, its answer arrives on the stream'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/messages/{seq}/confirm:
+    post:
+      description: 'Each act goes through its route as if the caller called it: their actions decide. Answers the message with each act''s status and result; 409 for a request decided already or being decided.'
+      operationId: confirmAssistantRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantMessage'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Run the acts an answer asked for, in order, as the caller, until one fails
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/messages/{seq}/decline:
+    post:
+      operationId: declineAssistantRequest
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantMessage'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Decline the acts an answer asked for: none runs'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/model:
+    put:
+      operationId: setAssistantModel
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantModelRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantSession'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Pick the model the session answers with from its next question
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}/request:
+    post:
+      description: Only the session's own token, while its question is answered. Each act's tool must be a write tool and its arguments must fit its input; ok false with the errors otherwise. The person confirms or declines in the panel; the session's next prompt says what came of it.
+      operationId: requestAssistantActs
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantActsRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantFillResult'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Ask the person to confirm acts: each a write tool of the MCP face, with its arguments; nothing runs until they do'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:fill
+  /api/assistant/sessions/{id}/subject:
+    put:
+      operationId: setAssistantSubject
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssistantSubjectRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantSession'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Move a draft's session to what it was saved as
+      tags:
+        - assistant
+      x-apothecary-action: assistant:write
+  /api/assistant/stream:
+    get:
+      description: 'Every session''s answers as they are written (delta), messages as they land, a session''s state, fills for the page, repository fetches. id is the frame''s sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.'
+      operationId: streamAssistant
+      parameters:
+        - description: resume after this frame sequence
+          in: query
+          name: after
+          schema:
+            type: integer
+      responses:
+        "204":
+          content:
+            text/event-stream:
+              schema:
+                type: string
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Server-sent event stream of one's assistant
+      tags:
+        - assistant
+      x-apothecary-action: assistant:read
   /api/attachments:
     post:
       operationId: uploadAttachments
@@ -7183,7 +8208,7 @@ paths:
       summary: Copy a compiled-in template into a project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/flows:
     get:
       operationId: listAllFlows
@@ -8370,6 +9395,53 @@ paths:
       tags:
         - auth
       x-apothecary-action: account:manage
+  /api/me/tokens/{id}/calls:
+    get:
+      description: The act itself names the token's person, as one made in a browser does; this names the token.
+      operationId: listMyTokenCalls
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TokenCall'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'What one of one''s tokens did, newest first: its writes and its MCP tool calls, refused or done (its last 200)'
+      tags:
+        - auth
+      x-apothecary-action: account:read
   /api/notices:
     get:
       operationId: listNotices
@@ -8698,7 +9770,7 @@ paths:
       summary: Answer a question
       tags:
         - pings
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/pings/{pid}/curation:
     get:
       description: 'Each shown file of a review type (review_threads, review_replies, mr_threads) from its raise-time snapshot: what the curation page lists item by item. A file not captured lists with the reason and can only be approved as written.'
@@ -9099,7 +10171,7 @@ paths:
       summary: Create an automation
       tags:
         - automations
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/automations/{aid}:
     delete:
       operationId: deleteAutomation
@@ -9147,7 +10219,7 @@ paths:
       summary: Delete an automation (the tickets it recorded and their runs stay)
       tags:
         - automations
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
     get:
       operationId: getAutomation
       parameters:
@@ -9251,7 +10323,7 @@ paths:
       summary: Replace an automation (its last poll, firing and error are kept)
       tags:
         - automations
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/branches:
     get:
       operationId: listProjectBranches
@@ -9781,7 +10853,7 @@ paths:
       summary: Create a flow in a project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}:
     delete:
       operationId: deleteFlow
@@ -9829,7 +10901,7 @@ paths:
       summary: Delete a project's flow (resets to the template, when there is one)
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
     get:
       description: Falls back to the built-in template of that name, marked builtin, when the project has not saved its own.
       operationId: getFlow
@@ -9935,7 +11007,7 @@ paths:
       summary: Replace one of a project's flows
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}/binding:
     delete:
       operationId: deleteFlowBinding
@@ -9983,7 +11055,7 @@ paths:
       summary: Put the project back to the flow's declared defaults
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
     get:
       description: '404 when the project bound nothing: the flow runs on its declared defaults. A template is configurable without being copied.'
       operationId: getFlowBinding
@@ -10089,7 +11161,7 @@ paths:
       summary: Bind values to a flow's parameters for this project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}/copy:
     post:
       operationId: copyFlow
@@ -10147,7 +11219,7 @@ paths:
       summary: Copy a flow into another project
       tags:
         - flows
-      x-apothecary-action: project:write
+      x-apothecary-action: project:author
   /api/projects/{id}/flows/{name}/versions:
     get:
       operationId: listFlowVersions
@@ -10760,7 +11832,7 @@ paths:
       summary: The project's secrets, by name
       tags:
         - projects
-      x-apothecary-action: project:write
+      x-apothecary-action: project:secrets
   /api/projects/{id}/secrets/{name}:
     delete:
       description: A flow that reads it is refused at its next run's creation.
@@ -10809,7 +11881,7 @@ paths:
       summary: Remove one project secret
       tags:
         - projects
-      x-apothecary-action: project:write
+      x-apothecary-action: project:secrets
     put:
       description: Creates or replaces it; sealed at rest. A name is a lowercase slug. The next agent stage that reads it gets the new value — no new run needed.
       operationId: setProjectSecret
@@ -10867,7 +11939,7 @@ paths:
       summary: Set one project secret
       tags:
         - projects
-      x-apothecary-action: project:write
+      x-apothecary-action: project:secrets
   /api/projects/{id}/ticket-statuses:
     get:
       description: 'Its ticket source''s list, as listTrackerStatuses gives it, read by anyone who reads the workshop''s tickets: the source is its owner''s. A tracker holding off for its rate limit with nothing cached is 503 with Retry-After.'
@@ -12034,7 +13106,7 @@ paths:
       summary: Ask one of the run's read-only sessions a question
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/ask/model:
     put:
       description: 'Picks the model of the thread named by thread_id (none: the run''s latest, opened when the run has none); its live session is switched over at its next question. 404 for an unknown thread.'
@@ -12084,7 +13156,7 @@ paths:
       summary: Pick the model an Ask session answers with
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/ask/stream:
     get:
       description: 'Replays every thread''s messages after after_seq (id = seq), then streams: answers as they are written (delta frames), each message as it lands, a thread''s state as it changes, threads as they open (thread frames). Every frame names its thread_id.'
@@ -12181,7 +13253,7 @@ paths:
       summary: Open a new Ask session in the run
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/auth-broker/{rest...}:
     delete:
       operationId: authBrokerDelete
@@ -12340,7 +13412,7 @@ paths:
       summary: Unblock a host for a live run and persist it to the project
       tags:
         - egress
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:egress
   /api/runs/{id}/egress-audit:
     get:
       operationId: getRunEgressAudit
@@ -12546,7 +13618,7 @@ paths:
       summary: Allow or force-block a host for a run
       tags:
         - egress
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:egress
   /api/runs/{id}/events:
     get:
       description: Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).
@@ -12732,6 +13804,55 @@ paths:
       tags:
         - files
       x-apothecary-action: run:read
+  /api/runs/{id}/history:
+    get:
+      description: 'What journal_read gives the run''s own agents, for whoever may read the run: with no ref every decision, note and attempt''s record with its verdict; with ref (<stage>#<n> (review#5), <stage>#<n>/decision#<k>, <stage>#<n>/note#<k>, run, or run/decision#<k>) one entry whole, an attempt with its outputs and its log.'
+      operationId: readRunHistory
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: 'an entry''s reference; none: the whole journal'
+          in: query
+          name: ref
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JournalEntry'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'The run''s journal as a person reads it: every record, or one entry by its reference'
+      tags:
+        - runs
+      x-apothecary-action: run:read
   /api/runs/{id}/hold:
     delete:
       description: Closes the take-over on the record (duration, turns, cost) and sends the session the handback prompt — when the turn in flight ends, if one is. The stage ends as usual once that turn does. 409 when nobody holds it.
@@ -12775,7 +13896,7 @@ paths:
       summary: Hand the task back to the agent
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
     post:
       description: 'While held, the end of the agent''s turn is not the end of the stage: it waits for your next message, each message a turn in the same session, until you release. force (default true) stops the agent''s turn in flight so it waits on you at once — unless that turn is waiting on the agent''s own question; force false lets the turn finish first. The body is optional. 409 when no agent is running, or someone already holds it.'
       operationId: takeOverRun
@@ -12824,7 +13945,7 @@ paths:
       summary: Take over the running agent's session
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/journal:
     get:
       description: 'Every decision and note whole and every attempt''s record with its verdict, no logs: one file for the tool to write (run.md).'
@@ -13012,7 +14133,7 @@ paths:
       summary: Send a message to the agent you took over
       tags:
         - runs
-      x-apothecary-action: run:operate
+      x-apothecary-action: run:answer
   /api/runs/{id}/mrs/status:
     get:
       operationId: getRunMRStatus
@@ -13965,6 +15086,60 @@ paths:
       summary: 'How to reach the run''s workspace over SSH: the command, the VS Code link, the door''s fingerprint'
       tags:
         - workspace
+      x-apothecary-action: run:read
+  /api/runs/{id}/wait:
+    get:
+      description: 'Answers when the run differs from seen (what an earlier answer returned; none: the run as it is now), or when timeout seconds pass (default 50, at most 55): changed says which. A run that has ended answers at once. Pass seen back to wait for the next change without missing one between calls.'
+      operationId: waitRun
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - description: the seen an earlier answer returned
+          in: query
+          name: seen
+          schema:
+            type: string
+        - description: seconds to wait, 1 to 55 (default 50)
+          in: query
+          name: timeout
+          schema:
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunWait'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'Wait for a run to change: its state, its open questions, its merge requests'
+      tags:
+        - runs
       x-apothecary-action: run:read
   /api/runs/{id}/workspace-log:
     get:
@@ -15614,6 +16789,7 @@ servers:
     url: /
 tags:
   - name: analytics
+  - name: assistant
   - name: auth
   - name: automations
   - name: channels

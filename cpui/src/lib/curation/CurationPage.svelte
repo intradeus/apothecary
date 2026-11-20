@@ -50,8 +50,8 @@
 
 	let { ping, onanswered }: { ping: Ping; onanswered: () => void } = $props();
 
-	// Answering is run:operate in the run's workshop; the draft stays editable.
-	const canAnswer = $derived(fleet.can(fleet.runById.get(ping.runId)?.projectId, 'run:operate'));
+	// Answering is run:answer in the run's workshop; the draft stays editable.
+	const canAnswer = $derived(fleet.can(fleet.runById.get(ping.runId)?.projectId, 'run:answer'));
 
 	// The route mounts this only for a curatable ping; the document is the
 	// first shown file of a review type.

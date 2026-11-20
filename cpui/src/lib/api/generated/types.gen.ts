@@ -150,6 +150,143 @@ export type AskState = {
 	threads: Array<ThreadState> | null;
 };
 
+export type AssistantAct = {
+	arguments: unknown;
+	result?: string;
+	status?: number;
+	title?: string;
+	tool: string;
+};
+
+export type AssistantActIn = {
+	arguments: {
+		[key: string]: unknown;
+	} | null;
+	tool: string;
+};
+
+export type AssistantActsRequest = {
+	acts: Array<AssistantActIn> | null;
+	why: string;
+};
+
+export type AssistantChoice = {
+	integration: string;
+	model: string;
+};
+
+export type AssistantChoiceRequest = {
+	integration: string;
+	model: string;
+};
+
+export type AssistantFillRequest = {
+	fill: unknown;
+};
+
+export type AssistantFillResult = {
+	errors?: Array<string>;
+	ok: boolean;
+};
+
+export type AssistantIntegration = {
+	id: string;
+	kind: string;
+	name: string;
+};
+
+export type AssistantMessage = {
+	at: string;
+	cost_usd?: number;
+	error?: string;
+	fill?: unknown;
+	request?: AssistantRequest;
+	role: string;
+	seq: number;
+	session_id: string;
+	text: string;
+};
+
+export type AssistantMessageRequest = {
+	context?: unknown;
+	text: string;
+};
+
+export type AssistantModelRequest = {
+	model: string;
+};
+
+export type AssistantOpenRequest = {
+	kind: string;
+	subject: string;
+	workshop_id?: string;
+};
+
+export type AssistantPage = {
+	presets: Array<string> | null;
+	repos: boolean;
+};
+
+export type AssistantPodStatus = {
+	error?: string;
+	state: string;
+};
+
+export type AssistantRefreshRequest = {
+	workshop_id: string;
+};
+
+export type AssistantRepo = {
+	at: string;
+	error?: string;
+	head?: string;
+	name: string;
+	ok: boolean;
+	workshop: string;
+};
+
+export type AssistantRequest = {
+	acts: Array<AssistantAct> | null;
+	reported?: boolean;
+	state: string;
+	why: string;
+};
+
+export type AssistantSession = {
+	created_at: string;
+	id: string;
+	integration?: string;
+	kind: string;
+	model?: string;
+	subject: string;
+	updated_at: string;
+	user_id: string;
+	workshop?: string;
+};
+
+export type AssistantSessionView = {
+	busy: boolean;
+	messages: Array<AssistantMessage> | null;
+	session: AssistantSession;
+};
+
+export type AssistantStatus = {
+	choice: AssistantChoice;
+	enabled: boolean;
+	integrations: Array<AssistantIntegration> | null;
+	models: Array<string> | null;
+	pages: {
+		[key: string]: AssistantPage;
+	} | null;
+	pod: AssistantPodStatus;
+	reason?: string;
+	repos: Array<AssistantRepo> | null;
+};
+
+export type AssistantSubjectRequest = {
+	subject: string;
+};
+
 export type Attachment = {
 	chat?: string;
 	chat_name?: string;
@@ -1151,6 +1288,7 @@ export type Permission = {
 	doc: string;
 	grantable: boolean;
 	kind: string;
+	purposes: Array<string> | null;
 };
 
 export type PhaseInfo = {
@@ -1617,6 +1755,12 @@ export type RunView = {
 	ticket_url?: string;
 	updated_at: string;
 	user_id?: string;
+};
+
+export type RunWait = {
+	changed: boolean;
+	run: RunView;
+	seen: string;
 };
 
 export type SshKey = {
@@ -2089,6 +2233,15 @@ export type Token = {
 	name: string;
 	prefix: string;
 	project_ids?: Array<string>;
+};
+
+export type TokenCall = {
+	at: string;
+	method: string;
+	path: string;
+	route: string;
+	status: number;
+	tool?: string;
 };
 
 export type TokenCreated = {
@@ -2919,6 +3072,623 @@ export type AnalyticsValuesResponses = {
 };
 
 export type AnalyticsValuesResponse = AnalyticsValuesResponses[keyof AnalyticsValuesResponses];
+
+export type GetAssistantData = {
+	body?: never;
+	path?: never;
+	query?: {
+		/**
+		 * the workshop whose repositories to report
+		 */
+		workshop?: string;
+	};
+	url: '/api/assistant';
+};
+
+export type GetAssistantErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetAssistantResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantStatus;
+};
+
+export type GetAssistantResponse = GetAssistantResponses[keyof GetAssistantResponses];
+
+export type SetAssistantChoiceData = {
+	body: AssistantChoiceRequest;
+	path?: never;
+	query?: never;
+	url: '/api/assistant/choice';
+};
+
+export type SetAssistantChoiceErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetAssistantChoiceResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantChoice;
+};
+
+export type SetAssistantChoiceResponse =
+	SetAssistantChoiceResponses[keyof SetAssistantChoiceResponses];
+
+export type RefreshAssistantReposData = {
+	body: AssistantRefreshRequest;
+	path?: never;
+	query?: never;
+	url: '/api/assistant/repos/refresh';
+};
+
+export type RefreshAssistantReposErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RefreshAssistantReposResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<AssistantRepo> | null;
+};
+
+export type RefreshAssistantReposResponse =
+	RefreshAssistantReposResponses[keyof RefreshAssistantReposResponses];
+
+export type OpenAssistantSessionData = {
+	body: AssistantOpenRequest;
+	path?: never;
+	query?: never;
+	url: '/api/assistant/sessions';
+};
+
+export type OpenAssistantSessionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type OpenAssistantSessionResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantSessionView;
+};
+
+export type OpenAssistantSessionResponse =
+	OpenAssistantSessionResponses[keyof OpenAssistantSessionResponses];
+
+export type CancelAssistantTurnData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/cancel';
+};
+
+export type CancelAssistantTurnErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CancelAssistantTurnResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type CancelAssistantTurnResponse =
+	CancelAssistantTurnResponses[keyof CancelAssistantTurnResponses];
+
+export type FillAssistantSessionData = {
+	body: AssistantFillRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/fill';
+};
+
+export type FillAssistantSessionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type FillAssistantSessionResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantFillResult;
+};
+
+export type FillAssistantSessionResponse =
+	FillAssistantSessionResponses[keyof FillAssistantSessionResponses];
+
+export type ListAssistantMessagesData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * the last sequence already held
+		 */
+		after?: number;
+	};
+	url: '/api/assistant/sessions/{id}/messages';
+};
+
+export type ListAssistantMessagesErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListAssistantMessagesResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<AssistantMessage> | null;
+};
+
+export type ListAssistantMessagesResponse =
+	ListAssistantMessagesResponses[keyof ListAssistantMessagesResponses];
+
+export type SendAssistantMessageData = {
+	body: AssistantMessageRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/messages';
+};
+
+export type SendAssistantMessageErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SendAssistantMessageResponses = {
+	/**
+	 * Accepted
+	 */
+	202: AssistantMessage;
+};
+
+export type SendAssistantMessageResponse =
+	SendAssistantMessageResponses[keyof SendAssistantMessageResponses];
+
+export type ConfirmAssistantRequestData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/messages/{seq}/confirm';
+};
+
+export type ConfirmAssistantRequestErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ConfirmAssistantRequestResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantMessage;
+};
+
+export type ConfirmAssistantRequestResponse =
+	ConfirmAssistantRequestResponses[keyof ConfirmAssistantRequestResponses];
+
+export type DeclineAssistantRequestData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/messages/{seq}/decline';
+};
+
+export type DeclineAssistantRequestErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type DeclineAssistantRequestResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantMessage;
+};
+
+export type DeclineAssistantRequestResponse =
+	DeclineAssistantRequestResponses[keyof DeclineAssistantRequestResponses];
+
+export type SetAssistantModelData = {
+	body: AssistantModelRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/model';
+};
+
+export type SetAssistantModelErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetAssistantModelResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantSession;
+};
+
+export type SetAssistantModelResponse =
+	SetAssistantModelResponses[keyof SetAssistantModelResponses];
+
+export type RequestAssistantActsData = {
+	body: AssistantActsRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/request';
+};
+
+export type RequestAssistantActsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RequestAssistantActsResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantFillResult;
+};
+
+export type RequestAssistantActsResponse =
+	RequestAssistantActsResponses[keyof RequestAssistantActsResponses];
+
+export type SetAssistantSubjectData = {
+	body: AssistantSubjectRequest;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}/subject';
+};
+
+export type SetAssistantSubjectErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type SetAssistantSubjectResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantSession;
+};
+
+export type SetAssistantSubjectResponse =
+	SetAssistantSubjectResponses[keyof SetAssistantSubjectResponses];
+
+export type StreamAssistantData = {
+	body?: never;
+	path?: never;
+	query?: {
+		/**
+		 * resume after this frame sequence
+		 */
+		after?: number;
+	};
+	url: '/api/assistant/stream';
+};
+
+export type StreamAssistantErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type StreamAssistantResponses = {
+	/**
+	 * No Content
+	 */
+	204: string;
+};
+
+export type StreamAssistantResponse = StreamAssistantResponses[keyof StreamAssistantResponses];
 
 export type UploadAttachmentsData = {
 	body: {
@@ -5186,6 +5956,47 @@ export type DeleteMyTokenResponses = {
 };
 
 export type DeleteMyTokenResponse = DeleteMyTokenResponses[keyof DeleteMyTokenResponses];
+
+export type ListMyTokenCallsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/me/tokens/{id}/calls';
+};
+
+export type ListMyTokenCallsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListMyTokenCallsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<TokenCall> | null;
+};
+
+export type ListMyTokenCallsResponse = ListMyTokenCallsResponses[keyof ListMyTokenCallsResponses];
 
 export type ListNoticesData = {
 	body?: never;
@@ -9131,6 +9942,52 @@ export type DownloadRunFilesResponses = {
 
 export type DownloadRunFilesResponse = DownloadRunFilesResponses[keyof DownloadRunFilesResponses];
 
+export type ReadRunHistoryData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * an entry's reference; none: the whole journal
+		 */
+		ref?: string;
+	};
+	url: '/api/runs/{id}/history';
+};
+
+export type ReadRunHistoryErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ReadRunHistoryResponses = {
+	/**
+	 * OK
+	 */
+	200: JournalEntry;
+};
+
+export type ReadRunHistoryResponse = ReadRunHistoryResponses[keyof ReadRunHistoryResponses];
+
 export type ReleaseRunData = {
 	body?: never;
 	path: {
@@ -10264,6 +11121,56 @@ export type GetRunSshResponses = {
 };
 
 export type GetRunSshResponse = GetRunSshResponses[keyof GetRunSshResponses];
+
+export type WaitRunData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: {
+		/**
+		 * the seen an earlier answer returned
+		 */
+		seen?: string;
+		/**
+		 * seconds to wait, 1 to 55 (default 50)
+		 */
+		timeout?: number;
+	};
+	url: '/api/runs/{id}/wait';
+};
+
+export type WaitRunErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type WaitRunResponses = {
+	/**
+	 * OK
+	 */
+	200: RunWait;
+};
+
+export type WaitRunResponse = WaitRunResponses[keyof WaitRunResponses];
 
 export type GetWorkspaceLogData = {
 	body?: never;

@@ -402,6 +402,10 @@ func (l *eventLog) last() int64 {
 // the same time, on the same harness or on two.
 type agentHost struct {
 	log *eventLog
+	// idle, when set, stops a process no turn has used for that long (the
+	// assistant pod's sessions, --agent-idle): the next start relaunches it
+	// and the engine loads its session again.
+	idle time.Duration
 
 	mu       sync.Mutex
 	procs    map[string]*agentProc // by id
@@ -410,8 +414,12 @@ type agentHost struct {
 }
 
 type agentProc struct {
-	id     string // short, what the engine addresses sessions to
-	key    string // identity of the command line: same key = reuse
+	id  string // short, what the engine addresses sessions to
+	key string // identity of the command line: same key = reuse
+	// used is when the engine last addressed the process (unix nanos): the
+	// idle exit's clock. idled marks a process the host stopped for idleness.
+	used   atomic.Int64
+	idled  atomic.Bool
 	cmd    *exec.Cmd
 	conn   *rpcConn
 	init   json.RawMessage
@@ -456,6 +464,11 @@ type startReq struct {
 	Argv []string          `json:"argv"`
 	Env  map[string]string `json:"env,omitempty"`
 	Cwd  string            `json:"cwd,omitempty"`
+	// Confine starts the process under these Landlock rules (shim confine):
+	// the assistant's sessions. Its environment is then Env alone, never the
+	// sidecar's own; and the rules are part of the process's identity, so
+	// two sessions' rules are two processes.
+	Confine *confineSpec `json:"confine,omitempty"`
 }
 
 // start launches (or reuses) the agent process for a command line and runs
@@ -465,21 +478,51 @@ func (h *agentHost) start(req startReq) (*agentProc, error) {
 	if len(req.Argv) == 0 {
 		return nil, errors.New("argv is required")
 	}
-	key := strings.Join(req.Argv, "\x00")
+	key := launchKey(req)
+	argv := req.Argv
+	base := os.Environ()
+	if req.Confine != nil {
+		spec, err := json.Marshal(req.Confine)
+		if err != nil {
+			return nil, err
+		}
+		self, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("confine: %w", err)
+		}
+		argv = append([]string{self, "confine", "--spec", string(spec), "--"}, req.Argv...)
+		base = nil
+		// A rule names a path that exists: a session's home (and the temp
+		// folder its environment names inside it) is made on its first start.
+		dirs := append([]string{}, req.Confine.Write...)
+		if tmp := req.Env["TMPDIR"]; tmp != "" {
+			for _, w := range req.Confine.Write {
+				if strings.HasPrefix(tmp, w+"/") {
+					dirs = append(dirs, tmp)
+				}
+			}
+		}
+		for _, d := range dirs {
+			if err := os.MkdirAll(d, 0o700); err != nil {
+				return nil, fmt.Errorf("confine: %w", err)
+			}
+		}
+	}
 	id := procID(key)
 	h.mu.Lock()
 	if p := h.procs[id]; p != nil && p.alive() {
 		h.mu.Unlock()
+		p.touch()
 		return p, nil
 	}
 	h.mu.Unlock()
 
-	cmd := exec.Command(req.Argv[0], req.Argv[1:]...)
+	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = req.Cwd
 	// The agent marker: ask-human offers its tool only below it, so the
 	// human's own codex/opencode (editor extension, terminal), which load
 	// the same MCP config, never ask the run.
-	cmd.Env = append(os.Environ(), agentEnv+"=1")
+	cmd.Env = append(base, agentEnv+"=1")
 	for k, v := range req.Env {
 		cmd.Env = append(cmd.Env, k+"="+v)
 	}
@@ -495,6 +538,7 @@ func (h *agentHost) start(req startReq) (*agentProc, error) {
 		return nil, err
 	}
 	p := &agentProc{id: id, key: key, cmd: cmd, exited: make(chan struct{}), stderr: newTailBuffer(16 << 10)}
+	p.touch()
 	cmd.Stderr = io.MultiWriter(p.stderr, os.Stderr)
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start agent %q: %w", req.Argv[0], err)
@@ -606,6 +650,92 @@ func (p *agentProc) kill() {
 	}
 }
 
+// launchKey is a start request's identity: its command line, and its rules
+// when it is confined.
+func launchKey(req startReq) string {
+	key := strings.Join(req.Argv, "\x00")
+	if req.Confine != nil {
+		spec, _ := json.Marshal(req.Confine)
+		key += "\x00confine\x00" + string(spec)
+	}
+	return key
+}
+
+// touch marks the process used now.
+func (p *agentProc) touch() { p.used.Store(time.Now().UnixNano()) }
+
+// reapIdle stops each process with no turn in flight that no request has
+// used for h.idle, every interval until done closes.
+func (h *agentHost) reapIdle(every time.Duration, done <-chan struct{}) {
+	t := time.NewTicker(every)
+	defer t.Stop()
+	for {
+		select {
+		case <-done:
+			return
+		case <-t.C:
+		}
+		h.stopIdle(time.Now())
+	}
+}
+
+// stopIdle stops the processes idle at now. Each is taken out of the
+// host's tables under the lock that found it idle, before it is killed: a
+// request arriving meanwhile finds no process (and a start makes a new
+// one), never one about to die under its turn.
+func (h *agentHost) stopIdle(now time.Time) {
+	h.mu.Lock()
+	var idle []*agentProc
+	for _, p := range h.procs {
+		if now.Sub(time.Unix(0, p.used.Load())) < h.idle {
+			continue
+		}
+		busy := false
+		for sid, st := range h.sessions {
+			if st.proc == p && h.turns[sid] != nil {
+				busy = true
+			}
+		}
+		if !busy {
+			idle = append(idle, p)
+			h.detachLocked(p)
+		}
+	}
+	h.mu.Unlock()
+	for _, p := range idle {
+		p.kill()
+		h.log.emit(sideEvent{Type: "agent_idle", Proc: p.id})
+	}
+}
+
+// detachLocked takes a process and its sessions out of the host's tables
+// (h.mu held): its exit is then no one's to report.
+func (h *agentHost) detachLocked(p *agentProc) {
+	delete(h.procs, p.id)
+	for sid, st := range h.sessions {
+		if st.proc == p {
+			delete(h.sessions, sid)
+			delete(h.turns, sid)
+		}
+	}
+}
+
+// stopProc kills one process, by id, as asked: not a crash to report.
+// false when there is none.
+func (h *agentHost) stopProc(id string) bool {
+	h.mu.Lock()
+	p := h.procs[id]
+	if p != nil {
+		h.detachLocked(p)
+	}
+	h.mu.Unlock()
+	if p == nil {
+		return false
+	}
+	p.kill()
+	return true
+}
+
 // stop kills every agent process.
 func (h *agentHost) stop() {
 	h.mu.Lock()
@@ -629,6 +759,7 @@ func (h *agentHost) procFor(id string) (*agentProc, error) {
 		if p == nil || !p.alive() {
 			return nil, errAgentGone
 		}
+		p.touch()
 		return p, nil
 	}
 	var only *agentProc
@@ -658,6 +789,7 @@ func (h *agentHost) sessionProc(sid string) (*agentProc, error) {
 	if !st.proc.alive() {
 		return nil, errAgentGone
 	}
+	st.proc.touch()
 	return st.proc, nil
 }
 
@@ -1066,6 +1198,9 @@ func (h *agentHost) prompt(req promptReq) error {
 		h.mu.Lock()
 		if h.turns[req.SessionID] == turn {
 			delete(h.turns, req.SessionID)
+		}
+		if st := h.sessions[req.SessionID]; st != nil {
+			st.proc.touch() // idle from the end of its last turn
 		}
 		h.mu.Unlock()
 		h.log.emit(ev)

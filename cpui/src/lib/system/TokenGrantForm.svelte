@@ -13,22 +13,38 @@
 		'skill',
 		'analytics',
 		'notice',
-		'settings'
+		'settings',
+		'assistant'
 	] as const;
 	type Kind = (typeof KINDS)[number];
 	const known = (k: string): k is Kind => (KINDS as readonly string[]).includes(k);
+
+	type Mode = 'full' | 'mcp' | 'limited';
+	const HELP = {
+		full: 'page.account.accessFullHelp',
+		mcp: 'page.account.accessMcpHelp',
+		limited: 'page.account.accessLimitedHelp'
+	} as const satisfies Record<Mode, string>;
 </script>
 
 <script lang="ts">
 	// Mints a personal token: its name, and what it may do. Full access is
 	// the account itself; a limited token holds only the actions ticked
 	// (what the engine says a token may hold, never account:manage), in the
-	// workshops ticked (none = every one).
+	// workshops ticked (none = every one). An MCP client's token holds what
+	// its purpose needs (reading; filing tickets; running them; authoring
+	// flows, skills and dashboards), as the engine marks it.
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
-	import type { Permission, Token, TokenGrant } from '$lib/domain';
+	import {
+		MCP_PURPOSES,
+		type McpPurpose,
+		type Permission,
+		type Token,
+		type TokenGrant
+	} from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import Checkbox from '$lib/ui/Checkbox.svelte';
 	import CheckboxGroup from '$lib/ui/CheckboxGroup.svelte';
@@ -39,12 +55,13 @@
 	let {
 		oncreated
 	}: {
-		/** The new token and its secret, shown once. */
-		oncreated: (minted: { token: Token; secret: string }) => void | Promise<void>;
+		/** The new token and its secret, shown once; mcp when it was minted
+		 *  for an MCP client. */
+		oncreated: (minted: { token: Token; secret: string; mcp: boolean }) => void | Promise<void>;
 	} = $props();
 
 	let name = $state('');
-	let mode = $state<'full' | 'limited'>('full');
+	let mode = $state<Mode>('full');
 	let actions = $state<string[]>([]);
 	let projectIds = $state<string[]>([]);
 	let busy = $state(false);
@@ -53,32 +70,46 @@
 	/** What a token may hold, by kind in the catalogue's order; null until
 	 *  read. */
 	let groups = $state<{ kind: string; list: Permission[] }[] | null>(null);
+	/** What an MCP client's token is for, and each purpose's actions as the
+	 *  engine marks them; null until read. */
+	let purpose = $state<McpPurpose>('read');
+	let byPurpose = $state<Record<string, string[]> | null>(null);
+	const mcpActions = $derived(byPurpose ? (byPurpose[purpose] ?? []) : null);
 	let permsError = $state('');
 
 	const workshops = $derived(fleet.projects.map((p) => ({ value: p.id, label: p.name })));
 	const grant = $derived<TokenGrant>(
 		mode === 'full'
 			? { full: true }
-			: { full: false, actions: [...actions], projectIds: [...projectIds] }
+			: {
+					full: false,
+					actions: mode === 'mcp' ? [...(mcpActions ?? [])] : [...actions],
+					projectIds: [...projectIds]
+				}
 	);
-	const valid = $derived(mode === 'full' || actions.length > 0);
+	const valid = $derived(
+		mode === 'full' || (mode === 'mcp' ? !!mcpActions?.length : actions.length > 0)
+	);
 
 	async function loadPerms() {
 		permsError = '';
 		try {
 			const by = new Map<string, Permission[]>();
+			const tools: Record<string, string[]> = {};
 			for (const p of await api.auth.permissions()) {
 				if (!p.grantable || p.action === 'account:manage') continue;
 				by.set(p.kind, [...(by.get(p.kind) ?? []), p]);
+				for (const u of p.purposes) tools[u] = [...(tools[u] ?? []), p.action];
 			}
 			groups = [...by].map(([kind, list]) => ({ kind, list }));
+			byPurpose = tools;
 		} catch (err) {
 			permsError = errorMessage(err);
 		}
 	}
 
-	function choose(m: 'full' | 'limited') {
-		if (m === 'limited' && !groups) void loadPerms();
+	function choose(m: Mode) {
+		if (m !== 'full' && !groups) void loadPerms();
 	}
 
 	function tick(action: string, on: boolean) {
@@ -91,11 +122,13 @@
 		error = '';
 		try {
 			const minted = await api.auth.createToken(name.trim(), grant);
+			const mcp = mode === 'mcp';
 			name = '';
 			mode = 'full';
+			purpose = 'read';
 			actions = [];
 			projectIds = [];
-			await oncreated(minted);
+			await oncreated({ ...minted, mcp });
 		} catch (err) {
 			error = errorMessage(err);
 		} finally {
@@ -103,6 +136,16 @@
 		}
 	}
 </script>
+
+{#snippet workshopPicker()}
+	{#if workshops.length}
+		<fieldset class="field">
+			<legend>{t('page.account.workshops')}</legend>
+			<CheckboxGroup row options={workshops} bind:value={projectIds} />
+			<div class="help">{t('page.account.workshopsHelp')}</div>
+		</fieldset>
+	{/if}
+{/snippet}
 
 <form class="col" onsubmit={mint}>
 	<div class="field">
@@ -124,14 +167,37 @@
 			onchange={choose}
 			options={[
 				{ value: 'full', label: t('page.account.accessFull') },
+				{ value: 'mcp', label: t('page.account.accessMcp') },
 				{ value: 'limited', label: t('page.account.accessLimited') }
 			]}
 		/>
-		<div class="help">
-			{mode === 'full' ? t('page.account.accessFullHelp') : t('page.account.accessLimitedHelp')}
-		</div>
+		<div class="help">{t(HELP[mode])}</div>
 	</div>
-	{#if mode === 'limited'}
+	{#if mode === 'mcp'}
+		{#if permsError}
+			<ErrorCard
+				cause={t('page.account.permissionsFailed')}
+				detail={permsError}
+				onretry={loadPerms}
+			/>
+		{:else if !mcpActions}
+			<Skeleton lines={1} />
+		{:else}
+			<div class="field">
+				<span class="field-label">{t('page.account.purpose')}</span>
+				<Segmented
+					size="sm"
+					glass={false}
+					label={t('page.account.purpose')}
+					bind:value={purpose}
+					options={MCP_PURPOSES.map((p) => ({ value: p, label: t(`page.account.purpose.${p}`) }))}
+				/>
+				<div class="help">{t(`page.account.purposeHelp.${purpose}`)}</div>
+				<div class="help mono">{mcpActions.join(' · ')}</div>
+			</div>
+			{@render workshopPicker()}
+		{/if}
+	{:else if mode === 'limited'}
 		{#if permsError}
 			<ErrorCard
 				cause={t('page.account.permissionsFailed')}
@@ -159,13 +225,7 @@
 				{/each}
 			</div>
 			{#if !actions.length}<div class="help">{t('page.account.actionsHelp')}</div>{/if}
-			{#if workshops.length}
-				<fieldset class="field">
-					<legend>{t('page.account.workshops')}</legend>
-					<CheckboxGroup row options={workshops} bind:value={projectIds} />
-					<div class="help">{t('page.account.workshopsHelp')}</div>
-				</fieldset>
-			{/if}
+			{@render workshopPicker()}
 		{/if}
 	{/if}
 	{#if error}<div class="error">{error}</div>{/if}

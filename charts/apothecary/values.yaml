@@ -6,8 +6,8 @@
 # their localhost, SSH into workspaces) all ride it.
 
 image:
-  # -- Prefix of the five release images: apothecaryd, sandbox, shim, tools,
-  # egress-gw (deploy/images.sh). The project browser is Microsoft's
+  # -- Prefix of the six release images: apothecaryd, sandbox, shim, tools,
+  # egress-gw, assistant (deploy/images.sh). The project browser is Microsoft's
   # Playwright MCP image, pinned by the engine.
   repository: ghcr.io/intradeus/apothecary
   # -- Image tag. Empty: the chart's appVersion, so a chart version pins every
@@ -25,6 +25,7 @@ image:
     shim: ""
     tools: ""
     gateway: ""
+    assistant: ""
     browser: ""
 # -- Pull secrets for private registries or mirrors.
 imagePullSecrets: []
@@ -118,6 +119,22 @@ workspaces:
   protectCIDRs: "10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"
   # -- The cluster's DNS domain.
   clusterDomain: cluster.local
+
+# The assistant beside the flow, ticket and skill pages: one pod per person
+# who uses it, in the workspaces namespace, with that person's volume
+# (their clones of the repositories they read) and their own egress gateway.
+assistant:
+  # -- Run it. People still each choose their harness (Claude Code or
+  # opencode) in their settings.
+  enabled: true
+  # -- Stop a person's pod after this long unused; their volume stays.
+  idle: 30m
+  # -- Delete a person's volume after this many days unused (0: never).
+  volumeDays: 30
+  # -- Each person's volume.
+  volumeSize: 10Gi
+  # -- Storage class of those volumes; empty for the cluster default.
+  storageClass: ""
 
 # The engine is one pod (strategy Recreate): it holds in-process state (runs'
 # loops, live tunnels, the SSH door, the cache of tracker reads) and owns the

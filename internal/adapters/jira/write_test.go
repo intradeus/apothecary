@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"apothecary/internal/ports/trackerport"
@@ -324,5 +325,52 @@ func TestAttach(t *testing.T) {
 				t.Errorf("attachment = %+v, want markdown %q", att, want)
 			}
 		})
+	}
+}
+
+// A key outside the projects the source's filter names is not found, by
+// every route that takes a key, without a request: the source's credentials
+// read nothing else. A numeric id is checked on the key it resolves to.
+func TestKeysOutsideTheFilterAreNotFound(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		// Whatever is asked for, the issue lives in another project.
+		_, _ = w.Write([]byte(`{"key":"SECRET-1","fields":{"summary":"theirs"}}`))
+	}))
+	defer srv.Close()
+	ctx := context.Background()
+	c := New(Config{BaseURL: srv.URL, Email: "you@acme.com", Token: "tok", JQL: `project in (APO, "WEB")`})
+	notFound := func(name string, err error) {
+		t.Helper()
+		if !errors.Is(err, trackerport.ErrTicketNotFound) {
+			t.Errorf("%s = %v, want not found", name, err)
+		}
+	}
+	before := hits.Load()
+	_, err := c.Fetch(ctx, "SECRET-1")
+	notFound("Fetch", err)
+	notFound("Transition", c.Transition(ctx, "SECRET-1", "Done"))
+	notFound("Comment", c.Comment(ctx, "SECRET-1", "hi"))
+	_, err = c.ListComments(ctx, "SECRET-1")
+	notFound("ListComments", err)
+	notFound("AddLink", c.AddLink(ctx, "SECRET-1", trackerport.TicketLink{URL: "https://x", Title: "x"}))
+	_, err = c.Attach(ctx, "SECRET-1", "a.txt", "text/plain", []byte("a"))
+	notFound("Attach", err)
+	notFound("SetFields", c.SetFields(ctx, "SECRET-1", map[string]string{"labels": "a"}))
+	_, err = c.Fields(ctx, "SECRET-1", []string{"labels"})
+	notFound("Fields", err)
+	if hits.Load() != before {
+		t.Errorf("a key outside the filter reached the tracker %d times", hits.Load()-before)
+	}
+	// An id is resolved, then refused on the key it answers with.
+	_, err = c.Fetch(ctx, "10001")
+	notFound("Fetch by id", err)
+	// In scope, whatever its case; a filter naming no project scopes nothing.
+	if err := c.inScope("web-3"); err != nil {
+		t.Errorf("web-3 = %v", err)
+	}
+	if err := New(Config{BaseURL: srv.URL, JQL: "assignee = currentUser()"}).inScope("SECRET-1"); err != nil {
+		t.Errorf("a filter with no project = %v", err)
 	}
 }

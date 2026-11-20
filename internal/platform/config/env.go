@@ -78,6 +78,11 @@ type Boot struct {
 	// only source.
 	K8s K8s
 
+	// Assistant is the conversation beside the flow, ticket and skill pages
+	// (docs/assistant-plan.md): each person's assistant pod on the
+	// Kubernetes namespace above.
+	Assistant Assistant
+
 	// AppsDomain turns exposed workspace ports into host-routed URLs
 	// (<port>-<run>.<domain>) served by the engine itself instead of one
 	// loopback listener per port — what makes them reachable when the engine
@@ -134,6 +139,24 @@ func (b *Boot) SSHAdvertiseAddr() (string, error) {
 		return net.JoinHostPort(u.Hostname(), port), nil
 	}
 	return net.JoinHostPort("", port), nil
+}
+
+// Assistant is the assistant's part of the boot configuration.
+type Assistant struct {
+	// Enabled: APOTHECARY_ASSISTANT (on|off; default on with a Kubernetes
+	// namespace, off without, where it cannot run).
+	Enabled bool
+	// Image is the assistant image (APOTHECARY_ASSISTANT_IMAGE; default the
+	// engine's own release).
+	Image string
+	// IdleAfter stops a pod nobody used for that long
+	// (APOTHECARY_ASSISTANT_IDLE, default 30m); VolumeAfter deletes a volume
+	// unused for that long (APOTHECARY_ASSISTANT_VOLUME_DAYS, default 30).
+	IdleAfter, VolumeAfter time.Duration
+	// VolumeSize and StorageClass make each person's volume
+	// (APOTHECARY_ASSISTANT_VOLUME_SIZE, default 10Gi;
+	// APOTHECARY_ASSISTANT_STORAGE_CLASS, default the cluster's).
+	VolumeSize, StorageClass string
 }
 
 // K8s is the Kubernetes part of the boot configuration.
@@ -300,6 +323,9 @@ func FromEnv() (*Boot, error) {
 	default:
 		return nil, fmt.Errorf("config: APOTHECARY_K8S_TRANSPORT must be direct or portforward, got %q", b.K8s.Transport)
 	}
+	if err := b.assistantFromEnv(); err != nil {
+		return nil, err
+	}
 	b.AppsDomain = strings.Trim(strings.TrimSpace(os.Getenv("APOTHECARY_APPS_DOMAIN")), ".")
 	b.AppsScheme = getenvDefault("APOTHECARY_APPS_SCHEME", "http")
 	b.PublicURL = strings.TrimSuffix(strings.TrimSpace(os.Getenv("APOTHECARY_PUBLIC_URL")), "/")
@@ -377,4 +403,44 @@ func getenvDefault(name, def string) string {
 		return v
 	}
 	return def
+}
+
+// assistantFromEnv reads the assistant's settings.
+func (b *Boot) assistantFromEnv() error {
+	a := Assistant{
+		Enabled:      b.K8s.Namespace != "",
+		Image:        strings.TrimSpace(os.Getenv("APOTHECARY_ASSISTANT_IMAGE")),
+		IdleAfter:    30 * time.Minute,
+		VolumeAfter:  30 * 24 * time.Hour,
+		VolumeSize:   getenvDefault("APOTHECARY_ASSISTANT_VOLUME_SIZE", "10Gi"),
+		StorageClass: strings.TrimSpace(os.Getenv("APOTHECARY_ASSISTANT_STORAGE_CLASS")),
+	}
+	switch v := strings.TrimSpace(os.Getenv("APOTHECARY_ASSISTANT")); v {
+	case "":
+	case "on":
+		if b.K8s.Namespace == "" {
+			return fmt.Errorf("config: APOTHECARY_ASSISTANT=on needs APOTHECARY_K8S_NAMESPACE: the assistant runs on Kubernetes")
+		}
+		a.Enabled = true
+	case "off":
+		a.Enabled = false
+	default:
+		return fmt.Errorf("config: APOTHECARY_ASSISTANT must be on or off, got %q", v)
+	}
+	if raw := strings.TrimSpace(os.Getenv("APOTHECARY_ASSISTANT_IDLE")); raw != "" {
+		d, err := time.ParseDuration(raw)
+		if err != nil || d <= 0 {
+			return fmt.Errorf("config: APOTHECARY_ASSISTANT_IDLE must be a positive duration (e.g. 30m), got %q", raw)
+		}
+		a.IdleAfter = d
+	}
+	if raw := strings.TrimSpace(os.Getenv("APOTHECARY_ASSISTANT_VOLUME_DAYS")); raw != "" {
+		n, err := strconv.Atoi(raw)
+		if err != nil || n < 0 {
+			return fmt.Errorf("config: APOTHECARY_ASSISTANT_VOLUME_DAYS must be a whole number of days (0: never delete), got %q", raw)
+		}
+		a.VolumeAfter = time.Duration(n) * 24 * time.Hour
+	}
+	b.Assistant = a
+	return nil
 }

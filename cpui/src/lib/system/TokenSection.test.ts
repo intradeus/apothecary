@@ -12,7 +12,13 @@ import TokenSection from './TokenSection.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
-		auth: { tokens: vi.fn(), permissions: vi.fn(), createToken: vi.fn(), revokeToken: vi.fn() }
+		auth: {
+			tokens: vi.fn(),
+			tokenCalls: vi.fn(),
+			permissions: vi.fn(),
+			createToken: vi.fn(),
+			revokeToken: vi.fn()
+		}
 	}
 }));
 
@@ -25,8 +31,14 @@ const aToken = (over: Partial<Token> = {}): Token => ({
 	...over
 });
 const PERMS: Permission[] = [
-	{ action: 'run:read', kind: 'run', doc: 'See runs.', grantable: true },
-	{ action: 'run:operate', kind: 'run', doc: 'Steer runs.', grantable: true }
+	{
+		action: 'run:read',
+		kind: 'run',
+		doc: 'See runs.',
+		grantable: true,
+		purposes: ['read', 'runs']
+	},
+	{ action: 'run:operate', kind: 'run', doc: 'Steer runs.', grantable: true, purposes: ['runs'] }
 ];
 
 const row = (name: string) => screen.getByText(name).closest('.r') as HTMLElement;
@@ -119,6 +131,32 @@ describe('TokenSection', () => {
 		expect(await screen.findByText('apo_s3cret')).toBeInTheDocument();
 	});
 
+	it('shows an MCP client token with the configuration to connect it', async () => {
+		vi.mocked(api.auth.createToken).mockResolvedValue({ token: aToken(), secret: 'apo_s3cret' });
+		const writeText = vi.fn().mockResolvedValue(undefined);
+		Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+		render(TokenSection);
+		await userEvent.type(screen.getByRole('textbox', { name: 'Token name' }), 'agent');
+		await userEvent.click(screen.getByRole('radio', { name: 'MCP client' }));
+		await screen.findByText('run:read');
+		await userEvent.click(submit());
+
+		const url = `${location.origin}/mcp`;
+		expect(
+			await screen.findByText(new RegExp(`Connect your MCP client to ${url}`))
+		).toBeInTheDocument();
+		const config = JSON.parse(screen.getByText(/mcpServers/).textContent ?? '');
+		expect(config.mcpServers.apothecary).toEqual({
+			type: 'http',
+			url,
+			headers: { Authorization: 'Bearer apo_s3cret' }
+		});
+		expect(screen.queryByText(/Send it as a bearer token/)).not.toBeInTheDocument();
+		const [, copyConfig] = screen.getAllByRole('button', { name: 'Copy' });
+		await userEvent.click(copyConfig);
+		expect(writeText).toHaveBeenCalledWith(expect.stringContaining('"mcpServers"'));
+	});
+
 	it('copies the secret, and dismisses it', async () => {
 		vi.mocked(api.auth.createToken).mockResolvedValue({ token: aToken(), secret: 'apo_s3cret' });
 		const writeText = vi.fn().mockResolvedValue(undefined);
@@ -205,5 +243,27 @@ describe('TokenSection', () => {
 		await confirmed(true);
 		expect(await screen.findByText('locked')).toBeInTheDocument();
 		expect(screen.getByRole('button', { name: 'Revoke' })).not.toHaveAttribute('aria-busy', 'true');
+	});
+
+	it('opens and closes what a token did', async () => {
+		vi.mocked(api.auth.tokens).mockResolvedValue([aToken()]);
+		vi.mocked(api.auth.tokenCalls).mockResolvedValue([
+			{
+				at: '2026-11-18T11:00:00Z',
+				method: 'POST',
+				route: 'r',
+				path: '/api/x',
+				tool: 'create_ticket',
+				status: 201
+			}
+		]);
+		render(TokenSection);
+		const calls = await screen.findByRole('button', { name: 'Calls' });
+		expect(calls).toHaveAttribute('aria-expanded', 'false');
+		await userEvent.click(calls);
+		expect(await screen.findByText('create_ticket')).toBeInTheDocument();
+		expect(api.auth.tokenCalls).toHaveBeenCalledWith('t1');
+		await userEvent.click(calls);
+		expect(screen.queryByText('create_ticket')).not.toBeInTheDocument();
 	});
 });

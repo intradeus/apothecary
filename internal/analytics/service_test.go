@@ -507,3 +507,18 @@ func TestInvalidUpdateAndUnscoredRows(t *testing.T) {
 		}
 	}
 }
+
+// An assistant's fill of a dashboard is checked as saving its panels would.
+func TestCheckPanels(t *testing.T) {
+	s := newService(newFake())
+	ctx := context.Background()
+	ok := Panel{Viz: "table", Width: 12, Query: Query{Grain: GrainRuns}}
+	if err := s.CheckPanels(ctx, "u1", []Panel{ok}); err != nil {
+		t.Errorf("good panels = %v", err)
+	}
+	bad := ok
+	bad.Width = 5
+	if err := s.CheckPanels(ctx, "u1", []Panel{bad}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "width 5") {
+		t.Errorf("a bad width = %v", err)
+	}
+}

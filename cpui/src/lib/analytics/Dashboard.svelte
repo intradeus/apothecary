@@ -22,6 +22,9 @@
 	import Panel from './Panel.svelte';
 	import PanelEditor from './PanelEditor.svelte';
 	import { DEFAULT_RANGE, RANGES, rangeFrom, scoped, type Picks, type Range } from './scope';
+	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
+	import { dashboardFill } from '$lib/domain';
 
 	let { id }: { id: string } = $props();
 
@@ -38,11 +41,32 @@
 	let editorOpen = $state(false);
 	let editorAt = $state(-1);
 
+	// The assistant beside one's own dashboard: its fill replaces the panels
+	// in the edit mode (entered for it), with Undo; Save keeps them.
+	let showAssistant = $state(false);
+	const guard = new FillGuard<{ panels: PanelT[] }>(
+		() => ({ panels: $state.snapshot(editing ? draft : (dash?.panels ?? [])) as PanelT[] }),
+		(v) => {
+			if (!editing) edit();
+			draft = v.panels;
+		},
+		(cur, fill) => {
+			const panels = api.assistant.panelsOf(fill);
+			return panels ? dashboardFill(cur, { panels }) : null;
+		}
+	);
+	const pageState = () => ({
+		name: dash?.name,
+		editing,
+		panels: $state.snapshot(editing ? draft : (dash?.panels ?? []))
+	});
+
 	async function load() {
 		dash = null;
 		error = '';
 		editing = false;
 		picks = {};
+		guard.settle();
 		try {
 			const [d] = await Promise.all([api.analytics.dashboards.get(id), catalog.load()]);
 			dash = d;
@@ -107,6 +131,7 @@
 				panels: $state.snapshot(draft) as PanelT[]
 			});
 			editing = false;
+			guard.settle();
 			toast(t('analytics.dashboard.saved'));
 		} catch (e) {
 			saveError = errorMessage(e);
@@ -161,6 +186,14 @@
 		{:else if dash}
 			<button class="btn-lg" onclick={edit}>{t('analytics.edit')}</button>
 		{/if}
+		{#if dash && !dash.builtin}
+			<button
+				class="btn-lg"
+				class:btn-sel={showAssistant}
+				aria-pressed={showAssistant}
+				onclick={() => (showAssistant = !showAssistant)}>{t('assistant.open')}</button
+			>
+		{/if}
 	{/snippet}
 </PageHeader>
 
@@ -186,6 +219,12 @@
 				/>
 			{/each}
 		</div>
+
+		{#if showAssistant && !dash.builtin}
+			<div class="assist">
+				<AssistantPanel kind="dashboard" subject={dash.id} {guard} {pageState} />
+			</div>
+		{/if}
 
 		{#if saveError}
 			<ErrorCard
@@ -256,6 +295,9 @@
 />
 
 <style>
+	.assist {
+		max-width: 720px;
+	}
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(12, minmax(0, 1fr));

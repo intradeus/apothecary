@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
+	"slices"
 	"strings"
 
 	"apothecary/internal/ports/repoport"
@@ -23,6 +24,24 @@ import (
 // issuePath is the issue's API path with its key escaped.
 func (c *Client) issuePath(key string) string {
 	return c.apiBase() + "/issue/" + url.PathEscape(strings.TrimSpace(key))
+}
+
+// inScope refuses a key outside the projects the configured filter names,
+// as not found: a workshop's viewer reads the source with its owner's
+// credentials, and must not reach the owner's other projects through them.
+// A filter that names no project scopes nothing here (the site is the
+// source); a numeric id is checked on the key the fetch answers with.
+func (c *Client) inScope(key string) error {
+	keys := projectKeysFromJQL(c.cfg.JQL)
+	key = strings.TrimSpace(key)
+	if len(keys) == 0 || strings.Trim(key, "0123456789") == "" {
+		return nil
+	}
+	project, _, _ := strings.Cut(key, "-")
+	if slices.Contains(keys, strings.ToUpper(project)) {
+		return nil
+	}
+	return fmt.Errorf("jira: %s is not in this ticket source's projects: %w", key, trackerport.ErrTicketNotFound)
 }
 
 // status reads the issue's current status name.
@@ -45,6 +64,9 @@ func (c *Client) status(ctx context.Context, key string) (string, error) {
 // offers from the CURRENT status — a workflow may well not allow the move,
 // and then the error names what it does allow. Already there ⇒ no-op.
 func (c *Client) Transition(ctx context.Context, key, status string) error {
+	if err := c.inScope(key); err != nil {
+		return err
+	}
 	key, status = strings.TrimSpace(key), strings.TrimSpace(status)
 	if key == "" || status == "" {
 		return fmt.Errorf("jira: transition needs an issue key and a status")
@@ -108,6 +130,9 @@ func (c *Client) richText(md string) any {
 
 // Comment posts markdown as a new comment.
 func (c *Client) Comment(ctx context.Context, key, body string) error {
+	if err := c.inScope(key); err != nil {
+		return err
+	}
 	_, err := c.api(ctx, http.MethodPost, c.issuePath(key)+"/comment", map[string]any{"body": c.richText(body)}, nil)
 	return err
 }
@@ -116,6 +141,9 @@ func (c *Client) Comment(ctx context.Context, key, body string) error {
 // exhaustion: each with its id, author's display name, timestamps and body
 // rendered to markdown.
 func (c *Client) ListComments(ctx context.Context, key string) ([]trackerport.Comment, error) {
+	if err := c.inScope(key); err != nil {
+		return nil, err
+	}
 	var out []trackerport.Comment
 	for start := 0; ; {
 		var page struct {
@@ -157,6 +185,9 @@ func (c *Client) ListComments(ctx context.Context, key string) ([]trackerport.Co
 // a second call with the same link as an update of the first — idempotent by
 // construction, which is what a re-entered stage needs.
 func (c *Client) AddLink(ctx context.Context, key string, link trackerport.TicketLink) error {
+	if err := c.inScope(key); err != nil {
+		return err
+	}
 	if strings.TrimSpace(link.URL) == "" {
 		return fmt.Errorf("jira: a link needs a URL")
 	}
@@ -178,6 +209,9 @@ func (c *Client) AddLink(ctx context.Context, key string, link trackerport.Ticke
 // On v2 the link is wiki markup — the image itself (!name!) or an
 // attachment link ([^name]) — since that is what a v2 comment body is.
 func (c *Client) Attach(ctx context.Context, key, name, contentType string, data []byte) (repoport.Attachment, error) {
+	if err := c.inScope(key); err != nil {
+		return repoport.Attachment{}, err
+	}
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
 	h := textproto.MIMEHeader{}

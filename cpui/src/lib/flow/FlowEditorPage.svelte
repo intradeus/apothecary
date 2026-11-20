@@ -5,7 +5,12 @@
 	import { onMount, untrack } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
 	import { api } from '$lib/api';
+	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
+	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
+	import { takeFlowFill } from '$lib/assistant/handoff';
+	import { flowFill } from '$lib/domain';
 	import AgentsPage from '$lib/flow/AgentsPage.svelte';
 	import FlowGraph from '$lib/flow/FlowGraph.svelte';
 	import FlowHeader from '$lib/flow/FlowHeader.svelte';
@@ -27,6 +32,41 @@
 		() => name
 	);
 	const { panels } = ed;
+	// What an assistant's fill goes through: into the YAML tab, with undo
+	// and the click before overwriting newer edits.
+	const flowGuard = new FillGuard<string>(ed.currentYAML, ed.applyYAML, flowFill);
+	// Loaded, saved or replaced by a version: no fill left to undo.
+	$effect(() => {
+		void ed.replaced;
+		untrack(() => flowGuard.settle());
+	});
+	// Once loaded whole, a change the assistant proposed from a run (handed
+	// off) fills the editor, with its Undo. A flow that does not load drops
+	// it: it must not wait in the tab for a later opening.
+	let handoffTaken = false;
+	$effect(() => {
+		const done = ed.loaded > 0;
+		const failed = !!ed.error && !ed.flow;
+		untrack(() => {
+			if (handoffTaken || (!done && !failed)) return;
+			handoffTaken = true;
+			const yaml = takeFlowFill(projectId, name);
+			if (done && yaml !== null && flowGuard.applyNow({ yaml })) ed.showAssistant = true;
+		});
+	});
+	// The workshop's values for this flow's parameters, read when the
+	// assistant opens: what the agent reads beside the YAML.
+	let boundParams = $state<Record<string, string>>({});
+	$effect(() => {
+		const name = ed.flow?.name;
+		if (!ed.showAssistant || !name) return;
+		untrack(() => {
+			api.flows.binding(projectId, name).then(
+				(b) => (boundParams = b?.params ?? {}),
+				() => (boundParams = {})
+			);
+		});
+	});
 
 	// The parser's verdict for the YAML tab's lint: its errors only.
 	const checkYaml = async (text: string) => (await api.flows.validate(text)).errors ?? [];
@@ -177,10 +217,27 @@
 						check={checkYaml}
 						label={t('page.flow.yamlLabel')}
 					/>
+				{:catch e}
+					<ErrorCard cause={t('page.flow.editorFailed')} detail={errorMessage(e)} />
 				{/await}
 			{/if}
 		</div>
 
+		{#if ed.showAssistant}
+			<aside class="side assist" in:slide={{ from: 'right', distance: 24 }}>
+				<AssistantPanel
+					kind="flow"
+					subject={ed.flow.name}
+					workshop={projectId}
+					guard={flowGuard}
+					pageState={() => ({
+						yaml: ed.currentYAML(),
+						errors: ed.validation?.ok === false ? (ed.validation.errors ?? []) : [],
+						params: boundParams
+					})}
+				/>
+			</aside>
+		{/if}
 		{#if ed.showVersions}
 			<aside class="side glass" in:slide={{ from: 'right', distance: 24 }}>
 				<FlowVersions
@@ -279,6 +336,13 @@
 		font-size: var(--fs-meta);
 		pointer-events: none;
 	}
+	.assist {
+		flex: none;
+		width: 380px;
+		display: flex;
+		flex-direction: column;
+		min-height: 0;
+	}
 	/* Wider than a form's side column: the inspector edits whole agents —
 	 * prompts included — and sequences. */
 	.side {
@@ -294,7 +358,8 @@
 		.canvas {
 			min-height: 420px;
 		}
-		.side {
+		.side,
+		.assist {
 			width: 100%;
 		}
 		.split {

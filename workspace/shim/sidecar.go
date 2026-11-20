@@ -42,6 +42,7 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -67,7 +68,20 @@ type sidecar struct {
 	repos string
 	log   *eventLog
 	agent *agentHost
+	// writeRoot, when set, is the one tree POST /fs/write may write in (the
+	// assistant pod's /state: a session's harness files). Unset: no writes.
+	writeRoot string
+	// token, when set, is required on every request (agentHostTokenHeader):
+	// the assistant pod's confined sessions share the agent host's container
+	// and user, and Landlock below ABI 9 does not keep them off its socket.
+	token string
+	// confinedOnly refuses an agent start with no confine rules: in the
+	// assistant pod every process the agent host starts is a session's.
+	confinedOnly bool
 }
+
+// agentHostTokenHeader carries the agent host's token.
+const agentHostTokenHeader = "X-Apothecary-Agent-Host"
 
 // errNoSuchRepo: ?repo= names a checkout this workspace does not have.
 var errNoSuchRepo = errors.New("no such repository checkout")
@@ -120,6 +134,10 @@ func runSidecar(args []string) {
 	daemon := fs.Bool("daemon", false, "detach into the background and return once serving")
 	logPath := fs.String("log", "/apothecary/sidecar.log", "log file when detached")
 	sshSock := fs.String("ssh", "", "unix socket for the SSH server (default: ssh.sock beside --listen; off disables)")
+	agentIdle := fs.Duration("agent-idle", 0, "stop an agent process no turn has used for this long (0: never)")
+	writeRoot := fs.String("write-root", "", "the one directory POST /fs/write may write in (empty: none)")
+	tokenFile := fs.String("token-file", "", "a file holding the token every request must carry (empty: none)")
+	confinedOnly := fs.Bool("confined-only", false, "refuse an agent start without confine rules")
 	_ = fs.Parse(args)
 	if *sshSock == "" {
 		*sshSock = filepath.Join(filepath.Dir(*listen), "ssh.sock")
@@ -139,7 +157,7 @@ func runSidecar(args []string) {
 		return
 	}
 	if *daemon {
-		os.Exit(detach(*listen, *repo, *repos, *logPath, *sshSock))
+		os.Exit(detach(*listen, *repo, *repos, *logPath, *sshSock, *agentIdle))
 	}
 	_ = os.Remove(*listen)
 	ln, err := net.Listen("unix", *listen)
@@ -159,16 +177,27 @@ func runSidecar(args []string) {
 		}
 	}
 	evl := newEventLog()
-	s := &sidecar{repo: *repo, repos: *repos, log: evl, agent: newAgentHost(evl)}
+	s := &sidecar{repo: *repo, repos: *repos, log: evl, agent: newAgentHost(evl), writeRoot: *writeRoot, confinedOnly: *confinedOnly}
+	if *tokenFile != "" {
+		b, err := os.ReadFile(*tokenFile)
+		if err != nil || strings.TrimSpace(string(b)) == "" {
+			log.Fatalf("sidecar: token file %s: %v (empty?)", *tokenFile, err)
+		}
+		s.token = strings.TrimSpace(string(b))
+	}
+	if *agentIdle > 0 {
+		s.agent.idle = *agentIdle
+		go s.agent.reapIdle(min(*agentIdle/4, time.Minute), nil)
+	}
 	log.Printf("sidecar: serving on %s (repo %s, boot %s)", *listen, *repo, evl.boot)
-	srv := &http.Server{Handler: s.routes(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Handler: s.guarded(), ReadHeaderTimeout: 10 * time.Second}
 	log.Fatal(srv.Serve(ln))
 }
 
 // detach re-execs the sidecar in its own session with output to a log file,
 // then waits for the socket so the caller knows it is serving. Uses no
 // setsid/nohup binaries: the workspace image is the repo's own.
-func detach(listen, repo, repos, logPath, sshSock string) int {
+func detach(listen, repo, repos, logPath, sshSock string, agentIdle time.Duration) int {
 	_ = os.MkdirAll(filepath.Dir(logPath), 0o755)
 	lf, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -178,7 +207,7 @@ func detach(listen, repo, repos, logPath, sshSock string) int {
 	if err != nil {
 		self = os.Args[0]
 	}
-	cmd := exec.Command(self, "sidecar", "--listen", listen, "--repo", repo, "--repos", repos, "--ssh", sshSock)
+	cmd := exec.Command(self, "sidecar", "--listen", listen, "--repo", repo, "--repos", repos, "--ssh", sshSock, "--agent-idle", agentIdle.String())
 	cmd.Stdout, cmd.Stderr = lf, lf
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	if err := cmd.Start(); err != nil {
@@ -198,6 +227,21 @@ func detach(listen, repo, repos, logPath, sshSock string) int {
 	return 1
 }
 
+// guarded is routes behind the token, when the sidecar has one.
+func (s *sidecar) guarded() http.Handler {
+	h := s.routes()
+	if s.token == "" {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if subtle.ConstantTimeCompare([]byte(r.Header.Get(agentHostTokenHeader)), []byte(s.token)) != 1 {
+			writeErrResp(w, http.StatusUnauthorized, "this agent host takes a token")
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 func (s *sidecar) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -215,7 +259,20 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("POST /agent/prompt", s.agentPrompt)
 	mux.HandleFunc("POST /agent/cancel", s.agentCancel)
 	mux.HandleFunc("POST /agent/stop", func(w http.ResponseWriter, r *http.Request) {
-		s.agent.stop()
+		// A body naming a process stops that one (a session relaunched under
+		// new rules); none stops them all.
+		var req struct {
+			Proc string `json:"proc"`
+		}
+		if r.ContentLength > 0 && !decodeBody(w, r, &req) {
+			return
+		}
+		if req.Proc == "" {
+			s.agent.stop()
+		} else if !s.agent.stopProc(req.Proc) {
+			writeErrResp(w, http.StatusNotFound, "no agent process "+req.Proc)
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	})
 	mux.HandleFunc("GET /agent/status", func(w http.ResponseWriter, r *http.Request) {
@@ -226,6 +283,7 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("GET /fs/file", s.fsFile)
 	mux.HandleFunc("GET /fs/abs/tree", s.fsAbsTree)
 	mux.HandleFunc("GET /fs/abs/file", s.fsAbsFile)
+	mux.HandleFunc("POST /fs/write", s.fsWrite)
 	mux.HandleFunc("POST /fs/stat", s.fsStat)
 	mux.HandleFunc("GET /fs/resolve", s.fsResolve)
 	mux.HandleFunc("GET /git/changes", s.gitChanges)
@@ -261,6 +319,10 @@ func (s *sidecar) agentStart(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Cwd == "" {
 		req.Cwd = s.repo
+	}
+	if s.confinedOnly && req.Confine == nil {
+		writeErrResp(w, http.StatusForbidden, "this agent host starts confined processes only")
+		return
 	}
 	p, err := s.agent.start(req)
 	if err != nil {
@@ -582,4 +644,32 @@ func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// writeReq is a file the engine lays down for a session: its harness's
+// configuration and auth.
+type writeReq struct {
+	Path string `json:"path"`
+	Data []byte `json:"data"` // base64 on the wire
+	Mode uint32 `json:"mode"`
+}
+
+// fsWrite writes one file under the write root, creating its folders. It
+// refuses a path outside the root and a path through a symbolic link: a
+// session can write its own home, and must not steer the sidecar's write
+// into another's with a link it planted there.
+func (s *sidecar) fsWrite(w http.ResponseWriter, r *http.Request) {
+	if s.writeRoot == "" {
+		writeErrResp(w, http.StatusNotFound, "this sidecar takes no writes")
+		return
+	}
+	var req writeReq
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := writeUnder(s.writeRoot, req.Path, req.Data, os.FileMode(req.Mode&0o777)); err != nil {
+		writeErrResp(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

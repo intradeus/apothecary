@@ -351,6 +351,50 @@ func (s *Store) DeleteTokensOf(ctx context.Context, userID string) error {
 	return err
 }
 
+func (s *Store) RecordTokenCall(ctx context.Context, c auth.TokenCall) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // a no-op after Commit
+	tag, err := tx.Exec(ctx, `
+		INSERT INTO api_token_calls (token_id, at, method, route, path, tool, status)
+		SELECT id, $2, $3, $4, $5, $6, $7 FROM api_tokens WHERE id = $1`,
+		c.TokenID, c.At, c.Method, c.Route, c.Path, c.Tool, c.Status)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("token %s: %w", c.TokenID, auth.ErrNotFound)
+	}
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM api_token_calls WHERE token_id = $1 AND seq NOT IN (
+		  SELECT seq FROM api_token_calls WHERE token_id = $1 ORDER BY seq DESC LIMIT $2)`,
+		c.TokenID, auth.KeepTokenCalls); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+func (s *Store) TokenCalls(ctx context.Context, tokenID string) ([]auth.TokenCall, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT token_id, at, method, route, path, tool, status FROM api_token_calls
+		WHERE token_id = $1 ORDER BY seq DESC`, tokenID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []auth.TokenCall{}
+	for rows.Next() {
+		var c auth.TokenCall
+		if err := rows.Scan(&c.TokenID, &c.At, &c.Method, &c.Route, &c.Path, &c.Tool, &c.Status); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
 // --- ssh keys -----------------------------------------------------------------
 
 const sshKeyCols = `id, user_id, name, public_key, fingerprint, created_at, last_used_at`

@@ -808,6 +808,44 @@ func (r *Resolver) ListModels(ctx context.Context, id string) ([]kinds.ModelInfo
 	return h.Models(ctx)
 }
 
+// PersonHarnesses are person's own harness integrations, by kind: what the
+// assistant may run on (docs/assistant-plan.md, decision 1: the caller's
+// own, never a workshop owner's).
+func (r *Resolver) PersonHarnesses(ctx context.Context, person string) ([]confstore.Integration, error) {
+	all, err := r.conf.ListIntegrations(ctx, person)
+	if err != nil {
+		return nil, err
+	}
+	var out []confstore.Integration
+	for _, in := range all {
+		if in.Port == confstore.PortHarness && in.UserID == person {
+			out = append(out, in)
+		}
+	}
+	return out, nil
+}
+
+// PersonHarness opens one of person's own harness integrations for the
+// assistant, its files written through envp (a session's home; nil when
+// only its models and domains are wanted). Another person's integration
+// is not found.
+func (r *Resolver) PersonHarness(ctx context.Context, person, id string, envp envport.EnvProvisioner) (kinds.Harness, error) {
+	in, err := r.conf.GetIntegration(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if in.UserID != person || in.Port != confstore.PortHarness {
+		return nil, fmt.Errorf("harness integration %s: %w", id, confstore.ErrNotFound)
+	}
+	hk, err := r.reg.Harness(in.Kind)
+	if err != nil {
+		return nil, err
+	}
+	cfg := kindConfig(in)
+	cfg.Credentials = r.credentials(ctx, in)
+	return hk.New(cfg, envp)
+}
+
 var _ resolution.Resolver = (*Resolver)(nil)
 
 // services is the project's services as the engine runs them, health

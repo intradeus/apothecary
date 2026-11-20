@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Build (and optionally push) the five images of one apothecary release:
+# Build (and optionally push) the six images of one apothecary release:
 #
 #   apothecaryd  the engine + UI               (deploy/Dockerfile)
 #   sandbox      a Kubernetes run's DinD pod   (deploy/images/sandbox)
 #   shim         the in-workspace shim         (workspace/images/shim)
 #   tools        the harness + code-server bundle (workspace/images/tools)
 #   egress-gw    the per-project gateway       (workspace/images/gateway)
+#   assistant    a person's assistant pod      (workspace/images/assistant)
 #
-# A deployment pulls all five. The per-project browser is Microsoft's
+# A deployment pulls all six. The per-project browser is Microsoft's
 # Playwright MCP image, pinned by the engine (internal/adapters/browser).
 #
 #   deploy/images.sh <version> [--push]
@@ -15,7 +16,7 @@
 #   EXTRA_TAGS="latest sha-abc123" deploy/images.sh v2.0.7 --push
 #   IMAGES="sandbox shim tools egress-gw" deploy/images.sh local
 #
-# IMAGES picks some of the five (default: all). CACHE=gha keeps each image's
+# IMAGES picks some of the six (default: all). CACHE=gha keeps each image's
 # build cache in GitHub Actions' cache between CI runs; CACHE=gha-warm only
 # fills that cache (nothing is loaded into docker); CACHE=gha-read only reads
 # it (a job that needs the images another job built). All three need a buildx
@@ -28,7 +29,7 @@ VERSION="${1:?usage: deploy/images.sh <version> [--push]}"
 PUSH="${2:-}"
 PREFIX="${PREFIX:-ghcr.io/intradeus/apothecary}"
 read -r -a EXTRA <<< "${EXTRA_TAGS:-}"
-read -r -a WANT <<< "${IMAGES:-apothecaryd sandbox shim tools egress-gw}"
+read -r -a WANT <<< "${IMAGES:-apothecaryd sandbox shim tools egress-gw assistant}"
 
 wanted() {
   local w
@@ -80,6 +81,7 @@ build sandbox deploy/images/sandbox
 build shim -f workspace/images/shim/Dockerfile --build-arg "SHIM_HASH=${SHIM_HASH:-}" workspace
 build tools -f workspace/images/tools/Dockerfile --build-arg "TOOLS_HASH=${TOOLS_HASH:-}" workspace/images/tools
 build egress-gw -f workspace/images/gateway/Dockerfile workspace
+build assistant workspace/images/assistant
 
 if [ "$PUSH" = "--push" ]; then
   for name in "${WANT[@]}"; do

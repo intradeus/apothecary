@@ -1,6 +1,7 @@
 <script lang="ts">
 	// The Account page's personal tokens: mint one (TokenGrantForm), its
-	// secret shown once, and the list with what each may do and its revoke.
+	// secret shown once (with the MCP client configuration when it was minted
+	// for one), and the list with what each may do and its revoke.
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
@@ -15,14 +16,17 @@
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
+	import TokenCalls from './TokenCalls.svelte';
 	import TokenGrantForm from './TokenGrantForm.svelte';
 	import { tokenLife } from './tokenLife';
 
 	let tokens = $state<Token[]>([]);
 	let loaded = $state(false);
 	let error = $state('');
-	let minted = $state<{ token: Token; secret: string } | null>(null);
+	let minted = $state<{ token: Token; secret: string; mcp: boolean } | null>(null);
 	let revoking = $state<string | null>(null);
+	/** The token whose calls are open. */
+	let open = $state<string | null>(null);
 
 	const load = async () => {
 		try {
@@ -35,7 +39,26 @@
 	};
 	onMount(load);
 
-	async function created(m: { token: Token; secret: string }) {
+	/** The engine's MCP server, as this browser reaches it. */
+	const mcpURL = `${location.origin}/mcp`;
+
+	/** The configuration most MCP clients take for a remote server. */
+	const mcpConfig = (secret: string) =>
+		JSON.stringify(
+			{
+				mcpServers: {
+					apothecary: {
+						type: 'http',
+						url: mcpURL,
+						headers: { Authorization: `Bearer ${secret}` }
+					}
+				}
+			},
+			null,
+			2
+		);
+
+	async function created(m: { token: Token; secret: string; mcp: boolean }) {
 		minted = m;
 		await load();
 	}
@@ -97,7 +120,18 @@
 							>{t('page.account.copy')}</button
 						>
 					</div>
-					<span class="muted small">{t('page.account.usage', { secret })}</span>
+					{#if minted.mcp}
+						{@const config = mcpConfig(secret)}
+						<span class="muted small">{t('page.account.mcpConnect', { url: mcpURL })}</span>
+						<div class="row nowrap">
+							<pre class="config mono">{config}</pre>
+							<button class="btn-sm" onclick={() => copySecret(config)}
+								>{t('page.account.copy')}</button
+							>
+						</div>
+					{:else}
+						<span class="muted small">{t('page.account.usage', { secret })}</span>
+					{/if}
 				</div>
 			</Callout>
 		{/if}
@@ -127,12 +161,22 @@
 								: t('page.account.neverUsed')}{#if life.text}
 								{` · ${life.text}`}{/if}
 						</span>
-						<button
-							class="btn-danger btn-sm"
-							aria-busy={revoking === tk.id}
-							onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
-						>
+						<span class="row nowrap">
+							<button
+								class="btn-sm"
+								aria-expanded={open === tk.id}
+								title={t('page.account.callsTitle')}
+								onclick={() => (open = open === tk.id ? null : tk.id)}
+								>{t('page.account.calls')}</button
+							>
+							<button
+								class="btn-danger btn-sm"
+								aria-busy={revoking === tk.id}
+								onclick={() => revoke(tk)}>{t('page.account.revoke')}</button
+							>
+						</span>
 					</div>
+					{#if open === tk.id}<TokenCalls tokenId={tk.id} />{/if}
 				{/each}
 			</div>
 		{:else}
@@ -150,6 +194,14 @@
 		flex: 1;
 		min-width: 0;
 		overflow-wrap: anywhere;
+		user-select: all;
+		font-size: var(--fs-label);
+	}
+	.config {
+		flex: 1;
+		min-width: 0;
+		margin: 0;
+		overflow-x: auto;
 		user-select: all;
 		font-size: var(--fs-label);
 	}

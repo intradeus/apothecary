@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
@@ -260,10 +262,22 @@ func (s *Server) runRoutes() []Route {
 				{Name: "project", Doc: "only runs of this project"},
 				{Name: "ticket", Doc: "only runs of this ticket"},
 			},
-			Handler: s.listRuns, Returns: []run.View{}, Action: authz.RunRead},
+			Handler: s.listRuns, Returns: []run.View{}, Action: authz.RunRead,
+			Tool: &Tool{Name: "list_runs", Doc: "Runs you can see, newest first, each with its state, ticket, flow and workshop. Narrow it with project (a workshop id) or ticket."}},
 		{Method: "GET", Path: "/api/runs/{id}", ID: "getRun", Tag: tagRuns,
 			Summary: "One run with the tail of its event log",
-			Handler: s.getRun, Returns: RunDetail{}, Scope: ScopeRun, Action: authz.RunRead},
+			Handler: s.getRun, Returns: RunDetail{}, Scope: ScopeRun, Action: authz.RunRead,
+			Tool: &Tool{Name: "get_run", Doc: "One run: its state, stages, attempts, merge requests and the tail of its event log.", Args: map[string]string{"id": "The run's id, from list_runs."}}},
+		{Method: "GET", Path: "/api/runs/{id}/wait", ID: "waitRun", Tag: tagRuns,
+			Summary: "Wait for a run to change: its state, its open questions, its merge requests",
+			Doc: "Answers when the run differs from seen (what an earlier answer returned; none: the run as it is now), or when timeout seconds pass (default 50, at most 55): changed says which. " +
+				"A run that has ended answers at once. Pass seen back to wait for the next change without missing one between calls.",
+			Query: []Param{
+				{Name: "seen", Doc: "the seen an earlier answer returned"},
+				{Name: "timeout", Doc: "seconds to wait, 1 to 55 (default 50)", Type: "integer"},
+			},
+			Handler: s.waitRun, Returns: RunWait{}, Scope: ScopeRun, Action: authz.RunRead,
+			Tool: &Tool{Name: "wait_run", Doc: "Wait for a run to change, instead of polling it: its state (running, waiting for a person, done, failed), a question or gate opened for a person, a merge request opened. Answers the run and seen; pass seen back to wait for the next change. changed false: the time ran out (call again) or the run has ended.", Args: map[string]string{"id": "The run's id, from list_runs or start_run."}}},
 		{Method: "GET", Path: "/api/runs/{id}/events", ID: "streamRunEvents", Tag: tagRuns,
 			Summary: "Server-sent event stream of a run's events",
 			Doc:     "Replays from after_seq, then streams live. The stream ends at the event that puts the run in a terminal state; a connection resuming past it stays open for what comes later (a retry, the workspace's teardown).",
@@ -282,7 +296,8 @@ func (s *Server) runRoutes() []Route {
 			Handler: s.getWorkspaceLog, Returns: WorkspaceLog{}, Scope: ScopeRun, Action: authz.RunRead},
 
 		{Method: "POST", Path: "/api/runs/{id}/abort", ID: "abortRun", Tag: tagRuns,
-			Summary: "Stop a run for good", Handler: s.postAbort, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
+			Summary: "Stop a run for good", Handler: s.postAbort, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate,
+			Tool: &Tool{Name: "abort_run", Doc: "Stop a run for good. It cannot be resumed; its workspace stays until it is archived.", Args: map[string]string{"id": "The run's id, from list_runs or start_run."}, Destructive: true}},
 		{Method: "GET", Path: "/api/runs/{id}/phases", ID: "getRunPhases", Tag: tagRuns,
 			Summary: "Every phase of the run's flow: what opens it, its runs per merge request, its live run and the signals holding for it",
 			Handler: s.getRunPhases, Returns: []engine.PhaseInfo{}, Scope: ScopeRun, Action: authz.RunRead},
@@ -293,10 +308,12 @@ func (s *Server) runRoutes() []Route {
 		{Method: "POST", Path: "/api/runs/{id}/pause", ID: "pauseRun", Tag: tagRuns,
 			Summary: "Park a run; nothing moves until play",
 			Doc:     "Works on a run that is parked waiting for an answer too: pausing one says it must not pick up when the answer lands.",
-			Handler: s.postPause, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
+			Handler: s.postPause, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate,
+			Tool: &Tool{Name: "pause_run", Doc: "Park a run: nothing moves until resume_run. A run waiting for an answer stays parked when the answer lands.", Args: map[string]string{"id": "The run's id, from list_runs or start_run."}}},
 		{Method: "POST", Path: "/api/runs/{id}/play", ID: "playRun", Tag: tagRuns,
 			Summary: "Continue a paused run where it left off",
-			Handler: s.postPlay, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
+			Handler: s.postPlay, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate,
+			Tool: &Tool{Name: "resume_run", Doc: "Continue a paused run where it left off.", Args: map[string]string{"id": "The run's id, from list_runs or start_run."}}},
 		{Method: "POST", Path: "/api/runs/{id}/archive", ID: "archiveRun", Tag: tagRuns,
 			Summary: "Archive a finished run and destroy its workspace",
 			Doc: "The destroy outlives the request. One that fails is recorded on the run (env_destroy_failed, env_destroy_error) " +
@@ -304,7 +321,8 @@ func (s *Server) runRoutes() []Route {
 			Handler: s.postArchive, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
 		{Method: "POST", Path: "/api/runs/{id}/retry", ID: "retryRun", Tag: tagRuns,
 			Summary: "Try again: re-enter the failed stage in the same workspace",
-			Handler: s.postRetry, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
+			Handler: s.postRetry, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate,
+			Tool: &Tool{Name: "retry_run", Doc: "Try a failed run again: it re-enters its failed stage in the same workspace.", Args: map[string]string{"id": "The run's id, from list_runs or start_run."}}},
 		{Method: "POST", Path: "/api/runs/{id}/rerun", ID: "rerunRun", Tag: tagRuns,
 			Summary: "Run the ticket again as a new run in a fresh workspace",
 			Handler: s.postRerun, Body: RerunRequest{}, Returns: RunRef{}, Status: http.StatusCreated, Scope: ScopeRun, Action: authz.RunOperate},
@@ -312,5 +330,117 @@ func (s *Server) runRoutes() []Route {
 			Summary: "Recreate the run's container in place, keeping the checkout",
 			Doc:     "no_cache rebuilds the image from scratch — for the staleness a cache key cannot see, like a floating base tag that moved.",
 			Handler: s.postRebuild, Body: RebuildRequest{}, Status: http.StatusAccepted, Scope: ScopeRun, Action: authz.RunOperate},
+	}
+}
+
+// RunWait is a run as wait_run leaves it.
+type RunWait struct {
+	Run run.View `json:"run"`
+	// Changed: the run differs from what the caller saw. false: the time
+	// ran out, or the run had ended.
+	Changed bool `json:"changed"`
+	// Seen is what the caller has now seen: pass it back to wait for the
+	// next change.
+	Seen string `json:"seen"`
+}
+
+// waitDefault and waitMax bound one wait: under the minute an MCP client
+// gives a call by default, as a ping's long poll is.
+const (
+	waitDefault = 50 * time.Second
+	waitMax     = 55 * time.Second
+)
+
+// waitKey is what a wait watches of a run: its state, the questions open
+// for a person, its merge requests, a take-over.
+func waitKey(v run.View) string {
+	var b strings.Builder
+	b.WriteString(string(v.State))
+	b.WriteString("|pings=")
+	b.WriteString(strings.Join(v.OpenPings, ","))
+	b.WriteString("|mrs=")
+	for _, m := range v.MRs {
+		b.WriteString(m.URL)
+		b.WriteString(",")
+	}
+	if v.Hold != nil {
+		b.WriteString("|held")
+	}
+	return b.String()
+}
+
+func (s *Server) waitRun(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	timeout := waitDefault
+	if q := r.URL.Query().Get("timeout"); q != "" {
+		n, err := strconv.Atoi(q)
+		if err != nil || n < 1 || time.Duration(n)*time.Second > waitMax {
+			writeErr(w, http.StatusBadRequest, "timeout is 1 to 55 seconds")
+			return
+		}
+		timeout = time.Duration(n) * time.Second
+	}
+	// Where the log is before the run is read: an event landing between the
+	// two is then replayed by the watch, not skipped.
+	last, err := s.Store.Tail(r.Context(), id, 1)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	v, ok := s.runView(w, r, id)
+	if !ok {
+		return
+	}
+	seen := r.URL.Query().Get("seen")
+	if seen == "" {
+		seen = waitKey(v)
+	}
+	answer := func(v run.View) {
+		writeJSON(w, http.StatusOK, RunWait{Run: v, Changed: waitKey(v) != seen, Seen: waitKey(v)})
+	}
+	if waitKey(v) != seen || v.State.Terminal() {
+		answer(v)
+		return
+	}
+	var after int64
+	if len(last) > 0 {
+		after = last[len(last)-1].Seq
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	defer cancel()
+	evs, err := s.Store.Watch(ctx, id, after)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	reread := func() (run.View, bool) {
+		nv, ok := s.runView(w, r, id)
+		return nv, ok
+	}
+	for {
+		select {
+		case _, open := <-evs:
+			if !open {
+				// Cancelled (the time ran out, the caller left) or behind:
+				// the run as it is now says which.
+				if nv, ok := reread(); ok {
+					answer(nv)
+				}
+				return
+			}
+			nv, ok := reread()
+			if !ok {
+				return
+			}
+			if waitKey(nv) != seen || nv.State.Terminal() {
+				answer(nv)
+				return
+			}
+		case <-s.draining():
+			if nv, ok := reread(); ok {
+				answer(nv)
+			}
+			return
+		}
 	}
 }

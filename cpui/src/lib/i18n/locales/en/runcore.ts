@@ -199,6 +199,7 @@ export default {
 	'run.page.closed': 'closed',
 	'run.page.following': 'following',
 	'run.page.askHint': 'read-only · the code as it stands',
+	'run.page.assistantHint': 'yours · reads the run, proposes, you confirm',
 	'run.page.waitingOnYou': 'waiting on you',
 	'run.page.betweenPhases': 'between chains',
 	'run.page.whatCanStart': 'what each watcher waits for',

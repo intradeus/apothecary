@@ -372,6 +372,27 @@ export default {
 	'page.account.access': 'Access',
 	'page.account.accessFull': 'Full access',
 	'page.account.accessLimited': 'Limited',
+	'page.account.accessMcp': 'MCP client',
+	'page.account.accessMcpHelp':
+		'For an agent you connect to this instance’s MCP server, holding what its purpose needs. It never answers a gate, takes a run over, opens a shell, changes egress, secrets or members, or deletes anything.',
+	'page.account.purpose': 'For',
+	'page.account.purpose.read': 'Reading',
+	'page.account.purpose.tickets': 'Tickets',
+	'page.account.purpose.runs': 'Runs',
+	'page.account.purpose.authoring': 'Authoring',
+	'page.account.purposeHelp.read':
+		'Reads workshops, tickets, flows, skills, runs and dashboards, checks a flow, and changes nothing.',
+	'page.account.purposeHelp.tickets': 'Reads, and files and edits tickets.',
+	'page.account.purposeHelp.runs':
+		'Reads, files tickets, and starts, pauses, resumes, retries and aborts runs, waiting on them.',
+	'page.account.purposeHelp.authoring':
+		'Reads, and writes flows (not one reading the workshop’s secrets), skills, skillsets, dashboards and scorecards. Skills and dashboards are yours, used in every workshop, whatever workshops the token is limited to.',
+	'page.account.calls': 'Calls',
+	'page.account.callsTitle': 'What this token did: its writes and its MCP tool calls, newest first',
+	'page.account.noCalls': 'No calls yet',
+	'page.account.callsFailed': 'Couldn’t load what this token did',
+	'page.account.mcpConnect':
+		'Connect your MCP client to {url} with this token as a bearer header. Most clients take this configuration:',
 	'page.account.accessFullHelp':
 		'Everything your account may do, in every workshop you can reach. Never more than you may.',
 	'page.account.accessLimitedHelp':
@@ -395,6 +416,7 @@ export default {
 	'page.account.kind.analytics': 'Analytics',
 	'page.account.kind.notice': 'Notices',
 	'page.account.kind.settings': 'Settings',
+	'page.account.kind.assistant': 'Assistant',
 	'page.account.revoke': 'Revoke',
 	'page.account.revoked': 'Token revoked',
 	'page.account.created': 'created {ago}',
@@ -604,6 +626,7 @@ export default {
 	'page.flow.hint':
 		'<span class="kbd">⌫</span> delete selection · <span class="kbd">⌘S</span> save · drag handles to rewire',
 	'page.flow.yamlLabel': 'Flow YAML',
+	'page.flow.editorFailed': 'Couldn’t load the YAML editor',
 	'page.flow.closeVersions': 'Close versions',
 	'page.flow.versionsHelp':
 		'Content-addressed and immutable; every run pins the hash it started on. Node positions never create versions.',

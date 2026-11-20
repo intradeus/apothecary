@@ -71,10 +71,14 @@ export const aProject = (over: Partial<Project> = {}): Project =>
 export const PROJECT_ACTIONS = [
 	'project:read',
 	'project:write',
+	'project:author',
+	'project:secrets',
 	'project:members',
 	'project:delete',
 	'run:read',
 	'run:operate',
+	'run:answer',
+	'run:egress',
 	'run:shell',
 	'ticket:read',
 	'ticket:write'
@@ -103,6 +107,8 @@ export const anOperatorProject = (over: Partial<Project> = {}): Project =>
 				'project:leave',
 				'run:read',
 				'run:operate',
+				'run:answer',
+				'run:egress',
 				'ticket:read',
 				'ticket:write'
 			]
@@ -175,6 +181,12 @@ export const aRunStore = (run: Run = aRun(), over: Partial<RunStore> = {}): RunS
 		canPause: !terminal && run.state !== 'paused' && run.state !== 'pending',
 		get canOperate() {
 			return fleet.can(run.projectId, 'run:operate');
+		},
+		get canAnswer() {
+			return fleet.can(run.projectId, 'run:answer');
+		},
+		get canEgress() {
+			return fleet.can(run.projectId, 'run:egress');
 		},
 		get canShell() {
 			return fleet.can(run.projectId, 'run:shell');

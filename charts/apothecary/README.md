@@ -57,10 +57,10 @@ Kubernetes: `>=1.29.0-0`
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| image.repository | string | `"ghcr.io/intradeus/apothecary"` | Prefix of the five release images: apothecaryd, sandbox, shim, tools, egress-gw (deploy/images.sh). The project browser is Microsoft's Playwright MCP image, pinned by the engine. |
+| image.repository | string | `"ghcr.io/intradeus/apothecary"` | Prefix of the six release images: apothecaryd, sandbox, shim, tools, egress-gw, assistant (deploy/images.sh). The project browser is Microsoft's Playwright MCP image, pinned by the engine. |
 | image.tag | string | `""` | Image tag. Empty: the chart's appVersion, so a chart version pins every image. |
 | image.pullPolicy | string | `""` | Pull policy. Empty: Always for a reused tag (latest, local), IfNotPresent for a release tag. |
-| image.overrides | object | `{"apothecaryd":"","browser":"","gateway":"","sandbox":"","shim":"","tools":""}` | Per-image overrides (full references), e.g. a mirror such as ECR. browser must be the same image as the engine's pin (its session command depends on the image's layout). |
+| image.overrides | object | `{"apothecaryd":"","assistant":"","browser":"","gateway":"","sandbox":"","shim":"","tools":""}` | Per-image overrides (full references), e.g. a mirror such as ECR. browser must be the same image as the engine's pin (its session command depends on the image's layout). |
 | imagePullSecrets | list | `[]` | Pull secrets for private registries or mirrors. |
 | masterKey | string | `""` | The master key that seals every stored secret (`apothecaryd keygen`). Prefer existingSecret in production. |
 | existingSecret | string | `""` | A Secret holding APOTHECARY_MASTER_KEY and APOTHECARY_POSTGRES_DSN; when set, the chart creates no Secret of its own. |
@@ -90,6 +90,11 @@ Kubernetes: `>=1.29.0-0`
 | workspaces.privileged | bool | `false` | Run sandboxes privileged instead. Sandbox root is then root on its node: for a cluster of your own without sysbox (k3d, a dev box), never a shared one. Needed when runtimeClassName is empty. |
 | workspaces.protectCIDRs | string | `"10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"` | Destinations no workspace may reach through its gateway: the cluster's pod and service ranges and link-local metadata. The defaults are k3s's; set your cluster's (EKS: the VPC CIDR). |
 | workspaces.clusterDomain | string | `"cluster.local"` | The cluster's DNS domain. |
+| assistant.enabled | bool | `true` | Run it. People still each choose their harness (Claude Code or opencode) in their settings. |
+| assistant.idle | string | `"30m"` | Stop a person's pod after this long unused; their volume stays. |
+| assistant.volumeDays | int | `30` | Delete a person's volume after this many days unused (0: never). |
+| assistant.volumeSize | string | `"10Gi"` | Each person's volume. |
+| assistant.storageClass | string | `""` | Storage class of those volumes; empty for the cluster default. |
 | engine.runsDir.size | string | `"20Gi"` | The engine's runs volume: uploads, snapshots, exec logs, markers. |
 | engine.runsDir.storageClass | string | `""` | Storage class; empty for the cluster default. |
 | engine.portAutoExpose | bool | `false` | Publish ports the workspace starts listening on without a click (with an apps domain). |

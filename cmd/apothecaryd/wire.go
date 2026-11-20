@@ -385,7 +385,16 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.EnvCheck = checks
 	api.Egress = egressSvc
 	api.Ask = askSvc
-	api.Analytics = &analytics.Service{Store: store}
+	// The assistant (docs/assistant-plan.md): its service always, its pods
+	// when it runs here.
+	analyticsSvc := &analytics.Service{Store: store}
+	assistantSvc, stopAssistant, err := wireAssistant(ctx, boot, store, conf, resolver, live, authsvc, az, analyticsSvc, log)
+	if err != nil {
+		return nil, nil, err
+	}
+	closers = append(closers, stopAssistant)
+	api.Assistant = assistantSvc
+	api.Analytics = analyticsSvc
 	api.Notices = notes
 	api.AuthSink = sink
 	api.Ports = portsSvc

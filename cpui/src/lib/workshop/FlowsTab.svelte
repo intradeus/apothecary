@@ -53,13 +53,13 @@
 		void project.id;
 		void loadBindings();
 	});
-	// Creating, binding and copying a flow into a workshop need project:write
+	// Creating, binding and copying a flow into a workshop need project:author
 	// there; a copy only offers the workshops that allow it.
-	const canWrite = $derived(projectCan(project, 'project:write'));
+	const canWrite = $derived(projectCan(project, 'project:author'));
 	const deny = $derived(canWrite ? undefined : t('common.needsPermission'));
 	const projects = $derived(
 		(fleet.projects.length ? fleet.projects : [project]).filter((p) =>
-			projectCan(p, 'project:write')
+			projectCan(p, 'project:author')
 		)
 	);
 	const projectName = (id: string) => fleet.projectById.get(id)?.name ?? project.name;

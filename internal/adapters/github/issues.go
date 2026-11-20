@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -65,6 +66,12 @@ func (s *Issues) parseKey(key string) (repo string, n int, err error) {
 			return "", 0, fmt.Errorf("github: issue key %q names no repository (use owner/repo#%s)", key, m[2])
 		}
 		repo = s.repos[0]
+	}
+	// A key names an issue of the source, never any repository the token
+	// can read: a workshop's viewer reads the source with its owner's
+	// token, and must not reach the owner's other repositories through it.
+	if len(s.repos) > 0 && !slices.ContainsFunc(s.repos, func(r string) bool { return strings.EqualFold(r, repo) }) {
+		return "", 0, fmt.Errorf("github: %s is not a repository of this ticket source: %w", repo, trackerport.ErrTicketNotFound)
 	}
 	n, _ = strconv.Atoi(m[2])
 	return repo, n, nil

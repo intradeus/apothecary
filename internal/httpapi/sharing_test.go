@@ -127,12 +127,12 @@ func TestSharedWorkshop(t *testing.T) {
 		for _, c := range []struct{ method, path, needs string }{
 			{"POST", runPath + "/abort", "run:operate"},
 			{"POST", runPath + "/retry", "run:operate"},
-			{"POST", pingPath + "/answer", "run:operate"},
-			{"PUT", projPath + "/secrets/token", "project:write"},
+			{"POST", pingPath + "/answer", "run:answer"},
+			{"PUT", projPath + "/secrets/token", "project:secrets"},
 			{"POST", projPath + "/tickets", "ticket:write"},
 			{"GET", runPath + "/terminal", "run:shell"},
 			{"POST", projPath + "/members", "project:members"},
-			{"POST", "/api/flow-templates/builder/copy", "project:write"},
+			{"POST", "/api/flow-templates/builder/copy", "project:author"},
 		} {
 			if data := x.expect(t, "viewer", sameOrigin(viewer), c.method, c.path, map[string]any{"to_project_id": testProject, "name": "mine"}, 403); !strings.Contains(string(data), c.needs) {
 				t.Errorf("viewer %s %s refused without naming %s: %s", c.method, c.path, c.needs, data)

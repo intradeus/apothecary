@@ -1041,3 +1041,98 @@ func TestStopKillsWhatIgnoresTheTerm(t *testing.T) {
 func TestKillOfAProcessThatNeverStarted(t *testing.T) {
 	(&agentProc{cmd: &exec.Cmd{}, exited: make(chan struct{})}).kill() // no process: nothing to wait for
 }
+
+// The idle exit: a process no request has used for the idle time, with no
+// turn in flight, is stopped and reported as idle, not as a crash; a
+// process used since, or mid-turn, is left.
+func TestIdleProcessesAreStopped(t *testing.T) {
+	h := newAgentHost(newEventLog())
+	h.idle = time.Minute
+	idle, err := h.start(startReq{Argv: []string{"sh", "-c", `read line; ` + initOK + `; exec cat >/dev/null`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Another command line, so another process.
+	busy, err := h.start(startReq{Argv: []string{"sh", "-c", `read line; ` + initOK + `;  exec cat >/dev/null`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.mu.Lock()
+	h.sessions["s-busy"] = &sessState{proc: busy}
+	h.turns["s-busy"] = &turnState{id: "t", session: "s-busy"}
+	h.mu.Unlock()
+
+	h.stopIdle(time.Now()) // nothing has been idle a minute
+	if !idle.alive() || !busy.alive() {
+		t.Fatal("a process used just now was stopped")
+	}
+	h.stopIdle(time.Now().Add(2 * time.Minute))
+	if idle.alive() {
+		t.Error("the idle process was left running")
+	}
+	if !busy.alive() {
+		t.Error("a process mid-turn was stopped")
+	}
+	waitFor(t, func() bool { evs, _ := h.log.since(0); return len(evs) > 0 })
+	if evs, _ := h.log.since(0); evs[0].Type != "agent_idle" || evs[0].Proc != idle.id {
+		t.Errorf("event = %+v, want agent_idle for %s", evs[0], idle.id)
+	}
+	h.stop()
+}
+
+func TestStopOneProcess(t *testing.T) {
+	h := newAgentHost(newEventLog())
+	a, err := h.start(startReq{Argv: []string{"sh", "-c", `read line; ` + initOK + `; exec cat >/dev/null`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.start(startReq{Argv: []string{"sh", "-c", `read line; ` + initOK + `;  exec cat >/dev/null`}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.stopProc("nope") {
+		t.Error("stopped a process that is not there")
+	}
+	if !h.stopProc(a.id) || a.alive() || !b.alive() {
+		t.Errorf("stopProc(a): a alive %v, b alive %v", a.alive(), b.alive())
+	}
+	h.stop()
+}
+
+// A confined start runs the program through `shim confine`, with only the
+// environment it was given, and its rules are part of its identity.
+func TestConfinedStartWrapsTheProgram(t *testing.T) {
+	t.Setenv("SIDECAR_SECRET", "not for the session")
+	h := newAgentHost(newEventLog())
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The probe binary is this test binary: started as the shim, `confine`
+	// fails on a spec that cannot hold (a missing path) before running it.
+	_, err = h.start(startReq{Argv: []string{exe}, Env: map[string]string{shimEnv: "1"},
+		Confine: &confineSpec{Read: []string{"/no/such/path"}, Exec: []string{exe}}})
+	if err == nil {
+		t.Fatal("a session whose rules cannot be applied started")
+	}
+	if !strings.Contains(err.Error(), "confine") && !strings.Contains(err.Error(), "initialize") {
+		t.Errorf("err = %v", err)
+	}
+	one := startReq{Argv: []string{"/bin/true"}, Confine: &confineSpec{Read: []string{"/a"}}}
+	two := startReq{Argv: []string{"/bin/true"}, Confine: &confineSpec{Read: []string{"/b"}}}
+	if launchKey(one) == launchKey(two) || launchKey(one) == launchKey(startReq{Argv: []string{"/bin/true"}}) {
+		t.Error("two sessions' rules share a process")
+	}
+}
+
+// A confined start makes its write folders first: Landlock rules name
+// paths that exist.
+func TestConfinedStartMakesItsHome(t *testing.T) {
+	h := newAgentHost(newEventLog())
+	home := filepath.Join(t.TempDir(), "state", "s1")
+	_, _ = h.start(startReq{Argv: []string{"/no/such/harness"}, Env: map[string]string{"TMPDIR": home + "/tmp", shimEnv: "1"},
+		Confine: &confineSpec{Write: []string{home}, Exec: []string{"/no/such/harness"}}})
+	if fi, err := os.Stat(filepath.Join(home, "tmp")); err != nil || !fi.IsDir() {
+		t.Errorf("home and temp folder: %v", err)
+	}
+}
