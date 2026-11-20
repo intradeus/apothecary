@@ -2,6 +2,24 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.1.0 (2026-11-20)
+
+### Features
+
+- **assistant**: act by confirmation, on runs, dashboards and the palette
+- **mcp**: write tools for outside agents, on finer actions
+- **assistant**: the assistant beside the flow, ticket and skill pages
+- **assistant**: run each person's assistant pod, its sessions confined
+- **mcp**: serve the engine's read routes as MCP tools
+
+### Fixes
+
+- **tickets**: keep a ticket key inside its source's repositories
+
+### Docs
+
+- **assistant**: plan the assistant and the engine's MCP server
+
 ## v5.0.0 (2026-11-19)
 
 ### BREAKING CHANGE
