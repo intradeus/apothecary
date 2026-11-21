@@ -85,4 +85,25 @@ describe('compareDashboard', () => {
 		const cur = { name: 'Mine', filters: ['a'], panels: [panel()] };
 		expect(sameDashboard(compareDashboard({ ...cur, ...over }, cur))).toBe(false);
 	});
+
+	it('counts the order of the panels and filters both hold, giving the version’s', () => {
+		const a = panel({ id: 'a', title: 'A' });
+		const b = panel({ id: 'b', title: 'B' });
+		const c = panel({ id: 'c', title: 'C' });
+		const cur = { name: 'Mine', filters: ['x', 'y'], panels: [a, b, c] };
+		const panels = compareDashboard({ ...cur, panels: [c, a, b] }, cur);
+		expect(panels.panelOrder?.map((p) => p.id)).toEqual(['c', 'a', 'b']);
+		expect(panels.filterOrder).toBeUndefined();
+		expect(sameDashboard(panels)).toBe(false);
+		const filters = compareDashboard({ ...cur, filters: ['y', 'x'] }, cur);
+		expect(filters.filterOrder).toEqual(['y', 'x']);
+		expect(filters.panelOrder).toBeUndefined();
+		expect(sameDashboard(filters)).toBe(false);
+		// An added or removed one alone moves none of the others.
+		const added = compareDashboard({ ...cur, panels: [a, panel({ id: 'n' }), b, c] }, cur);
+		expect(added.panelOrder).toBeUndefined();
+		const removed = compareDashboard({ ...cur, filters: ['y'], panels: [a, c] }, cur);
+		expect(removed.panelOrder).toBeUndefined();
+		expect(removed.filterOrder).toBeUndefined();
+	});
 });

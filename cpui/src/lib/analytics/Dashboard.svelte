@@ -124,6 +124,13 @@
 		editing = true;
 	}
 
+	// Discards the draft, and with it any assistant fill it held: a later manual
+	// save is the person's own.
+	function cancel() {
+		editing = false;
+		guard.settle();
+	}
+
 	async function save() {
 		const d = dash!;
 		busy = true;
@@ -185,8 +192,7 @@
 			<button class="btn-lg" onclick={() => openEditor(-1)}
 				>{`${I.add} ${t('analytics.dashboard.addPanel')}`}</button
 			>
-			<button class="btn-ghost btn-lg" onclick={() => (editing = false)} disabled={busy}
-				>{t('common.cancel')}</button
+			<button class="btn-ghost btn-lg" onclick={cancel} disabled={busy}>{t('common.cancel')}</button
 			>
 			<button class="btn-primary btn-lg" onclick={save} disabled={busy} aria-busy={busy}
 				>{t('analytics.dashboard.save')}</button

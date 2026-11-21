@@ -2454,7 +2454,7 @@ describe('analytics', () => {
 					restored_from: 1,
 					created_at: AT,
 					changed: ['panels'],
-					panel_changes: { added: 1, removed: 2, changed: 3 },
+					panel_changes: { added: 1, removed: 2, changed: 3, reordered: true },
 					oldest: true
 				})
 			)
@@ -2465,7 +2465,7 @@ describe('analytics', () => {
 			restoredFrom: 1,
 			createdAt: AT,
 			changed: ['panels'],
-			panelChanges: { added: 1, removed: 2, changed: 3 },
+			panelChanges: { added: 1, removed: 2, changed: 3, reordered: true },
 			oldest: true
 		});
 		expect(

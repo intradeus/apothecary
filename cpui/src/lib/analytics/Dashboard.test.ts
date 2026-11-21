@@ -322,6 +322,32 @@ describe('Dashboard', () => {
 			);
 		});
 
+		it('drops a canceled fill: a later manual save is not the assistant’s', async () => {
+			vi.mocked(api.analytics.dashboards.update).mockImplementation(async (_id, d) =>
+				aDashboard({ ...mine, panels: d.panels })
+			);
+			render(Dashboard, { id: mine.id });
+			await userEvent.click(await screen.findByRole('button', { name: 'Assistant' }));
+			const box = screen.getByRole('textbox', { name: 'fill' });
+			await userEvent.clear(box);
+			box.focus();
+			await userEvent.paste(
+				JSON.stringify({ panels: [{ ...stages, id: 'n1', title: 'Failures' }] })
+			);
+			await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
+			await waitFor(() => expect(panelTitles()).toEqual(['Failures']));
+
+			await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			expect(panelTitles()).toEqual(['Cost by version', 'Spend by stage']);
+			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('');
+			await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+			await userEvent.click(screen.getByRole('button', { name: 'Remove Cost by version' }));
+			await userEvent.click(screen.getByRole('button', { name: 'Save dashboard' }));
+			await waitFor(() => expect(api.analytics.dashboards.update).toHaveBeenCalled());
+			expect(vi.mocked(api.analytics.dashboards.update).mock.calls[0][1].panels).toEqual([stages]);
+			expect(vi.mocked(api.analytics.dashboards.update).mock.calls[0][2]).toBe(false);
+		});
+
 		it('is not offered on a built-in one', async () => {
 			vi.mocked(api.analytics.dashboards.get).mockResolvedValue(
 				aDashboard({ id: 'builtin-x', builtin: true })

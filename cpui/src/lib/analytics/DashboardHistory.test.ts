@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { session } from '$lib/app/session.svelte';
@@ -83,7 +84,7 @@ describe('DashboardHistory', () => {
 				seq: 6,
 				author: { kind: 'assistant', id: 'u1' },
 				changed: ['panels'],
-				panelChanges: { added: 0, removed: 0, changed: 0 }
+				panelChanges: { added: 0, removed: 0, changed: 0, reordered: true }
 			}),
 			aDashboardVersionSummary({ seq: 5, author: { kind: 'user', id: 'u2', handle: 'mo' } }),
 			aDashboardVersionSummary({ seq: 4, author: { kind: 'user', id: 'u3' }, restoredFrom: 2 }),
@@ -95,7 +96,9 @@ describe('DashboardHistory', () => {
 		expect(await row(7)).toHaveTextContent(
 			/^v7\s*you\s*3m ago\s*current\s*name\s*filters\s*\+2 panels\s*−1\s*~3 changed$/
 		);
-		expect(await row(6)).toHaveTextContent(/^v6\s*assistant \(saved by you\)\s*\S+ ago$/);
+		expect(await row(6)).toHaveTextContent(
+			/^v6\s*assistant \(saved by you\)\s*\S+ ago\s*panels reordered$/
+		);
 		expect(await row(5)).toHaveTextContent(/^v5\s*mo\s/);
 		expect(await row(4)).toHaveTextContent(/^v4\s*u3\s.*restored from v2$/);
 		expect(await row(3)).toHaveTextContent(/^v3\s*a run\s/);
@@ -142,6 +145,28 @@ describe('DashboardHistory', () => {
 			expect(await row(1)).toHaveAttribute('aria-pressed', 'true');
 		});
 
+		it('names the order a restore brings back, even when it is all that differs', async () => {
+			version.mockResolvedValue(
+				aDashboardVersion({
+					...current,
+					seq: 1,
+					filters: [...current.filters].reverse(),
+					panels: [...current.panels].reverse()
+				})
+			);
+			setup();
+			await userEvent.click(await row(1));
+			const cmp = await screen.findByRole('heading', { name: 'v1 against the current dashboard' });
+			const items = within(cmp.parentElement!)
+				.getAllByRole('listitem')
+				.map((li) => li.textContent?.trim());
+			expect(items).toEqual([
+				'Filter order here: model, flow_name',
+				'Panel order here: Newcomer, Cost now, Kept'
+			]);
+			expect(screen.queryByText('Same as the current dashboard')).toBeNull();
+		});
+
 		it('says when it equals the current dashboard, with no restore on the newest', async () => {
 			version.mockResolvedValue(aDashboardVersion({ ...current, seq: 2 }));
 			setup();
@@ -166,6 +191,22 @@ describe('DashboardHistory', () => {
 			await waitFor(() =>
 				expect(screen.getByRole('heading', { level: 3 })).toHaveTextContent('v2')
 			);
+		});
+
+		it('ignores an earlier pick’s failure that answers late', async () => {
+			const first = Promise.withResolvers<DashboardVersion>();
+			version
+				.mockReturnValueOnce(first.promise)
+				.mockResolvedValueOnce(aDashboardVersion({ ...current, seq: 2 }));
+			setup();
+			await userEvent.click(await row(1));
+			await userEvent.click(await row(2));
+			await screen.findByText('Same as the current dashboard');
+			first.reject(new Error('gone'));
+			await first.promise.catch(() => {});
+			await tick();
+			expect(screen.queryByText('gone')).toBeNull();
+			expect(screen.getByText('Same as the current dashboard')).toBeInTheDocument();
 		});
 
 		it('shows why it could not load and retries', async () => {

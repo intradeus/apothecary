@@ -217,11 +217,13 @@ type Change struct {
 }
 
 // PanelChanges counts a version's panels against the version before it,
-// by panel id.
+// by panel id. Reordered: the panels both hold stand in another order
+// (the grid shows them in array order).
 type PanelChanges struct {
-	Added   int `json:"added"`
-	Removed int `json:"removed"`
-	Changed int `json:"changed"`
+	Added     int  `json:"added"`
+	Removed   int  `json:"removed"`
+	Changed   int  `json:"changed"`
+	Reordered bool `json:"reordered,omitempty"`
 }
 
 // DashboardVersion is one kept state of a dashboard's name, filters and

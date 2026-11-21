@@ -59,7 +59,7 @@
 			const v = await api.analytics.dashboards.version(dashboard.id, seq);
 			if (pickedSeq === seq) picked = v;
 		} catch (e) {
-			pickError = errorMessage(e);
+			if (pickedSeq === seq) pickError = errorMessage(e);
 		}
 	}
 
@@ -89,6 +89,7 @@
 		if (pc?.added) out.push(t('analytics.history.panelsAdded', { n: pc.added }));
 		if (pc?.removed) out.push(t('analytics.history.panelsRemoved', { n: pc.removed }));
 		if (pc?.changed) out.push(t('analytics.history.panelsChanged', { n: pc.changed }));
+		if (pc?.reordered) out.push(t('analytics.history.panelsReordered'));
 		if (v.restoredFrom) out.push(t('analytics.history.restoredFrom', { seq: v.restoredFrom }));
 		return out;
 	}
@@ -172,6 +173,9 @@
 						{#if cmp.filtersOnlyInCurrent.length}<li>
 								{t('analytics.history.filtersGone', { list: cmp.filtersOnlyInCurrent.join(', ') })}
 							</li>{/if}
+						{#if cmp.filterOrder}<li>
+								{t('analytics.history.filterOrder', { list: cmp.filterOrder.join(', ') })}
+							</li>{/if}
 						{#if cmp.panelsOnlyInVersion.length}<li>
 								{t('analytics.history.panelsBack', { list: titles(cmp.panelsOnlyInVersion) })}
 							</li>{/if}
@@ -184,6 +188,9 @@
 									fields: p.fields.map((f) => t(`analytics.history.field.${f}`)).join(', ')
 								})}
 							</li>{/each}
+						{#if cmp.panelOrder}<li>
+								{t('analytics.history.panelOrder', { list: titles(cmp.panelOrder) })}
+							</li>{/if}
 					</ul>
 				{/if}
 				{#if picked.seq !== newest}

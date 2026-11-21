@@ -1,5 +1,6 @@
 import { render, screen, waitFor, within } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
+import { tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { session } from '$lib/app/session.svelte';
@@ -204,6 +205,43 @@ describe('TicketHistory, a version against the ticket now', () => {
 		setup();
 		await userEvent.click(await row(1));
 		expect(screen.getByLabelText('Loading')).toBeInTheDocument();
+	});
+
+	it('keeps only the last one picked: restore posts the version shown', async () => {
+		versions.mockResolvedValue([summary(3), summary(2), summary(1)]);
+		const first = Promise.withResolvers<TicketVersion>();
+		version
+			.mockReturnValueOnce(first.promise)
+			.mockResolvedValueOnce({ ...old, seq: 2, title: 'Middle title' });
+		restore.mockResolvedValue(internal);
+		vi.mocked(confirmDialog).mockResolvedValue(true);
+		setup();
+		await userEvent.click(await row(1));
+		await userEvent.click(await row(2));
+		await screen.findByLabelText('v2 against the ticket now');
+		first.resolve(old);
+		await first.promise;
+		await tick();
+		const cmp = screen.getByLabelText('v2 against the ticket now');
+		expect(cmp).toHaveTextContent('+Middle title');
+		expect(cmp).not.toHaveTextContent('+Old title');
+		await userEvent.click(screen.getByRole('button', { name: 'Restore this version' }));
+		await waitFor(() => expect(restore).toHaveBeenCalledWith('p1', 'PROJ-7', 2));
+	});
+
+	it('ignores an earlier pick’s failure that answers late', async () => {
+		versions.mockResolvedValue([summary(3), summary(2), summary(1)]);
+		const first = Promise.withResolvers<TicketVersion>();
+		version.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ ...old, seq: 2 });
+		setup();
+		await userEvent.click(await row(1));
+		await userEvent.click(await row(2));
+		await screen.findByLabelText('v2 against the ticket now');
+		first.reject(new Error('gone'));
+		await first.promise.catch(() => {});
+		await tick();
+		expect(screen.queryByText('Could not load this version')).toBeNull();
+		expect(screen.getByLabelText('v2 against the ticket now')).toBeInTheDocument();
 	});
 });
 

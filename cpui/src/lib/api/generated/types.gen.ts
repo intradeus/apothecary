@@ -1276,6 +1276,7 @@ export type PanelChanges = {
 	added: number;
 	changed: number;
 	removed: number;
+	reordered?: boolean;
 };
 
 export type Param = {

@@ -86,6 +86,17 @@ What now:
   `list_/get_/restore_ticket_version`, `…_dashboard_version` and
   `…_scorecard_version`; the restores are among the `request` tool's write
   tools.
+- **Order is content.** The grid shows panels, and the filter bar filters,
+  in array order, and a reorder is a version (jsonb arrays compare in
+  order). So the list's summary names `filters` for a filter reorder and
+  `panels` with `reordered` for a panel one (`panelChanges`: the panels
+  both versions hold, in another order), and the History comparison gives
+  the version's order when the items both hold stand differently; it never
+  says "same" before a restore that would move things.
+- **A canceled fill is not an assistant save.** `assisted` comes from the
+  page's fill guard; Cancel settles it, so a later manual save in the same
+  visit is the person's. A version picked in History is shown only when
+  its answer is the last one asked for, so Restore posts what is shown.
 
 Tests that hold it:
 
@@ -100,8 +111,8 @@ Tests that hold it:
   `ErrInvalid` and changes nothing.
 - `analyticstest` "dashboard versions" / "scorecard versions" (Postgres)
   and `internal/analytics/service_test.go`: the same for dashboards and
-  scorecards, jsonb key order, panel added/removed/changed counts,
-  built-ins, content that no longer checks.
+  scorecards, jsonb key order, panel added/removed/changed counts, a
+  panel and a filter reorder, built-ins, content that no longer checks.
 - `pgstore/faults_test.go`: the new reads in the dead-database table; a
   sabotaged `ticket_versions` fails the ticket write as a whole; malformed
   version rows are errors. `migrate_test.go` `TestVersionsMigration`: one
@@ -115,10 +126,12 @@ Tests that hold it:
   `analytics_test.go` `TestAnalyticsVersions`: the dashboard and scorecard
   routes, another person's history refused, built-ins.
 - CPUI: `TicketHistory.test.ts` and `DashboardHistory.test.ts` (loading,
-  empty, error and content; each author kind; the comparison; restore
-  confirmed, declined and failing; no Restore on the newest version; a
-  remote record's and a reader's Restore disabled with the reason);
+  empty, error and content; each author kind; the comparison, order
+  included; restore confirmed, declined and failing; no Restore on the
+  newest version; a remote record's and a reader's Restore disabled with
+  the reason; a slower earlier pick never replaces the last one);
   `TicketPage.test.ts` and `Dashboard.test.ts` (the panel in the read view
   only, hidden on a built-in, refreshed after a restore); `TicketForm` and
-  `Dashboard` send `assisted` after a fill only; the comparison helpers in
-  `domain/ticket.test.ts` and `domain/analytics.test.ts`.
+  `Dashboard` send `assisted` after a fill only, not after a canceled one;
+  the comparison helpers in `domain/ticket.test.ts` and
+  `domain/analytics.test.ts`.

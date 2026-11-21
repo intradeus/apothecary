@@ -218,11 +218,12 @@ export const measureKey = (m: MeasureRef): string => (m.agg ? `${m.field}/${m.ag
 export const isBuiltinId = (id: string): boolean => id.startsWith('builtin-');
 
 /** How many panels a version added, removed and changed against the one
- *  before it. */
+ *  before it; reordered: the panels both hold stand in another order. */
 export interface PanelChanges {
 	added: number;
 	removed: number;
 	changed: number;
+	reordered?: boolean;
 }
 
 /** One entry of a dashboard's history, newest first. */
@@ -269,15 +270,29 @@ export interface DashboardComparison {
 	name?: { version: string; current: string };
 	filtersOnlyInVersion: string[];
 	filtersOnlyInCurrent: string[];
+	/** Set when the filters both hold stand in another order: the version's. */
+	filterOrder?: string[];
 	panelsOnlyInVersion: Panel[];
 	panelsOnlyInCurrent: Panel[];
 	panelsChanged: PanelDiff[];
+	/** Set when the panels both hold stand in another order: the version's. */
+	panelOrder?: Panel[];
 }
 
 const panelField = (a: Panel, b: Panel, f: PanelField): boolean =>
 	f === 'query' ? JSON.stringify(a.query) !== JSON.stringify(b.query) : a[f] !== b[f];
 
-/** Compares a version with the current dashboard, panels by id. */
+/** The items of a both hold, in a's order, when b holds them in another. */
+function reordered<T>(a: T[], b: T[], key: (x: T) => string): T[] | undefined {
+	const inA = new Set(a.map(key));
+	const inB = new Set(b.map(key));
+	const keptA = a.filter((x) => inB.has(key(x)));
+	const keptB = b.filter((x) => inA.has(key(x)));
+	return keptA.some((x, i) => key(x) !== key(keptB[i])) ? keptA : undefined;
+}
+
+/** Compares a version with the current dashboard, panels by id. Order
+ *  counts: the grid and the filter bar show theirs in it. */
 export function compareDashboard(
 	version: Pick<DashboardVersion, 'name' | 'filters' | 'panels'>,
 	current: Pick<Dashboard, 'name' | 'filters' | 'panels'>
@@ -291,15 +306,19 @@ export function compareDashboard(
 		const fields = PANEL_FIELDS.filter((f) => panelField(p, c, f));
 		if (fields.length) panelsChanged.push({ id: p.id, title: p.title, fields });
 	}
+	const filterOrder = reordered(version.filters, current.filters, (f) => f);
+	const panelOrder = reordered(version.panels, current.panels, (p) => p.id);
 	return {
 		...(version.name !== current.name
 			? { name: { version: version.name, current: current.name } }
 			: {}),
 		filtersOnlyInVersion: version.filters.filter((f) => !current.filters.includes(f)),
 		filtersOnlyInCurrent: current.filters.filter((f) => !version.filters.includes(f)),
+		...(filterOrder ? { filterOrder } : {}),
 		panelsOnlyInVersion: version.panels.filter((p) => !cur.has(p.id)),
 		panelsOnlyInCurrent: current.panels.filter((p) => !ver.has(p.id)),
-		panelsChanged
+		panelsChanged,
+		...(panelOrder ? { panelOrder } : {})
 	};
 }
 
@@ -308,6 +327,8 @@ export const sameDashboard = (c: DashboardComparison): boolean =>
 	!c.name &&
 	!c.filtersOnlyInVersion.length &&
 	!c.filtersOnlyInCurrent.length &&
+	!c.filterOrder &&
 	!c.panelsOnlyInVersion.length &&
 	!c.panelsOnlyInCurrent.length &&
-	!c.panelsChanged.length;
+	!c.panelsChanged.length &&
+	!c.panelOrder;

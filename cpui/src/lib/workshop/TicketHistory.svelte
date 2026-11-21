@@ -76,15 +76,18 @@
 			});
 	});
 
+	// Only the last pick's answer is shown: an earlier, slower one would show a
+	// version other than the one Restore posts.
 	async function pick(seq: number) {
 		selectedSeq = seq;
 		selected = null;
 		versionErr = '';
 		restoreErr = '';
 		try {
-			selected = await api.tickets.version(projectId, ticket.key, seq);
+			const v = await api.tickets.version(projectId, ticket.key, seq);
+			if (selectedSeq === seq) selected = v;
 		} catch (e) {
-			versionErr = errorMessage(e);
+			if (selectedSeq === seq) versionErr = errorMessage(e);
 		}
 	}
 

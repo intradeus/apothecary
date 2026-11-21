@@ -2884,6 +2884,8 @@ components:
           type: integer
         removed:
           type: integer
+        reordered:
+          type: boolean
       required:
         - added
         - changed

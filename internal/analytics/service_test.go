@@ -275,6 +275,68 @@ func TestDashboardVersions(t *testing.T) {
 	}
 }
 
+// The grid and the filter bar show their items in order: a reorder is a
+// change the summary names.
+func TestDashboardVersionsReorder(t *testing.T) {
+	f := newFake()
+	s := newService(f)
+	ctx := context.Background()
+	panel := func(id string) Panel {
+		return Panel{ID: id, Title: id, Viz: "bar", Width: 6, Query: Query{Grain: GrainRuns, GroupBy: []string{"flow_name"},
+			Measures: []MeasureRef{{Field: "cost_usd", Agg: AggSum}}}}
+	}
+	d, err := s.CreateDashboard(ctx, "u1", DashboardInput{Name: "Mine", Filters: []string{"flow_name", "project_id"},
+		Panels: []Panel{panel("a"), panel("b")}}, byU1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "Mine", Filters: []string{"flow_name", "project_id"},
+		Panels: []Panel{panel("b"), panel("a")}}, byU1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateDashboard(ctx, d.ID, DashboardInput{Name: "Mine", Filters: []string{"project_id", "flow_name"},
+		Panels: []Panel{panel("b"), panel("a")}}, byU1); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := s.DashboardVersions(ctx, d.ID)
+	if err != nil || len(vs) != 3 {
+		t.Fatalf("versions = %+v, %v", vs, err)
+	}
+	if !slices.Equal(vs[0].Changed, []string{"filters"}) || vs[0].PanelChanges != nil {
+		t.Errorf("filters reordered = %+v", vs[0])
+	}
+	if !slices.Equal(vs[1].Changed, []string{"panels"}) || vs[1].PanelChanges == nil ||
+		*vs[1].PanelChanges != (PanelChanges{Reordered: true}) {
+		t.Errorf("panels reordered = %+v %+v", vs[1], vs[1].PanelChanges)
+	}
+}
+
+func TestPanelChangesOrder(t *testing.T) {
+	ps := func(ids ...string) []Panel {
+		out := make([]Panel, len(ids))
+		for i, id := range ids {
+			out[i] = Panel{ID: id}
+		}
+		return out
+	}
+	for _, c := range []struct {
+		name          string
+		before, after []Panel
+		want          PanelChanges
+	}{
+		{"same", ps("a", "b"), ps("a", "b"), PanelChanges{}},
+		{"swapped", ps("a", "b"), ps("b", "a"), PanelChanges{Reordered: true}},
+		{"one inserted between", ps("a", "c"), ps("a", "b", "c"), PanelChanges{Added: 1}},
+		{"one removed between", ps("a", "b", "c"), ps("a", "c"), PanelChanges{Removed: 1}},
+		{"removed and moved", ps("a", "b", "c"), ps("c", "a"), PanelChanges{Removed: 1, Reordered: true}},
+		{"an id repeated before", ps("a", "a"), ps("a"), PanelChanges{Reordered: true}},
+	} {
+		if got := panelChanges(c.before, c.after); got != c.want {
+			t.Errorf("%s: %+v, want %+v", c.name, got, c.want)
+		}
+	}
+}
+
 func TestScorecardVersions(t *testing.T) {
 	f := newFake()
 	s := newService(f)

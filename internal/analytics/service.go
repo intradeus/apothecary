@@ -319,7 +319,8 @@ func (s *Service) DashboardVersions(ctx context.Context, id string) ([]Dashboard
 }
 
 // panelChanges counts panels added, removed and changed (same id, another
-// title, query, viz or width) from before to after.
+// title, query, viz or width) from before to after, and whether the panels
+// both hold changed order.
 func panelChanges(before, after []Panel) PanelChanges {
 	var pc PanelChanges
 	old := make(map[string]Panel, len(before))
@@ -327,9 +328,13 @@ func panelChanges(before, after []Panel) PanelChanges {
 		old[p.ID] = p
 	}
 	seen := make(map[string]bool, len(after))
+	kept := make([]string, 0, len(after))
 	for _, p := range after {
 		seen[p.ID] = true
 		o, ok := old[p.ID]
+		if ok {
+			kept = append(kept, p.ID)
+		}
 		switch {
 		case !ok:
 			pc.Added++
@@ -337,10 +342,16 @@ func panelChanges(before, after []Panel) PanelChanges {
 			pc.Changed++
 		}
 	}
+	i := 0
 	for _, p := range before {
 		if !seen[p.ID] {
 			pc.Removed++
+			continue
 		}
+		if i >= len(kept) || kept[i] != p.ID { // past the end: an id repeated before
+			pc.Reordered = true
+		}
+		i++
 	}
 	return pc
 }
