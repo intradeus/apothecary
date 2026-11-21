@@ -15,7 +15,8 @@ import (
 )
 
 // holdRun starts a run whose agent turn stays open and returns its id and
-// run token.
+// run token, once the run is running: the token comes before provisioning
+// ends, so a test reading the run's state at once would race it.
 func (x *env) holdRun(t *testing.T) (string, map[string]string) {
 	t.Helper()
 	release := make(chan struct{})
@@ -24,6 +25,12 @@ func (x *env) holdRun(t *testing.T) (string, map[string]string) {
 	id := x.createTicket(t, "T")
 	var tok string
 	waitFor(t, "the run token", func() bool { tok = x.e.RunToken(id); return tok != "" })
+	waitFor(t, "the run running", func() bool {
+		d := decode[struct {
+			Run run.View `json:"run"`
+		}](t, x.expect(t, "the run", nil, "GET", "/api/runs/"+id, nil, 200))
+		return d.Run.State == run.Running
+	})
 	return id, map[string]string{"Authorization": "Bearer " + tok}
 }
 
