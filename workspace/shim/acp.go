@@ -150,14 +150,6 @@ func (c *rpcConn) send(method string, params any) (wait func(done <-chan struct{
 			c.pmu.Lock()
 			delete(c.pending, id)
 			c.pmu.Unlock()
-			// Both may be ready (the agent's exit closes done right after
-			// its stdout delivered errAgentGone): select picks at random,
-			// so an answer already delivered wins.
-			select {
-			case r := <-ch:
-				return r.result, r.err
-			default:
-			}
 			return nil, errors.New(method + ": abandoned")
 		}
 	}, nil
