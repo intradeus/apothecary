@@ -40,6 +40,7 @@ const session = {
 	kind: 'general' as const,
 	workshop: 'w1',
 	subject: 'palette',
+	integration: 'int-1',
 	model: 'model-a',
 	createdAt: 'T',
 	updatedAt: 'T'
@@ -209,6 +210,26 @@ describe('AssistantPanel', () => {
 		await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
 		await userEvent.click(screen.getByRole('option', { name: 'model-b' }));
 		expect(api.assistant.setModel).toHaveBeenCalledWith('s1', 'model-b');
+	});
+
+	it('offers an older conversation only its own harness’s models once the harness changed', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({
+				choice: { integration: 'int-2', model: '', skillsets: [] },
+				integrations: [
+					{ id: 'int-1', name: 'mine', kind: 'claude-code' },
+					{ id: 'int-2', name: 'other', kind: 'opencode' }
+				],
+				models: ['other-x', 'other-y']
+			})
+		);
+		await setup();
+		const pick = screen.getByRole('combobox', { name: 'Model' });
+		expect(pick).toHaveAttribute('title', expect.stringMatching(/keeps the harness it started on/));
+		await userEvent.click(pick);
+		expect(screen.getAllByRole('option')).toHaveLength(2);
+		expect(screen.getByRole('option', { name: /model-a/ })).toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: /other-x/ })).not.toBeInTheDocument();
 	});
 
 	it('shows the workshop’s repositories, and refreshes them', async () => {

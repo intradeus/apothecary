@@ -319,6 +319,28 @@ describe('Dashboard', () => {
 			expect(screen.queryByRole('region', { name: 'Fill assistant' })).not.toBeInTheDocument();
 		});
 
+		it('drops the fill’s Undo with the draft on Cancel, so the discarded edits stay discarded', async () => {
+			render(Dashboard, { id: mine.id });
+			await userEvent.click(await screen.findByRole('button', { name: 'Edit' }));
+			await userEvent.click(screen.getByRole('button', { name: 'Remove Cost by version' }));
+			await userEvent.click(screen.getByRole('button', { name: fillButton }));
+			const box = screen.getByRole('textbox', { name: 'fill' });
+			await userEvent.clear(box);
+			box.focus();
+			await userEvent.paste(
+				JSON.stringify({ panels: [{ ...stages, id: 'n1', title: 'Failures' }] })
+			);
+			await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
+			await waitFor(() => expect(panelTitles()).toEqual(['Failures']));
+			expect(screen.getByRole('button', { name: 'Undo' })).toBeInTheDocument();
+
+			await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			await waitFor(() => expect(panelTitles()).toHaveLength(2));
+			expect(filled()).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Undo' })).not.toBeInTheDocument();
+			expect(screen.queryByRole('button', { name: 'Save dashboard' })).not.toBeInTheDocument();
+		});
+
 		it('is not offered on a built-in one', async () => {
 			vi.mocked(api.analytics.dashboards.get).mockResolvedValue(
 				aDashboard({ id: 'builtin-x', builtin: true })

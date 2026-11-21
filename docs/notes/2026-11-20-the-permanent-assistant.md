@@ -81,7 +81,10 @@ each doing one job.
   the harness's user-level skills directory in the session's home
   (`~/.claude/skills`, `~/.config/opencode/skills`), skipped when a marker
   there names the same pins. The settings apply to new conversations: an
-  open one keeps its harness and skills until *New conversation*.
+  open one keeps its harness and skills until *New conversation*, and its
+  model picker offers the standing choice's models only while the
+  conversation runs on that harness (otherwise its own model and the
+  default).
 - **The run desk's Assistant view is retired.** The run's local assistant
   sits beside its title; a stored desk layout that names the view loads
   without it and keeps its other tabs.
@@ -99,5 +102,6 @@ each doing one job.
   `TestAssistantWarm`, `TestAssistantChoiceSkillsets`,
   `TestAssistantSessionsArePersonal` (fresh, the subject route gone).
 - CPUI: `conversation.svelte.test.ts`, `GlobalAssistant.test.ts`,
+  `AssistantPanel.test.ts` (an older conversation after a harness switch),
   `FillAssistant.test.ts`, `FillButton.test.ts`, `Brewing.test.ts`, the
   fill pages' tests and `routes/system/assistant/page.test.ts`.

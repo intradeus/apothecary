@@ -20,9 +20,18 @@
 
 	let draft = $state('');
 
+	// The standing choice's models are its harness's. A conversation opened
+	// before the harness changed keeps its own: it is offered only its
+	// current model and the default, never another harness's ids.
+	const ownHarness = $derived(convo.session?.integration === convo.status?.choice.integration);
 	const modelOptions = $derived<SelectOption[]>([
 		{ value: '', label: t('assistant.modelDefault') },
-		...(convo.status?.models ?? []).map((m) => ({ value: m, label: m }))
+		...(ownHarness
+			? (convo.status?.models ?? [])
+			: convo.session?.model
+				? [convo.session.model]
+				: []
+		).map((m) => ({ value: m, label: m }))
 	]);
 
 	/** Ask the draft, or a preset (the draft stays). */
@@ -116,6 +125,7 @@
 				options={modelOptions}
 				value={convo.session.model ?? ''}
 				onchange={(m) => convo.pickModel(m)}
+				title={ownHarness ? undefined : t('assistant.modelOldHarness')}
 			/>
 		</span>
 	{/if}

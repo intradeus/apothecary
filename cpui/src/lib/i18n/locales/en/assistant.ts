@@ -9,6 +9,8 @@ export default {
 	'assistant.toSettings': 'Choose its harness',
 	'assistant.model': 'Model',
 	'assistant.modelDefault': 'the harness’s default',
+	'assistant.modelOldHarness':
+		'This conversation keeps the harness it started on. Start a new conversation for your new harness’s models.',
 	'assistant.repos': 'Repositories',
 	'assistant.skillWorkshop': 'Read a workshop’s repositories',
 	'assistant.noWorkshop': 'None',
