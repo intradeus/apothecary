@@ -4,12 +4,14 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -576,6 +578,45 @@ func TestBackgroundPasses(t *testing.T) {
 	}
 	cancel()
 	stop()
+}
+
+// A reaper pass that cannot read whose settings apply logs it and waits for
+// the next tick, rather than reap by defaults it was never given.
+func TestBackgroundReaperSaysTheOwnersReadFailed(t *testing.T) {
+	oldReap := reapEvery
+	reapEvery = 10 * time.Millisecond
+	t.Cleanup(func() { reapEvery = oldReap })
+
+	a, stop := booted(t, testBoot(t, pgtest.Empty(t)), false)
+	logged := &syncBuffer{}
+	a.log = slog.New(slog.NewTextHandler(logged, nil))
+	a.store.Close() // the database is gone for every loop from here
+
+	bg, cancel := context.WithCancel(context.Background())
+	a.background(bg)
+	waitFor(t, 10*time.Second, "the reaper to say the owners read failed", func() bool {
+		return strings.Contains(logged.String(), "reaper: owners read failed")
+	})
+	cancel()
+	stop()
+}
+
+// syncBuffer is a log sink several loops write at once.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  strings.Builder
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
 
 // seedFails fails the store call a seed step needs.

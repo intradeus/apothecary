@@ -338,18 +338,26 @@ func TestK8sCloseStopsForwards(t *testing.T) {
 	}
 }
 
+// A gateway that never answers healthy is not handed out. Its first answer
+// ends the wait, so the failure is the health wait's however slowly the
+// steps before it ran.
 func TestK8sEnsureGatewayUnhealthy(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
+		cancel()
 	}))
 	defer srv.Close()
 	port := srv.URL[strings.LastIndex(srv.URL, ":")+1:]
 	k := &kubeScript{answers: map[string]string{"get secret": secretAnswer}}
 	h := &K8sHost{Kube: &kube.Client{Bin: fakeKubectl(t, port), R: k}, Forward: true}
 	defer h.Close()
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	if c, err := h.EnsureGateway(ctx, "p", ""); err == nil {
-		t.Errorf("an unhealthy gateway was handed out: %+v", c)
+	c, err := h.EnsureGateway(ctx, "p", "")
+	if err == nil {
+		t.Fatalf("an unhealthy gateway was handed out: %+v", c)
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want the health wait cut short", err)
 	}
 }

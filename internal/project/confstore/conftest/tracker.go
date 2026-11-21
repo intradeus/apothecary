@@ -174,6 +174,83 @@ func trackers(t *testing.T, open opener) {
 		same(t, "a new row is its own remote", saved[1].RemoteID, saved[1].ID)
 	})
 
+	t.Run("a remote tracker's types take only their change type", func(t *testing.T) {
+		s := seeded(t, open)
+		svc := service(t, s)
+		remote := remoteTracker(t, svc, "u1", "jira")
+		cur, err := svc.EnsureRemoteTypes(ctx, remote.ID, []trackerport.RemoteType{{ID: "10", Name: "Bug"}, {ID: "11", Name: "Story"}})
+		ok(t, err)
+		edit := slices.Clone(cur)
+		edit[0].ChangeType, edit[0].Name = "hotfix", "Renamed"
+		saved, err := svc.PutTrackerTypes(ctx, remote.ID, edit, nil)
+		ok(t, err)
+		same(t, "names stay the tracker's", ids(saved, func(r confstore.TrackerType) string { return r.Name }), []string{"Bug", "Story"})
+		same(t, "change types", ids(saved, func(r confstore.TrackerType) string { return string(r.ChangeType) }),
+			[]string{"hotfix", string(cur[1].ChangeType)})
+
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, edit, map[string]string{cur[1].ID: cur[0].ID})
+		is(t, "a deletion", err, confstore.ErrInvalid)
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, edit[:1], nil)
+		is(t, "one left out", err, confstore.ErrInvalid)
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, []confstore.TrackerType{edit[0], edit[0]}, nil)
+		is(t, "one sent twice", err, confstore.ErrInvalid)
+		stranger := edit[1]
+		stranger.ID = "not-stored"
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, []confstore.TrackerType{edit[0], stranger}, nil)
+		is(t, "one not stored", err, confstore.ErrInvalid)
+		edit[1].ChangeType = "refactorish"
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, edit, nil)
+		is(t, "an unknown change type", err, confstore.ErrInvalid)
+		_, err = svc.PutTrackerTypes(ctx, "ghost", nil, nil)
+		if err == nil {
+			t.Error("a missing integration's types were saved")
+		}
+	})
+
+	t.Run("the internal tracker's types are the user's", func(t *testing.T) {
+		s := seeded(t, open)
+		svc := service(t, s)
+		in, err := svc.InternalTracker(ctx, "u1")
+		ok(t, err)
+		cur, err := svc.TrackerTypes(ctx, in.ID)
+		ok(t, err)
+		if len(cur) < 2 {
+			t.Fatalf("seeded types = %+v", cur)
+		}
+		keep := cur[0]
+		keep.Name = " Feature "
+		replace := map[string]string{}
+		for _, gone := range cur[1:] {
+			replace[gone.ID] = keep.ID
+		}
+		saved, err := svc.PutTrackerTypes(ctx, in.ID,
+			[]confstore.TrackerType{{Name: "Spike", ChangeType: trackerport.ChangeChore}, keep}, replace)
+		ok(t, err)
+		same(t, "names", ids(saved, func(r confstore.TrackerType) string { return r.Name }), []string{"Spike", "Feature"})
+		same(t, "a new row is its own remote", saved[0].RemoteID, saved[0].ID)
+		same(t, "the kept one", saved[1].ID, keep.ID)
+
+		spike := saved[0]
+		for _, c := range []struct {
+			name    string
+			rows    []confstore.TrackerType
+			replace map[string]string
+		}{
+			{"no name", []confstore.TrackerType{{Name: " ", ChangeType: trackerport.ChangeFix}}, nil},
+			{"a name twice", []confstore.TrackerType{spike, {Name: "spike", ChangeType: trackerport.ChangeFix}}, nil},
+			{"another tracker's id", []confstore.TrackerType{{ID: "ghost", Name: "Ghost", ChangeType: trackerport.ChangeFix}}, nil},
+			{"one listed twice", []confstore.TrackerType{spike, {ID: spike.ID, Name: "Other", ChangeType: trackerport.ChangeFix}}, nil},
+			{"a replacement for a kept one", []confstore.TrackerType{spike}, map[string]string{spike.ID: spike.ID}},
+			{"a replacement that goes too", []confstore.TrackerType{spike}, map[string]string{keep.ID: keep.ID}},
+		} {
+			_, err := svc.PutTrackerTypes(ctx, in.ID, c.rows, c.replace)
+			is(t, c.name, err, confstore.ErrInvalid)
+		}
+		got, err := svc.TrackerTypes(ctx, in.ID)
+		ok(t, err)
+		same(t, "after the refusals", ids(got, func(r confstore.TrackerType) string { return r.Name }), []string{"Spike", "Feature"})
+	})
+
 	t.Run("an internal ticket is its tracker's own issue", func(t *testing.T) {
 		s := seeded(t, open)
 		svc := service(t, s)
