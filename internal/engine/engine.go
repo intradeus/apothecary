@@ -2327,8 +2327,8 @@ func (e *Engine) PendingPings() []*Ping {
 		out = append(out, &Ping{
 			ID: v.PingID, RunID: v.RunID, Type: v.Type, Question: v.Question,
 			Context: v.Context, Files: v.Files, FileTypes: v.FileTypes, Link: v.Link, StageID: v.StageID,
-			Form: v.Form, AnswerKind: v.AnswerKind, Phase: v.Phase, EndsPhase: v.EndsPhase,
-			RaisedAt: v.RaisedAt,
+			Form: v.Form, AnswerKind: v.AnswerKind, Choices: v.Choices, Phase: v.Phase, EndsPhase: v.EndsPhase,
+			Ref: v.Ref, RaisedAt: v.RaisedAt,
 		})
 	}
 	return out
