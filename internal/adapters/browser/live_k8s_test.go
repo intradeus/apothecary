@@ -48,6 +48,7 @@ import (
 	"time"
 
 	"apothecary/internal/adapters/kube"
+	"apothecary/internal/platform/livetest"
 	"apothecary/internal/ports/browserport"
 	"apothecary/workspace"
 )
@@ -64,11 +65,11 @@ func pullPolicy() string {
 func TestLiveK8sBrowserSession(t *testing.T) {
 	kc := os.Getenv("APOTHECARY_LIVE_KUBECONFIG")
 	if kc == "" {
-		t.Skip("APOTHECARY_LIVE_KUBECONFIG unset: needs a throwaway cluster — see the header comment")
+		livetest.Skip(t, "APOTHECARY_LIVE_KUBECONFIG unset: needs a throwaway cluster — see the header comment")
 	}
 	prefix := os.Getenv("APOTHECARY_LIVE_IMAGE_PREFIX")
 	if prefix == "" {
-		t.Skip("APOTHECARY_LIVE_IMAGE_PREFIX unset: where this tree's shim image was pushed")
+		livetest.Skip(t, "APOTHECARY_LIVE_IMAGE_PREFIX unset: where this tree's shim image was pushed")
 	}
 	ns := os.Getenv("APOTHECARY_LIVE_K8S_NAMESPACE")
 	if ns == "" {

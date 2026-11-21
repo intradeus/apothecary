@@ -39,6 +39,7 @@ import (
 
 	"apothecary/internal/adapters/kube"
 	"apothecary/internal/flow/builtin"
+	"apothecary/internal/platform/livetest"
 	"apothecary/internal/platform/wstunnel"
 	"apothecary/internal/ports/egressport"
 	"apothecary/internal/ports/envport"
@@ -58,7 +59,7 @@ func liveKube(t *testing.T) (*kube.Client, string) {
 	t.Helper()
 	kc := os.Getenv("APOTHECARY_LIVE_KUBECONFIG")
 	if kc == "" {
-		t.Skip("APOTHECARY_LIVE_KUBECONFIG unset: needs a throwaway cluster — see the header comment")
+		livetest.Skip(t, "APOTHECARY_LIVE_KUBECONFIG unset: needs a throwaway cluster — see the header comment")
 	}
 	ns := os.Getenv("APOTHECARY_LIVE_K8S_NAMESPACE")
 	if ns == "" {
@@ -141,7 +142,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	c, ns := liveKube(t)
 	prefix := os.Getenv("APOTHECARY_LIVE_IMAGE_PREFIX")
 	if prefix == "" {
-		t.Skip("APOTHECARY_LIVE_IMAGE_PREFIX unset: where this tree's images were pushed")
+		livetest.Skip(t, "APOTHECARY_LIVE_IMAGE_PREFIX unset: where this tree's images were pushed")
 	}
 	img := func(name string) string { return prefix + "/" + name + ":local" }
 	gateway := os.Getenv("APOTHECARY_LIVE_GATEWAY") != "0"

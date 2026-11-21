@@ -85,7 +85,7 @@ func (h *K8sHost) Ensure(ctx context.Context, person string, tn tunnel, replace 
 	if found {
 		ended := pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded"
 		if !ended && !replace {
-			return h.Kube.WaitReady(ctx, name, 5*time.Minute)
+			return h.waitReady(ctx, name)
 		}
 		if err := h.Kube.Delete(ctx, "pod", name, true); err != nil {
 			return err
@@ -95,7 +95,24 @@ func (h *K8sHost) Ensure(ctx context.Context, person string, tn tunnel, replace 
 	if err := h.Kube.Create(ctx, h.podManifest(person, tn)); err != nil {
 		return err
 	}
-	return h.Kube.WaitReady(ctx, name, 5*time.Minute)
+	return h.waitReady(ctx, name)
+}
+
+// waitReady waits for the pod; one that does not come Ready says why with
+// its newest warning (a node that cannot make the pod's user namespace
+// leaves it at Init with only an event to say so).
+func (h *K8sHost) waitReady(ctx context.Context, name string) error {
+	err := h.Kube.WaitReady(ctx, name, 5*time.Minute)
+	if err == nil {
+		return nil
+	}
+	// The wait may have used up ctx: the question gets a moment of its own.
+	wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if w, werr := h.Kube.LastWarning(wctx, name); werr == nil && w != "" {
+		return fmt.Errorf("%w; the pod's last warning: %s", err, w)
+	}
+	return err
 }
 
 func (h *K8sHost) Inspect(ctx context.Context, person string) (string, bool, bool, error) {

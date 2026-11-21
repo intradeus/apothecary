@@ -534,9 +534,13 @@ jobs:
         run: |
           until [ -f "$RUNNER_TEMP/disk-freed" ]; do sleep 2; done
           df -h /
+      # Strict: a live suite that would skip (a variable unset, a cluster
+      # that cannot run what it tests) fails here instead. Locally it skips
+      # and says why (internal/platform/livetest).
       - run: task sandbox:test:${{ matrix.suite }}
         env:
           APOTHECARY_IMAGES_PREBUILT: '1'
+          APOTHECARY_LIVE_STRICT: '1'
 
   # The engine's image builds (its Dockerfile builds the binary and the CPUI
   # again, from source). Run when its build inputs change; the code itself is

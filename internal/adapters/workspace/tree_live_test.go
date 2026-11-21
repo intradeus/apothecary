@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"apothecary/internal/platform/livetest"
 	"apothecary/internal/platform/shell"
 	"apothecary/internal/ports/envport"
 )
@@ -23,7 +24,7 @@ import (
 // pulls:  go test -tags live -run TestLiveWriteTree ./internal/adapters/workspace/
 func TestLiveWriteTreeScript(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		t.Skip("docker not on PATH")
+		livetest.Skip(t, "docker not on PATH")
 	}
 	files := []envport.TreeFile{
 		{Path: "SKILL.md", Data: []byte("---\nname: x\ndescription: d\n---\nbody\n")},
