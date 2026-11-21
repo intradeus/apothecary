@@ -759,6 +759,25 @@ func TestRPCCallFailures(t *testing.T) {
 	}
 }
 
+// An answer already delivered wins over a done that closed meanwhile: the
+// agent's exit closes done right after its stdout delivered errAgentGone,
+// and a late waiter must still see why its call ended.
+func TestRPCAnswerBeatsDone(t *testing.T) {
+	for range 100 {
+		c := newRPCConn(io.Discard)
+		wait, err := c.send("session/prompt", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		c.readLoop(strings.NewReader(""))
+		done := make(chan struct{})
+		close(done)
+		if _, err := wait(done); !errors.Is(err, errAgentGone) {
+			t.Fatalf("answered, then done: %v", err)
+		}
+	}
+}
+
 // The agent's stream is forgiving: log lines on stdout are skipped, a response
 // nobody waits for dropped, and the last line counts without a newline.
 func TestRPCReadLoop(t *testing.T) {
