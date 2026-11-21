@@ -200,7 +200,7 @@ func TestTheInternalTrackerIsReadFromTheStore(t *testing.T) {
 	internal := w.internalSource(t)
 	var ids []string
 	for _, title := range []string{"one", "two", "three", "four"} {
-		tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: title, Goal: "g"}, owner, nil)
+		tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: title, Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -227,7 +227,7 @@ func TestTheInternalTrackerIsReadFromTheStore(t *testing.T) {
 	if row.Record == nil || row.Record.ID != row.Issue.Key || row.Issue.RemoteID != row.Issue.Key || row.Issue.Status != "To do" || row.Issue.Done {
 		t.Errorf("row = %+v", row)
 	}
-	if _, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "five", Goal: "g"}, owner, nil); err != nil {
+	if _, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "five", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil); err != nil {
 		t.Fatal(err)
 	}
 	open.Cursor = first.Next

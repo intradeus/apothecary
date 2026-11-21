@@ -28,7 +28,8 @@ type Mem struct {
 	statuses     map[string]TrackerStatus
 	types        map[string]TrackerType
 	comments     map[string]TicketComment
-	links        map[string]TicketLink // ticketID \x00 url
+	links        map[string]TicketLink      // ticketID \x00 url
+	tktVersions  map[string][]TicketVersion // by ticket, oldest first
 	versions     map[string]FlowVersion
 	bindings     map[string]FlowBinding
 	automations  map[string]Automation
@@ -56,6 +57,7 @@ func NewMem() *Mem {
 		types:        map[string]TrackerType{},
 		comments:     map[string]TicketComment{},
 		links:        map[string]TicketLink{},
+		tktVersions:  map[string][]TicketVersion{},
 		versions:     map[string]FlowVersion{},
 		bindings:     map[string]FlowBinding{},
 		automations:  map[string]Automation{},
@@ -496,7 +498,7 @@ func (m *Mem) DeleteProjectSecret(_ context.Context, projectID, name string) err
 	return nil
 }
 
-func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
+func (m *Mem) UpsertTicket(_ context.Context, t Ticket, c Change) error {
 	t = storedTicket(t)
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -517,6 +519,7 @@ func (m *Mem) UpsertTicket(_ context.Context, t Ticket) error {
 		t.CreatedAt = old.CreatedAt
 	}
 	m.tickets[t.ID] = t
+	m.appendTicketVersion(t, c, t.UpdatedAt)
 	return nil
 }
 
@@ -630,7 +633,7 @@ func (m *Mem) ListInternalTickets(_ context.Context, sourceID string, q Internal
 	return out, nil
 }
 
-func (m *Mem) SetTicketSeen(_ context.Context, id string, seen TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time) error {
+func (m *Mem) SetTicketSeen(_ context.Context, id string, seen TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time, c Change) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	t, ok := m.tickets[id]
@@ -645,6 +648,7 @@ func (m *Mem) SetTicketSeen(_ context.Context, id string, seen TicketSeen, typeI
 	t.TypeID, t.ChangeType, t.Labels = typeID, changeType, seen.Labels
 	t.UpdatedAt = pgTime(at)
 	m.tickets[id] = storedTicket(t)
+	m.appendTicketVersion(m.tickets[id], c, at)
 	return nil
 }
 

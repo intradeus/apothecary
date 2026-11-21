@@ -500,7 +500,7 @@ func TestTrackerStatusesAndTypes(t *testing.T) {
 		t.Fatalf("internal statuses = %d %s", res.StatusCode, data)
 	}
 	list := internal.Statuses
-	in, err := x.srv.Conf.CreateTicket(context.Background(), confstore.Ticket{UserID: testUser, Title: "Local one"})
+	in, err := x.srv.Conf.CreateTicket(context.Background(), confstore.Ticket{UserID: testUser, Title: "Local one"}, confstore.Change{Kind: confstore.AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}

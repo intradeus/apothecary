@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -21,6 +22,9 @@ type memAnalytics struct {
 	asked   []any
 	dash    map[string]analytics.Dashboard
 	scores  map[string]analytics.Scorecard
+	// dashVers and scoreVers keep every write, oldest first.
+	dashVers  map[string][]analytics.DashboardVersion
+	scoreVers map[string][]analytics.ScorecardVersion
 }
 
 func (m *memAnalytics) RunQuery(_ context.Context, c analytics.Compiled) ([]analytics.Row, error) {
@@ -64,13 +68,32 @@ func (m *memAnalytics) GetDashboard(_ context.Context, id string) (analytics.Das
 	return d, nil
 }
 
-func (m *memAnalytics) PutDashboard(_ context.Context, d analytics.Dashboard) error {
+func (m *memAnalytics) PutDashboard(_ context.Context, d analytics.Dashboard, c analytics.Change) error {
 	m.dash[d.ID] = d
+	vs := m.dashVers[d.ID]
+	m.dashVers[d.ID] = append(vs, analytics.DashboardVersion{DashboardID: d.ID, Seq: len(vs) + 1, Name: d.Name, Filters: d.Filters, Panels: d.Panels, Change: c, CreatedAt: d.UpdatedAt})
 	return nil
+}
+
+func (m *memAnalytics) ListDashboardVersions(_ context.Context, id string) ([]analytics.DashboardVersion, error) {
+	if _, ok := m.dash[id]; !ok {
+		return nil, fmt.Errorf("dashboard %s: %w", id, analytics.ErrNotFound)
+	}
+	vs := slices.Clone(m.dashVers[id])
+	slices.Reverse(vs)
+	return vs, nil
+}
+
+func (m *memAnalytics) GetDashboardVersion(_ context.Context, id string, seq int) (analytics.DashboardVersion, error) {
+	if vs := m.dashVers[id]; seq >= 1 && seq <= len(vs) {
+		return vs[seq-1], nil
+	}
+	return analytics.DashboardVersion{}, fmt.Errorf("dashboard %s version %d: %w", id, seq, analytics.ErrNotFound)
 }
 
 func (m *memAnalytics) DeleteDashboard(_ context.Context, id string) error {
 	delete(m.dash, id)
+	delete(m.dashVers, id)
 	return nil
 }
 
@@ -92,20 +115,40 @@ func (m *memAnalytics) GetScorecard(_ context.Context, id string) (analytics.Sco
 	return s, nil
 }
 
-func (m *memAnalytics) PutScorecard(_ context.Context, s analytics.Scorecard) error {
+func (m *memAnalytics) PutScorecard(_ context.Context, s analytics.Scorecard, c analytics.Change) error {
 	m.scores[s.ID] = s
+	vs := m.scoreVers[s.ID]
+	m.scoreVers[s.ID] = append(vs, analytics.ScorecardVersion{ScorecardID: s.ID, Seq: len(vs) + 1, Name: s.Name, Terms: s.Terms, Change: c, CreatedAt: s.UpdatedAt})
 	return nil
+}
+
+func (m *memAnalytics) ListScorecardVersions(_ context.Context, id string) ([]analytics.ScorecardVersion, error) {
+	if _, ok := m.scores[id]; !ok {
+		return nil, fmt.Errorf("scorecard %s: %w", id, analytics.ErrNotFound)
+	}
+	vs := slices.Clone(m.scoreVers[id])
+	slices.Reverse(vs)
+	return vs, nil
+}
+
+func (m *memAnalytics) GetScorecardVersion(_ context.Context, id string, seq int) (analytics.ScorecardVersion, error) {
+	if vs := m.scoreVers[id]; seq >= 1 && seq <= len(vs) {
+		return vs[seq-1], nil
+	}
+	return analytics.ScorecardVersion{}, fmt.Errorf("scorecard %s version %d: %w", id, seq, analytics.ErrNotFound)
 }
 
 func (m *memAnalytics) DeleteScorecard(_ context.Context, id string) error {
 	delete(m.scores, id)
+	delete(m.scoreVers, id)
 	return nil
 }
 
 func newAnalyticsEnv(t *testing.T) (*env, *memAnalytics) {
 	t.Helper()
 	x := newEnv(t, engine.Config{})
-	m := &memAnalytics{dash: map[string]analytics.Dashboard{}, scores: map[string]analytics.Scorecard{}}
+	m := &memAnalytics{dash: map[string]analytics.Dashboard{}, scores: map[string]analytics.Scorecard{},
+		dashVers: map[string][]analytics.DashboardVersion{}, scoreVers: map[string][]analytics.ScorecardVersion{}}
 	x.srv.Analytics = &analytics.Service{Store: m}
 	x.ts.Close()
 	x.ts = httptest.NewServer(x.srv.Handler())
@@ -275,6 +318,124 @@ func TestAnalyticsDashboardsAndScorecardsAreScoped(t *testing.T) {
 	}
 	if resp, _ := x.do(t, "DELETE", spath, nil, nil); resp.StatusCode != http.StatusNoContent {
 		t.Errorf("delete scorecard = %d", resp.StatusCode)
+	}
+}
+
+// A dashboard's and a scorecard's history: listed newest first with what
+// changed and who (by handle), one version read whole, one restored as a
+// new version; another person's history is not there; a built-in has
+// none and is not restored.
+func TestAnalyticsVersions(t *testing.T) {
+	x, m := newAnalyticsEnv(t)
+	bob := x.addUser(t, "bob", false)
+	panel := analytics.Panel{ID: "p1", Title: "n", Viz: "number", Width: 3, Query: analytics.Query{Grain: analytics.GrainRuns}}
+	resp, data := x.do(t, "POST", "/api/analytics/dashboards", map[string]any{"name": "Mine", "panels": []analytics.Panel{panel}}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create = %d %s", resp.StatusCode, data)
+	}
+	d := decode[analytics.Dashboard](t, data)
+	path := "/api/analytics/dashboards/" + d.ID
+	panel2 := panel
+	panel2.ID, panel2.Title = "p2", "two"
+	if resp, data := x.do(t, "PUT", path, map[string]any{"name": "Renamed", "panels": []analytics.Panel{panel, panel2}, "assisted": true}, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("update = %d %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", path+"/versions", nil, nil)
+	list := decode[[]DashboardVersionSummary](t, data)
+	if resp.StatusCode != http.StatusOK || len(list) != 2 || list[0].Seq != 2 || list[0].AuthorKind != analytics.AuthorAssistant ||
+		list[0].AuthorHandle != "tester" || !slices.Equal(list[0].Changed, []string{"name", "panels"}) ||
+		list[0].PanelChanges == nil || list[0].PanelChanges.Added != 1 || list[1].AuthorKind != analytics.AuthorUser || !list[1].Oldest {
+		t.Fatalf("versions = %d %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", path+"/versions/1", nil, nil)
+	if v := decode[DashboardVersionView](t, data); resp.StatusCode != http.StatusOK || v.Name != "Mine" || len(v.Panels) != 1 || v.AuthorHandle != "tester" {
+		t.Errorf("version 1 = %d %s", resp.StatusCode, data)
+	}
+	if resp, _ := x.do(t, "GET", path+"/versions/x", nil, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("bad seq = %d", resp.StatusCode)
+	}
+	if resp, _ := x.do(t, "GET", path+"/versions/9", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("missing seq = %d", resp.StatusCode)
+	}
+	resp, data = x.do(t, "POST", path+"/versions/1/restore", nil, nil)
+	if got := decode[analytics.Dashboard](t, data); resp.StatusCode != http.StatusOK || got.Name != "Mine" || len(got.Panels) != 1 {
+		t.Errorf("restore = %d %s", resp.StatusCode, data)
+	}
+	if vs := m.dashVers[d.ID]; len(vs) != 3 || vs[2].RestoredFrom != 1 || vs[2].Kind != analytics.AuthorUser || vs[2].AuthorID != testUser {
+		t.Errorf("restored version = %+v", vs)
+	}
+	// Content the catalog no longer allows is a 400.
+	m.dashVers[d.ID] = append(m.dashVers[d.ID], analytics.DashboardVersion{DashboardID: d.ID, Seq: 4, Name: "Old",
+		Panels: []analytics.Panel{{ID: "x", Title: "x", Viz: "pie", Width: 3, Query: analytics.Query{Grain: analytics.GrainRuns}}}})
+	if resp, _ := x.do(t, "POST", path+"/versions/4/restore", nil, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("invalid restore = %d", resp.StatusCode)
+	}
+	for _, c := range []struct{ method, path string }{{"GET", path + "/versions"}, {"GET", path + "/versions/1"}, {"POST", path + "/versions/1/restore"}} {
+		if resp, _ := x.do(t, c.method, c.path, nil, bob); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("bob %s %s = %d", c.method, c.path, resp.StatusCode)
+		}
+	}
+	if resp, data := x.do(t, "GET", "/api/analytics/dashboards/builtin-overview/versions", nil, bob); resp.StatusCode != http.StatusOK || strings.TrimSpace(string(data)) != "[]" {
+		t.Errorf("built-in versions = %d %s", resp.StatusCode, data)
+	}
+	if resp, _ := x.do(t, "POST", "/api/analytics/dashboards/builtin-overview/versions/1/restore", nil, nil); resp.StatusCode != http.StatusConflict {
+		t.Errorf("built-in restore = %d", resp.StatusCode)
+	}
+
+	terms := func(w float64) []analytics.Term {
+		return []analytics.Term{{Measure: analytics.MeasureRef{Field: "cost_usd", Agg: analytics.AggSum}, Direction: "lower", Weight: w}}
+	}
+	resp, data = x.do(t, "POST", "/api/analytics/scorecards", map[string]any{"name": "Cheap", "terms": terms(1), "assisted": true}, nil)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create scorecard = %d %s", resp.StatusCode, data)
+	}
+	sc := decode[analytics.Scorecard](t, data)
+	spath := "/api/analytics/scorecards/" + sc.ID
+	if resp, data := x.do(t, "PUT", spath, map[string]any{"name": "Cheap", "terms": terms(2)}, nil); resp.StatusCode != http.StatusOK {
+		t.Fatalf("update scorecard = %d %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", spath+"/versions", nil, nil)
+	slist := decode[[]ScorecardVersionSummary](t, data)
+	if resp.StatusCode != http.StatusOK || len(slist) != 2 || !slices.Equal(slist[0].Changed, []string{"terms"}) || slist[0].AuthorKind != analytics.AuthorUser ||
+		slist[1].AuthorKind != analytics.AuthorAssistant || slist[1].AuthorHandle != "tester" || !slist[1].Oldest {
+		t.Fatalf("scorecard versions = %d %s", resp.StatusCode, data)
+	}
+	resp, data = x.do(t, "GET", spath+"/versions/1", nil, nil)
+	if v := decode[ScorecardVersionView](t, data); resp.StatusCode != http.StatusOK || v.Terms[0].Weight != 1 {
+		t.Errorf("scorecard version 1 = %d %s", resp.StatusCode, data)
+	}
+	if resp, _ := x.do(t, "GET", spath+"/versions/0", nil, nil); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("seq 0 = %d", resp.StatusCode)
+	}
+	resp, data = x.do(t, "POST", spath+"/versions/1/restore", nil, nil)
+	if got := decode[analytics.Scorecard](t, data); resp.StatusCode != http.StatusOK || got.Terms[0].Weight != 1 {
+		t.Errorf("restore scorecard = %d %s", resp.StatusCode, data)
+	}
+	if resp, _ := x.do(t, "POST", spath+"/versions/9/restore", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("restore missing seq = %d", resp.StatusCode)
+	}
+	for _, c := range []struct{ method, path string }{{"GET", spath + "/versions"}, {"GET", spath + "/versions/1"}, {"POST", spath + "/versions/1/restore"}} {
+		if resp, _ := x.do(t, c.method, c.path, nil, bob); resp.StatusCode != http.StatusNotFound {
+			t.Errorf("bob %s %s = %d", c.method, c.path, resp.StatusCode)
+		}
+	}
+	if resp, data := x.do(t, "GET", "/api/analytics/scorecards/builtin-balanced/versions", nil, nil); resp.StatusCode != http.StatusOK || strings.TrimSpace(string(data)) != "[]" {
+		t.Errorf("built-in scorecard versions = %d %s", resp.StatusCode, data)
+	}
+	if resp, _ := x.do(t, "GET", "/api/analytics/scorecards/builtin-balanced/versions/1", nil, nil); resp.StatusCode != http.StatusNotFound {
+		t.Errorf("built-in scorecard version = %d", resp.StatusCode)
+	}
+	if resp, _ := x.do(t, "POST", "/api/analytics/scorecards/builtin-balanced/versions/1/restore", nil, nil); resp.StatusCode != http.StatusConflict {
+		t.Errorf("built-in scorecard restore = %d", resp.StatusCode)
+	}
+}
+
+// A conflicting save (another writer took the version) is a 409.
+func TestAnalyticsConflictIs409(t *testing.T) {
+	rec := httptest.NewRecorder()
+	analyticsErr(rec, fmt.Errorf("d1 changed meanwhile: %w", analytics.ErrConflict))
+	if rec.Code != http.StatusConflict {
+		t.Errorf("conflict = %d", rec.Code)
 	}
 }
 

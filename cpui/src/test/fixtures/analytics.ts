@@ -4,6 +4,8 @@ import type {
 	Catalog,
 	CatalogField,
 	Dashboard,
+	DashboardVersion,
+	DashboardVersionSummary,
 	Panel,
 	Scorecard
 } from '$lib/domain';
@@ -100,5 +102,27 @@ export const aScorecard = (over: Partial<Scorecard> = {}): Scorecard => ({
 	terms: [{ measure: { field: 'cost_usd', agg: 'median' }, direction: 'lower', weight: 1 }],
 	createdAt: '2026-10-01T00:00:00Z',
 	updatedAt: '2026-10-01T00:00:00Z',
+	...over
+});
+
+export const aDashboardVersion = (over: Partial<DashboardVersion> = {}): DashboardVersion => ({
+	seq: 1,
+	name: 'Mine',
+	filters: ['flow_name'],
+	panels: [aPanel()],
+	author: { kind: 'user', id: 'u1', handle: 'lu' },
+	createdAt: '2026-10-01T00:00:00Z',
+	...over
+});
+
+export const aDashboardVersionSummary = (
+	over: Partial<DashboardVersionSummary> = {}
+): DashboardVersionSummary => ({
+	seq: 1,
+	name: 'Mine',
+	author: { kind: 'user', id: 'u1', handle: 'lu' },
+	createdAt: '2026-10-01T00:00:00Z',
+	changed: [],
+	oldest: false,
 	...over
 });

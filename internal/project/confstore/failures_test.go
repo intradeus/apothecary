@@ -70,11 +70,25 @@ func (d *brokenDB) GetProject(ctx Ctx, id string) (Project, error) {
 	return d.Mem.GetProject(ctx, id)
 }
 
-func (d *brokenDB) UpsertTicket(ctx Ctx, t Ticket) error {
+func (d *brokenDB) UpsertTicket(ctx Ctx, t Ticket, c Change) error {
 	if err := d.err("UpsertTicket"); err != nil {
 		return err
 	}
-	return d.Mem.UpsertTicket(ctx, t)
+	return d.Mem.UpsertTicket(ctx, t, c)
+}
+
+func (d *brokenDB) ListTicketVersions(ctx Ctx, id string) ([]TicketVersion, error) {
+	if err := d.err("ListTicketVersions"); err != nil {
+		return nil, err
+	}
+	return d.Mem.ListTicketVersions(ctx, id)
+}
+
+func (d *brokenDB) GetTicketVersion(ctx Ctx, id string, seq int) (TicketVersion, error) {
+	if err := d.err("GetTicketVersion"); err != nil {
+		return TicketVersion{}, err
+	}
+	return d.Mem.GetTicketVersion(ctx, id, seq)
 }
 
 func (d *brokenDB) UpsertFlow(ctx Ctx, r FlowRow) error {
@@ -670,7 +684,7 @@ func TestDeleteProject(t *testing.T) {
 	if _, err := svc.PutFlowBinding(ctx, p.ID, "v1", map[string]string{"model": "fake/other"}); err != nil {
 		t.Fatal(err)
 	}
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1134,21 +1148,21 @@ func TestValidateTicket(t *testing.T) {
 		{"another tracker's status", Ticket{UserID: "u1", Title: "t", StatusID: "ghost"}, "not one of its tracker's"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := svc.CreateTicket(ctx, tc.in)
+			_, err := svc.CreateTicket(ctx, tc.in, Change{Kind: AuthorUser})
 			wantErr(t, tc.name, err, ErrInvalid)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Errorf("err = %v", err)
 			}
 		})
 	}
-	got, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: " t ", BaseBranch: " b ", ChangeType: " FIX "})
+	got, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: " t ", BaseBranch: " b ", ChangeType: " FIX "}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Title != "t" || got.BaseBranch != "b" || got.ChangeType != trackerport.ChangeFix {
 		t.Errorf("normalised = %+v", got)
 	}
-	plain, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"})
+	plain, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"}, Change{Kind: AuthorUser})
 	if err != nil || plain.ChangeType != trackerport.ChangeFeat {
 		t.Errorf("default = %+v, %v", plain, err)
 	}
@@ -1157,20 +1171,20 @@ func TestValidateTicket(t *testing.T) {
 func TestTicketStoreFailures(t *testing.T) {
 	ctx := context.Background()
 	svc, db := newBroken(t)
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = svc.UpdateTicket(ctx, "missing", tk)
+	_, err = svc.UpdateTicket(ctx, "missing", tk, Change{Kind: AuthorUser})
 	wantErr(t, "missing", err, ErrNotFound)
 	bad := tk
 	bad.Title = ""
-	_, err = svc.UpdateTicket(ctx, tk.ID, bad)
+	_, err = svc.UpdateTicket(ctx, tk.ID, bad, Change{Kind: AuthorUser})
 	wantErr(t, "invalid", err, ErrInvalid)
 	db.fail["UpsertTicket"] = true
-	_, err = svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"})
+	_, err = svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t"}, Change{Kind: AuthorUser})
 	wantErr(t, "create", err, errDB)
-	_, err = svc.UpdateTicket(ctx, tk.ID, tk)
+	_, err = svc.UpdateTicket(ctx, tk.ID, tk, Change{Kind: AuthorUser})
 	wantErr(t, "update", err, errDB)
 }
 
@@ -1207,7 +1221,7 @@ func TestRecordBelongsToTheIntegrationOwner(t *testing.T) {
 func TestTicketTextIsStoredClean(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newSvc(t)
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t\x00", Goal: "g\xff"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t\x00", Goal: "g\xff"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1216,7 +1230,7 @@ func TestTicketTextIsStoredClean(t *testing.T) {
 		t.Errorf("ticket = %+v, %v", got, err)
 	}
 	// A title that was nothing but NUL is still a title: not silently empty.
-	if _, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "\x00"}); err != nil {
+	if _, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "\x00"}, Change{Kind: AuthorUser}); err != nil {
 		t.Errorf("title of a NUL = %v", err)
 	}
 	in, err := svc.CreateIntegration(ctx, Integration{UserID: "u1", Port: PortTicketSource, Kind: "jira", Name: "j"})
@@ -1234,11 +1248,11 @@ func TestTicketTextIsStoredClean(t *testing.T) {
 func TestUpdateTicketKeepsTheAutomation(t *testing.T) {
 	ctx := context.Background()
 	svc, _ := newSvc(t)
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t", AutomationID: "auto-1"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "t", AutomationID: "auto-1"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := svc.UpdateTicket(ctx, tk.ID, Ticket{Title: "edited"})
+	got, err := svc.UpdateTicket(ctx, tk.ID, Ticket{Title: "edited"}, Change{Kind: AuthorUser})
 	if err != nil || got.AutomationID != "auto-1" {
 		t.Errorf("ticket = %+v, %v", got, err)
 	}
@@ -1748,7 +1762,7 @@ func TestValidateAutomation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1850,7 +1864,7 @@ func TestUpdateAutomationKeepsWhatTheWatcherMarked(t *testing.T) {
 	ctx := context.Background()
 	svc, db := newBroken(t)
 	p := seedProject(t, svc)
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: p.UserID, Title: "t"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}

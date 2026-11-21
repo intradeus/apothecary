@@ -68,37 +68,47 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"PutProjectSecret":    func() error { return s.PutProjectSecret(ctx, "p", confstore.StoredProjectSecret{}) },
 		"ListProjectSecrets":  func() error { _, err := s.ListProjectSecrets(ctx, "p"); return err },
 		"DeleteProjectSecret": func() error { return s.DeleteProjectSecret(ctx, "p", "n") },
-		"UpsertTicket":        func() error { return s.UpsertTicket(ctx, confstore.Ticket{ID: "t"}) },
+		"UpsertTicket": func() error {
+			return s.UpsertTicket(ctx, confstore.Ticket{ID: "t"}, confstore.Change{Kind: confstore.AuthorUser})
+		},
 		"GetTicket":           func() error { _, err := s.GetTicket(ctx, "t"); return err },
 		"GetTicketByRemote":   func() error { _, err := s.GetTicketByRemote(ctx, "i", "r"); return err },
 		"ListTicketsByRemote": func() error { _, err := s.ListTicketsByRemote(ctx, "i", []string{"r"}); return err },
 		"ListInternalTickets": func() error { _, err := s.ListInternalTickets(ctx, "i", confstore.InternalTicketQuery{}); return err },
-		"SetTicketSeen":       func() error { return s.SetTicketSeen(ctx, "t", confstore.TicketSeen{}, "", "", now) },
-		"DeleteTicket":        func() error { return s.DeleteTicket(ctx, "t") },
-		"UpsertFlow":          func() error { return s.UpsertFlow(ctx, confstore.FlowRow{}) },
-		"GetFlow":             func() error { _, err := s.GetFlow(ctx, "p", "f"); return err },
-		"ListFlows":           func() error { _, err := s.ListFlows(ctx, "p"); return err },
-		"DeleteFlow":          func() error { return s.DeleteFlow(ctx, "p", "f") },
-		"PutFlowBinding":      func() error { return s.PutFlowBinding(ctx, confstore.FlowBinding{}) },
-		"GetFlowBinding":      func() error { _, err := s.GetFlowBinding(ctx, "p", "f"); return err },
-		"ListFlowBindings":    func() error { _, err := s.ListFlowBindings(ctx, "p"); return err },
-		"DeleteFlowBinding":   func() error { return s.DeleteFlowBinding(ctx, "p", "f") },
-		"UpsertAutomation":    func() error { return s.UpsertAutomation(ctx, confstore.Automation{ID: "a"}) },
-		"GetAutomation":       func() error { _, err := s.GetAutomation(ctx, "a"); return err },
-		"ListAutomations":     func() error { _, err := s.ListAutomations(ctx, "p"); return err },
-		"DeleteAutomation":    func() error { return s.DeleteAutomation(ctx, "a") },
-		"GetFlowVersion":      func() error { _, err := s.GetFlowVersion(ctx, "p", "h"); return err },
-		"ListFlowVersions":    func() error { _, err := s.ListFlowVersions(ctx, "p", "f"); return err },
-		"GetSettings":         func() error { _, err := s.GetSettings(ctx, "u"); return err },
-		"PutSetting":          func() error { return s.PutSetting(ctx, "u", "k", "1") },
-		"SettingsOwners":      func() error { _, err := s.SettingsOwners(ctx); return err },
-		"UpsertCredential":    func() error { return s.UpsertCredential(ctx, confstore.ProviderCredential{ID: "c"}) },
-		"GetCredential":       func() error { _, err := s.GetCredential(ctx, "c"); return err },
-		"ListCredentials":     func() error { _, err := s.ListCredentials(ctx, "u"); return err },
-		"DeleteCredential":    func() error { return s.DeleteCredential(ctx, "c") },
-		"InsertAttachment":    func() error { return s.InsertAttachment(ctx, filestore.Attachment{ID: "a"}) },
-		"GetAttachment":       func() error { _, err := s.GetAttachment(ctx, "a"); return err },
-		"ClaimAttachments":    func() error { return s.ClaimAttachments(ctx, "", []string{"a"}, "", "r", "") },
+		"SetTicketSeen": func() error {
+			return s.SetTicketSeen(ctx, "t", confstore.TicketSeen{}, "", "", now, confstore.Change{Kind: confstore.AuthorSync})
+		},
+		"DeleteTicket":       func() error { return s.DeleteTicket(ctx, "t") },
+		"ListTicketVersions": func() error { _, err := s.ListTicketVersions(ctx, "t"); return err },
+		"GetTicketVersion":   func() error { _, err := s.GetTicketVersion(ctx, "t", 1); return err },
+		"SetTicketLabels": func() error {
+			_, err := s.SetTicketLabels(ctx, "t", nil, false, now, confstore.Change{Kind: confstore.AuthorUser})
+			return err
+		},
+		"UpsertFlow":        func() error { return s.UpsertFlow(ctx, confstore.FlowRow{}) },
+		"GetFlow":           func() error { _, err := s.GetFlow(ctx, "p", "f"); return err },
+		"ListFlows":         func() error { _, err := s.ListFlows(ctx, "p"); return err },
+		"DeleteFlow":        func() error { return s.DeleteFlow(ctx, "p", "f") },
+		"PutFlowBinding":    func() error { return s.PutFlowBinding(ctx, confstore.FlowBinding{}) },
+		"GetFlowBinding":    func() error { _, err := s.GetFlowBinding(ctx, "p", "f"); return err },
+		"ListFlowBindings":  func() error { _, err := s.ListFlowBindings(ctx, "p"); return err },
+		"DeleteFlowBinding": func() error { return s.DeleteFlowBinding(ctx, "p", "f") },
+		"UpsertAutomation":  func() error { return s.UpsertAutomation(ctx, confstore.Automation{ID: "a"}) },
+		"GetAutomation":     func() error { _, err := s.GetAutomation(ctx, "a"); return err },
+		"ListAutomations":   func() error { _, err := s.ListAutomations(ctx, "p"); return err },
+		"DeleteAutomation":  func() error { return s.DeleteAutomation(ctx, "a") },
+		"GetFlowVersion":    func() error { _, err := s.GetFlowVersion(ctx, "p", "h"); return err },
+		"ListFlowVersions":  func() error { _, err := s.ListFlowVersions(ctx, "p", "f"); return err },
+		"GetSettings":       func() error { _, err := s.GetSettings(ctx, "u"); return err },
+		"PutSetting":        func() error { return s.PutSetting(ctx, "u", "k", "1") },
+		"SettingsOwners":    func() error { _, err := s.SettingsOwners(ctx); return err },
+		"UpsertCredential":  func() error { return s.UpsertCredential(ctx, confstore.ProviderCredential{ID: "c"}) },
+		"GetCredential":     func() error { _, err := s.GetCredential(ctx, "c"); return err },
+		"ListCredentials":   func() error { _, err := s.ListCredentials(ctx, "u"); return err },
+		"DeleteCredential":  func() error { return s.DeleteCredential(ctx, "c") },
+		"InsertAttachment":  func() error { return s.InsertAttachment(ctx, filestore.Attachment{ID: "a"}) },
+		"GetAttachment":     func() error { _, err := s.GetAttachment(ctx, "a"); return err },
+		"ClaimAttachments":  func() error { return s.ClaimAttachments(ctx, "", []string{"a"}, "", "r", "") },
 		"ClaimAttachmentsForChat": func() error {
 			return s.ClaimAttachmentsForChat(ctx, "", []string{"a"}, "r", filestore.ChatTakeOver)
 		},
@@ -165,18 +175,26 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"ProjectNames":      func() error { _, err := s.ProjectNames(ctx, []string{"p"}, []string{"p"}); return err },
 		"ListDashboards":    func() error { _, err := s.ListDashboards(ctx, "u"); return err },
 		"GetDashboard":      func() error { _, err := s.GetDashboard(ctx, "d"); return err },
-		"PutDashboard":      func() error { return s.PutDashboard(ctx, analytics.Dashboard{ID: "d"}) },
-		"DeleteDashboard":   func() error { return s.DeleteDashboard(ctx, "d") },
-		"ListScorecards":    func() error { _, err := s.ListScorecards(ctx, "u"); return err },
-		"GetScorecard":      func() error { _, err := s.GetScorecard(ctx, "s"); return err },
-		"PutScorecard":      func() error { return s.PutScorecard(ctx, analytics.Scorecard{ID: "s"}) },
-		"DeleteScorecard":   func() error { return s.DeleteScorecard(ctx, "s") },
-		"RaiseNotice":       func() error { _, _, err := s.RaiseNotice(ctx, notices.Notice{ID: "n"}); return err },
-		"ClearNotices":      func() error { return s.ClearNotices(ctx, "k", testNow) },
-		"ListNotices":       func() error { _, err := s.ListNotices(ctx, "u"); return err },
-		"GetNotice":         func() error { _, err := s.GetNotice(ctx, "n"); return err },
-		"DismissNotice":     func() error { return s.DismissNotice(ctx, "n", testNow) },
-		"DismissAllNotices": func() error { return s.DismissAllNotices(ctx, "u", testNow) },
+		"PutDashboard": func() error {
+			return s.PutDashboard(ctx, analytics.Dashboard{ID: "d"}, analytics.Change{Kind: analytics.AuthorUser})
+		},
+		"DeleteDashboard": func() error { return s.DeleteDashboard(ctx, "d") },
+		"ListScorecards":  func() error { _, err := s.ListScorecards(ctx, "u"); return err },
+		"GetScorecard":    func() error { _, err := s.GetScorecard(ctx, "s"); return err },
+		"PutScorecard": func() error {
+			return s.PutScorecard(ctx, analytics.Scorecard{ID: "s"}, analytics.Change{Kind: analytics.AuthorUser})
+		},
+		"DeleteScorecard":       func() error { return s.DeleteScorecard(ctx, "s") },
+		"ListDashboardVersions": func() error { _, err := s.ListDashboardVersions(ctx, "d"); return err },
+		"GetDashboardVersion":   func() error { _, err := s.GetDashboardVersion(ctx, "d", 1); return err },
+		"ListScorecardVersions": func() error { _, err := s.ListScorecardVersions(ctx, "s"); return err },
+		"GetScorecardVersion":   func() error { _, err := s.GetScorecardVersion(ctx, "s", 1); return err },
+		"RaiseNotice":           func() error { _, _, err := s.RaiseNotice(ctx, notices.Notice{ID: "n"}); return err },
+		"ClearNotices":          func() error { return s.ClearNotices(ctx, "k", testNow) },
+		"ListNotices":           func() error { _, err := s.ListNotices(ctx, "u"); return err },
+		"GetNotice":             func() error { _, err := s.GetNotice(ctx, "n"); return err },
+		"DismissNotice":         func() error { return s.DismissNotice(ctx, "n", testNow) },
+		"DismissAllNotices":     func() error { return s.DismissAllNotices(ctx, "u", testNow) },
 	}
 	for name, call := range calls {
 		err := call()
@@ -226,10 +244,10 @@ func TestMalformedRowsAreErrors(t *testing.T) {
 	if err := s.InsertVersion(ctx, skillstore.Version{SkillsetID: "set1", Seq: 1, Hash: "h", CreatedAt: testNow}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutDashboard(ctx, analytics.Dashboard{ID: "d1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow}); err != nil {
+	if err := s.PutDashboard(ctx, analytics.Dashboard{ID: "d1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow}, analytics.Change{Kind: analytics.AuthorUser, AuthorID: "u1"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutScorecard(ctx, analytics.Scorecard{ID: "sc1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow}); err != nil {
+	if err := s.PutScorecard(ctx, analytics.Scorecard{ID: "sc1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow}, analytics.Change{Kind: analytics.AuthorUser, AuthorID: "u1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -300,12 +318,23 @@ func TestMalformedRowsAreErrors(t *testing.T) {
 			func() error { _, err := s.GetDashboard(ctx, "d1"); return err },
 			func() error { _, err := s.ListDashboards(ctx, "u1"); return err },
 		}},
+		{"dashboard version panels", `UPDATE analytics_dashboard_versions SET panels='{}'`, `UPDATE analytics_dashboard_versions SET panels='[]'`, "dashboard d1 version 1 panels", []func() error{
+			func() error { _, err := s.GetDashboardVersion(ctx, "d1", 1); return err },
+			func() error { _, err := s.ListDashboardVersions(ctx, "d1"); return err },
+		}},
+		{"dashboard version filters", `UPDATE analytics_dashboard_versions SET filters='{}'`, `UPDATE analytics_dashboard_versions SET filters='[]'`, "dashboard d1 version 1 filters", []func() error{
+			func() error { _, err := s.GetDashboardVersion(ctx, "d1", 1); return err },
+		}},
 		{"dashboard filters", `UPDATE analytics_dashboards SET filters='{}'`, `UPDATE analytics_dashboards SET filters='[]'`, "dashboard d1 filters", []func() error{
 			func() error { _, err := s.GetDashboard(ctx, "d1"); return err },
 		}},
 		{"scorecard terms", `UPDATE analytics_scorecards SET terms='{}'`, `UPDATE analytics_scorecards SET terms='[]'`, "scorecard sc1 terms", []func() error{
 			func() error { _, err := s.GetScorecard(ctx, "sc1"); return err },
 			func() error { _, err := s.ListScorecards(ctx, "u1"); return err },
+		}},
+		{"scorecard version terms", `UPDATE analytics_scorecard_versions SET terms='{}'`, `UPDATE analytics_scorecard_versions SET terms='[]'`, "scorecard sc1 version 1 terms", []func() error{
+			func() error { _, err := s.GetScorecardVersion(ctx, "sc1", 1); return err },
+			func() error { _, err := s.ListScorecardVersions(ctx, "sc1"); return err },
 		}},
 	}
 	for _, c := range cases {
@@ -423,6 +452,36 @@ func TestLaterStatementFailuresRollBack(t *testing.T) {
 	}
 	if got, _ := s.GetSkillset(ctx, "set1"); len(got.SkillIDs) != 1 {
 		t.Errorf("failed swap left %v", got.SkillIDs)
+	}
+
+	// A ticket's write and its version are one: none lands without the other.
+	tk := confstore.Ticket{ID: "t1", Title: "one", SourceID: "i1", SourceKind: confstore.KindInternal, RemoteID: "t1",
+		CreatedAt: testNow, UpdatedAt: testNow}
+	by := confstore.Change{Kind: confstore.AuthorUser, AuthorID: "u1"}
+	if err := s.UpsertTicket(ctx, tk, by); err != nil {
+		t.Fatal(err)
+	}
+	renamed := tk
+	renamed.Title = "two"
+	for name, call := range map[string]func() error{
+		"UpsertTicket": func() error { return s.UpsertTicket(ctx, renamed, by) },
+		"SetTicketLabels": func() error {
+			_, err := s.SetTicketLabels(ctx, "t1", []string{"x"}, false, testNow, by)
+			return err
+		},
+		"SetTicketSeen": func() error {
+			return s.SetTicketSeen(ctx, "t1", confstore.TicketSeen{Title: "two"}, "", "", testNow, confstore.Change{Kind: confstore.AuthorSync})
+		},
+	} {
+		if err := sabotage(t, s, "ticket_versions", call); err == nil {
+			t.Errorf("%s without its versions table succeeded", name)
+		}
+	}
+	if got, err := s.GetTicket(ctx, "t1"); err != nil || got.Title != "one" || got.Labels != nil {
+		t.Errorf("ticket row survived its failed version: %+v, %v", got, err)
+	}
+	if err := s.UpsertTicket(ctx, renamed, confstore.Change{}); !errors.Is(err, confstore.ErrInvalid) {
+		t.Errorf("a change by no kind of author = %v, want ErrInvalid", err)
 	}
 }
 

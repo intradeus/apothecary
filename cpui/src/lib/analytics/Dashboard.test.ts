@@ -4,8 +4,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { api } from '$lib/api';
 import type { AnalyticsQuery } from '$lib/domain';
+import { confirmDialog } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
-import { aCatalog, aDashboard, aPanel, aResult } from '$test/fixtures/analytics';
+import {
+	aCatalog,
+	aDashboard,
+	aDashboardVersion,
+	aDashboardVersionSummary,
+	aPanel,
+	aResult
+} from '$test/fixtures/analytics';
 import { catalog } from './catalog.svelte';
 import Dashboard from './Dashboard.svelte';
 
@@ -16,7 +24,14 @@ vi.mock('$lib/api', () => ({
 			query: vi.fn(),
 			values: vi.fn(),
 			drill: vi.fn(),
-			dashboards: { get: vi.fn(), create: vi.fn(), update: vi.fn() },
+			dashboards: {
+				get: vi.fn(),
+				create: vi.fn(),
+				update: vi.fn(),
+				versions: vi.fn(),
+				version: vi.fn(),
+				restore: vi.fn()
+			},
 			scorecards: { list: vi.fn() }
 		},
 		assistant: {
@@ -24,6 +39,7 @@ vi.mock('$lib/api', () => ({
 		}
 	}
 }));
+vi.mock('$lib/ui/confirm.svelte', () => ({ confirmDialog: vi.fn() }));
 vi.mock(
 	'$lib/assistant/AssistantPanel.svelte',
 	() => import('$test/fixtures/AssistantPanelStub.svelte')
@@ -203,11 +219,15 @@ describe('Dashboard', () => {
 			expect(panelTitles()).toEqual(['Spend by stage']);
 
 			await userEvent.click(screen.getByRole('button', { name: 'Save dashboard' }));
-			expect(api.analytics.dashboards.update).toHaveBeenCalledWith('d1', {
-				name: 'Mine',
-				filters: ['flow_name'],
-				panels: [stages]
-			});
+			expect(api.analytics.dashboards.update).toHaveBeenCalledWith(
+				'd1',
+				{
+					name: 'Mine',
+					filters: ['flow_name'],
+					panels: [stages]
+				},
+				false
+			);
 			await waitFor(() => expect(toasts.list.at(-1)?.text).toBe('Dashboard saved'));
 			expect(screen.getByRole('button', { name: 'Edit' })).toBeInTheDocument();
 			expect(panelTitles()).toEqual(['Spend by stage']);
@@ -296,9 +316,36 @@ describe('Dashboard', () => {
 			expect(vi.mocked(api.analytics.dashboards.update).mock.calls[0][1].panels[0].title).toBe(
 				'Failures'
 			);
+			expect(vi.mocked(api.analytics.dashboards.update).mock.calls[0][2]).toBe(true);
 			await waitFor(() =>
 				expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('')
 			);
+		});
+
+		it('drops a canceled fill: a later manual save is not the assistant’s', async () => {
+			vi.mocked(api.analytics.dashboards.update).mockImplementation(async (_id, d) =>
+				aDashboard({ ...mine, panels: d.panels })
+			);
+			render(Dashboard, { id: mine.id });
+			await userEvent.click(await screen.findByRole('button', { name: 'Assistant' }));
+			const box = screen.getByRole('textbox', { name: 'fill' });
+			await userEvent.clear(box);
+			box.focus();
+			await userEvent.paste(
+				JSON.stringify({ panels: [{ ...stages, id: 'n1', title: 'Failures' }] })
+			);
+			await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
+			await waitFor(() => expect(panelTitles()).toEqual(['Failures']));
+
+			await userEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+			expect(panelTitles()).toEqual(['Cost by version', 'Spend by stage']);
+			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('');
+			await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+			await userEvent.click(screen.getByRole('button', { name: 'Remove Cost by version' }));
+			await userEvent.click(screen.getByRole('button', { name: 'Save dashboard' }));
+			await waitFor(() => expect(api.analytics.dashboards.update).toHaveBeenCalled());
+			expect(vi.mocked(api.analytics.dashboards.update).mock.calls[0][1].panels).toEqual([stages]);
+			expect(vi.mocked(api.analytics.dashboards.update).mock.calls[0][2]).toBe(false);
 		});
 
 		it('is not offered on a built-in one', async () => {
@@ -308,6 +355,57 @@ describe('Dashboard', () => {
 			render(Dashboard, { id: 'builtin-x' });
 			await screen.findByRole('button', { name: /Duplicate/ });
 			expect(screen.queryByRole('button', { name: 'Assistant' })).not.toBeInTheDocument();
+		});
+	});
+
+	describe('the history', () => {
+		it('opens beside one’s own dashboard and reloads it after a restore', async () => {
+			vi.mocked(api.analytics.dashboards.versions).mockResolvedValue([
+				aDashboardVersionSummary({ seq: 2 }),
+				aDashboardVersionSummary({ seq: 1 })
+			]);
+			vi.mocked(api.analytics.dashboards.version).mockResolvedValue(
+				aDashboardVersion({ name: 'Old', panels: [aPanel()] })
+			);
+			vi.mocked(api.analytics.dashboards.restore).mockResolvedValue(
+				aDashboard({ name: 'Old', panels: [aPanel()] })
+			);
+			vi.mocked(confirmDialog).mockResolvedValue(true);
+			render(Dashboard, { id: 'd1' });
+			const open = await screen.findByRole('button', { name: 'History' });
+			await userEvent.click(open);
+			expect(open).toHaveAttribute('aria-pressed', 'true');
+			await userEvent.click(await screen.findByRole('button', { name: /^v1/ }));
+			vi.mocked(api.analytics.dashboards.get).mockResolvedValue(
+				aDashboard({ name: 'Old', panels: [aPanel()] })
+			);
+			await userEvent.click(await screen.findByRole('button', { name: 'Restore this version' }));
+			expect(api.analytics.dashboards.restore).toHaveBeenCalledWith('d1', 1);
+			await waitFor(() => expect(api.analytics.dashboards.get).toHaveBeenCalledTimes(2));
+			expect(await screen.findByRole('heading', { name: 'Old', level: 1 })).toBeInTheDocument();
+			await userEvent.click(screen.getByRole('button', { name: 'History' }));
+			expect(screen.queryByRole('region', { name: 'History' })).not.toBeInTheDocument();
+		});
+
+		it('is disabled while editing, and closed by it', async () => {
+			vi.mocked(api.analytics.dashboards.versions).mockResolvedValue([]);
+			render(Dashboard, { id: 'd1' });
+			await userEvent.click(await screen.findByRole('button', { name: 'History' }));
+			expect(await screen.findByText('No versions yet')).toBeInTheDocument();
+			await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+			const history = screen.getByRole('button', { name: 'History' });
+			expect(history).toBeDisabled();
+			expect(history).toHaveAttribute('title', 'Save or cancel your edit to see the history');
+			expect(screen.queryByRole('region', { name: 'History' })).not.toBeInTheDocument();
+		});
+
+		it('is not offered on a built-in one', async () => {
+			vi.mocked(api.analytics.dashboards.get).mockResolvedValue(
+				aDashboard({ id: 'builtin-x', builtin: true })
+			);
+			render(Dashboard, { id: 'builtin-x' });
+			await screen.findByRole('button', { name: /Duplicate/ });
+			expect(screen.queryByRole('button', { name: 'History' })).not.toBeInTheDocument();
 		});
 	});
 });

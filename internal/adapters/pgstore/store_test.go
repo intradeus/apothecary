@@ -771,7 +771,7 @@ func TestTicketWithBinaryTextIsStored(t *testing.T) {
 		t.Fatal(err)
 	}
 	svc := confstore.New(s, key)
-	tk, err := svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: "t\x00", Goal: "g\xff"})
+	tk, err := svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: "t\x00", Goal: "g\xff"}, confstore.Change{Kind: confstore.AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}

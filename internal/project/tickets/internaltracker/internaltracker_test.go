@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
@@ -32,7 +33,7 @@ func newWorld(t *testing.T) world {
 	}
 	conf := confstore.New(confstore.NewMem(), key)
 	tk, err := conf.CreateTicket(context.Background(), confstore.Ticket{UserID: owner, Title: "T", Goal: "g",
-		ChangeType: trackerport.ChangeFeat})
+		ChangeType: trackerport.ChangeFeat}, confstore.Change{Kind: confstore.AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,6 +182,33 @@ func TestLabelsReplaceAndReadBack(t *testing.T) {
 	}
 	if labels := w.ticket(t).Labels; !slices.Equal(labels, []string{"ops", "sec"}) {
 		t.Errorf("after append = %v", labels)
+	}
+}
+
+// A labels write is a version by whoever made it: a run, else the person on
+// the context — the assistant's, saved by them, on a confirmed act.
+func TestLabelsAreAVersionByTheirAuthor(t *testing.T) {
+	w := newWorld(t)
+	person := auth.WithPrincipal(context.Background(), auth.Principal{User: auth.User{ID: "u2"}})
+	for _, c := range []struct {
+		ctx    context.Context
+		labels string
+		want   confstore.Change
+	}{
+		{actor("tag-1"), "a", confstore.Change{Kind: confstore.AuthorRun, AuthorID: "r1"}},
+		{person, "b", confstore.Change{Kind: confstore.AuthorUser, AuthorID: "u2"}},
+		{confstore.WithAssistedChange(person), "c", confstore.Change{Kind: confstore.AuthorAssistant, AuthorID: "u2"}},
+	} {
+		if err := w.tr.SetFields(c.ctx, w.id, map[string]string{"labels": c.labels}); err != nil {
+			t.Fatal(err)
+		}
+		list, err := w.conf.TicketVersions(context.Background(), w.id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := list[0]; got.Change != c.want || !slices.Equal(got.Labels, []string{c.labels}) {
+			t.Errorf("labels %s: version %+v, want by %+v", c.labels, got, c.want)
+		}
 	}
 }
 

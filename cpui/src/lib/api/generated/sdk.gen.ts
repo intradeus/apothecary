@@ -218,6 +218,9 @@ import type {
 	GetDashboardData,
 	GetDashboardErrors,
 	GetDashboardResponses,
+	GetDashboardVersionData,
+	GetDashboardVersionErrors,
+	GetDashboardVersionResponses,
 	GetEgressDefaultsData,
 	GetEgressDefaultsErrors,
 	GetEgressDefaultsResponses,
@@ -317,6 +320,9 @@ import type {
 	GetScorecardData,
 	GetScorecardErrors,
 	GetScorecardResponses,
+	GetScorecardVersionData,
+	GetScorecardVersionErrors,
+	GetScorecardVersionResponses,
 	GetSettingsData,
 	GetSettingsErrors,
 	GetSettingsResponses,
@@ -344,6 +350,9 @@ import type {
 	GetWorkshopTicketData,
 	GetWorkshopTicketErrors,
 	GetWorkshopTicketResponses,
+	GetWorkshopTicketVersionData,
+	GetWorkshopTicketVersionErrors,
+	GetWorkshopTicketVersionResponses,
 	GetWorkspaceChangesData,
 	GetWorkspaceChangesErrors,
 	GetWorkspaceChangesResponses,
@@ -398,6 +407,9 @@ import type {
 	ListDashboardsData,
 	ListDashboardsErrors,
 	ListDashboardsResponses,
+	ListDashboardVersionsData,
+	ListDashboardVersionsErrors,
+	ListDashboardVersionsResponses,
 	ListEgressDenialsData,
 	ListEgressDenialsErrors,
 	ListEgressDenialsResponses,
@@ -470,6 +482,9 @@ import type {
 	ListScorecardsData,
 	ListScorecardsErrors,
 	ListScorecardsResponses,
+	ListScorecardVersionsData,
+	ListScorecardVersionsErrors,
+	ListScorecardVersionsResponses,
 	ListSignalsData,
 	ListSignalsErrors,
 	ListSignalsResponses,
@@ -503,6 +518,9 @@ import type {
 	ListWorkshopTicketTypesData,
 	ListWorkshopTicketTypesErrors,
 	ListWorkshopTicketTypesResponses,
+	ListWorkshopTicketVersionsData,
+	ListWorkshopTicketVersionsErrors,
+	ListWorkshopTicketVersionsResponses,
 	LoginData,
 	LoginErrors,
 	LoginResponses,
@@ -596,6 +614,15 @@ import type {
 	RestartRunServiceData,
 	RestartRunServiceErrors,
 	RestartRunServiceResponses,
+	RestoreDashboardVersionData,
+	RestoreDashboardVersionErrors,
+	RestoreDashboardVersionResponses,
+	RestoreScorecardVersionData,
+	RestoreScorecardVersionErrors,
+	RestoreScorecardVersionResponses,
+	RestoreWorkshopTicketVersionData,
+	RestoreWorkshopTicketVersionErrors,
+	RestoreWorkshopTicketVersionResponses,
 	RetryRunData,
 	RetryRunErrors,
 	RetryRunResponses,
@@ -934,6 +961,91 @@ export const updateDashboard = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * A dashboard's kept versions, newest first (a built-in has none)
+ *
+ * The newest 100 saves that changed its name, filters or panels, each with what changed against the one before it.
+ */
+export const listDashboardVersions = <ThrowOnError extends boolean = false>(
+	options: Options<ListDashboardVersionsData, ThrowOnError>
+): RequestResult<ListDashboardVersionsResponses, ListDashboardVersionsErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListDashboardVersionsResponses,
+		ListDashboardVersionsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards/{id}/versions',
+		...options
+	});
+
+/**
+ * One kept version of a dashboard
+ */
+export const getDashboardVersion = <ThrowOnError extends boolean = false>(
+	options: Options<GetDashboardVersionData, ThrowOnError>
+): RequestResult<GetDashboardVersionResponses, GetDashboardVersionErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetDashboardVersionResponses,
+		GetDashboardVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards/{id}/versions/{seq}',
+		...options
+	});
+
+/**
+ * Restore a dashboard's kept version (409 on a built-in, 400 when the catalog no longer allows it)
+ *
+ * Saves the version's name, filters and panels as the current ones: a new version; history is never rewritten.
+ */
+export const restoreDashboardVersion = <ThrowOnError extends boolean = false>(
+	options: Options<RestoreDashboardVersionData, ThrowOnError>
+): RequestResult<RestoreDashboardVersionResponses, RestoreDashboardVersionErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		RestoreDashboardVersionResponses,
+		RestoreDashboardVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/dashboards/{id}/versions/{seq}/restore',
+		...options
+	});
+
+/**
  * The runs behind a group (at most 200, newest first)
  */
 export const drillAnalytics = <ThrowOnError extends boolean = false>(
@@ -1110,6 +1222,91 @@ export const updateScorecard = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * A scorecard's kept versions, newest first (a built-in has none)
+ *
+ * The newest 100 saves that changed its name or terms, each with what changed against the one before it.
+ */
+export const listScorecardVersions = <ThrowOnError extends boolean = false>(
+	options: Options<ListScorecardVersionsData, ThrowOnError>
+): RequestResult<ListScorecardVersionsResponses, ListScorecardVersionsErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		ListScorecardVersionsResponses,
+		ListScorecardVersionsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards/{id}/versions',
+		...options
+	});
+
+/**
+ * One kept version of a scorecard
+ */
+export const getScorecardVersion = <ThrowOnError extends boolean = false>(
+	options: Options<GetScorecardVersionData, ThrowOnError>
+): RequestResult<GetScorecardVersionResponses, GetScorecardVersionErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetScorecardVersionResponses,
+		GetScorecardVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards/{id}/versions/{seq}',
+		...options
+	});
+
+/**
+ * Restore a scorecard's kept version (409 on a built-in, 400 when the catalog no longer allows it)
+ *
+ * Saves the version's name and terms as the current ones: a new version; history is never rewritten.
+ */
+export const restoreScorecardVersion = <ThrowOnError extends boolean = false>(
+	options: Options<RestoreScorecardVersionData, ThrowOnError>
+): RequestResult<RestoreScorecardVersionResponses, RestoreScorecardVersionErrors, ThrowOnError> =>
+	(options.client ?? client).post<
+		RestoreScorecardVersionResponses,
+		RestoreScorecardVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/analytics/scorecards/{id}/versions/{seq}/restore',
+		...options
 	});
 
 /**
@@ -4761,6 +4958,99 @@ export const setWorkshopTicketStatus = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * A ticket's history, newest first
+ *
+ * Each save that changed its title, goal, base branch, change type, type or labels made a version: who made it (a person, an assistant's work a person saved, a run, or its tracker's sync), when, and the fields that changed from the version before. The newest 100 are kept. A remote issue without a record has none.
+ */
+export const listWorkshopTicketVersions = <ThrowOnError extends boolean = false>(
+	options: Options<ListWorkshopTicketVersionsData, ThrowOnError>
+): RequestResult<
+	ListWorkshopTicketVersionsResponses,
+	ListWorkshopTicketVersionsErrors,
+	ThrowOnError
+> =>
+	(options.client ?? client).get<
+		ListWorkshopTicketVersionsResponses,
+		ListWorkshopTicketVersionsErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/versions',
+		...options
+	});
+
+/**
+ * One version of a ticket, in full
+ */
+export const getWorkshopTicketVersion = <ThrowOnError extends boolean = false>(
+	options: Options<GetWorkshopTicketVersionData, ThrowOnError>
+): RequestResult<GetWorkshopTicketVersionResponses, GetWorkshopTicketVersionErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetWorkshopTicketVersionResponses,
+		GetWorkshopTicketVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/versions/{seq}',
+		...options
+	});
+
+/**
+ * Restore an old version of a ticket
+ *
+ * Its content becomes the version's again, saved as a new version (history is never rewritten); content equal to the version already changes nothing. A type no longer on the tracker gives way to its change type's. A remote issue's content is its tracker's (400).
+ */
+export const restoreWorkshopTicketVersion = <ThrowOnError extends boolean = false>(
+	options: Options<RestoreWorkshopTicketVersionData, ThrowOnError>
+): RequestResult<
+	RestoreWorkshopTicketVersionResponses,
+	RestoreWorkshopTicketVersionErrors,
+	ThrowOnError
+> =>
+	(options.client ?? client).post<
+		RestoreWorkshopTicketVersionResponses,
+		RestoreWorkshopTicketVersionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/tickets/{key}/versions/{seq}/restore',
+		...options
 	});
 
 /**

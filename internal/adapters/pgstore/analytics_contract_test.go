@@ -119,7 +119,7 @@ func TestAnalyticsUnencodableScorecardIsRefused(t *testing.T) {
 	ctx := context.Background()
 	sc := analytics.Scorecard{ID: "s1", UserID: "u1", Name: "n", CreatedAt: testNow, UpdatedAt: testNow,
 		Terms: []analytics.Term{{Measure: analytics.MeasureRef{Field: "success_rate"}, Direction: analytics.DirHigher, Weight: math.NaN()}}}
-	if err := s.PutScorecard(ctx, sc); err == nil {
+	if err := s.PutScorecard(ctx, sc, analytics.Change{Kind: analytics.AuthorUser, AuthorID: "u1"}); err == nil {
 		t.Fatal("a NaN weight was stored")
 	}
 	if _, err := s.GetScorecard(ctx, "s1"); !errors.Is(err, analytics.ErrNotFound) {
