@@ -24,6 +24,8 @@ type kubeScript struct {
 	calls   []string
 	stdins  [][]byte
 	answers map[string]string
+	// fails answers by prefix with a kubectl failure (exit 1, this stderr).
+	fails map[string]string
 }
 
 func (k *kubeScript) Run(_ context.Context, _ string, args []string, stdin []byte, _ io.Writer, _ ...string) ([]byte, []byte, int, error) {
@@ -43,6 +45,11 @@ func (k *kubeScript) Run(_ context.Context, _ string, args []string, stdin []byt
 	defer k.mu.Unlock()
 	k.calls = append(k.calls, key)
 	k.stdins = append(k.stdins, stdin)
+	for prefix, errb := range k.fails {
+		if strings.HasPrefix(key, prefix) {
+			return nil, []byte(errb), 1, nil
+		}
+	}
 	for prefix, out := range k.answers {
 		if strings.HasPrefix(key, prefix) {
 			return []byte(out), nil, 0, nil
@@ -121,6 +128,28 @@ func TestK8sEnsureReusesOrReplaces(t *testing.T) {
 	img, run, found, err := h.Inspect(context.Background(), "usr1")
 	if err != nil || img != "apo/assistant:v1" || !run || !found {
 		t.Errorf("inspect = %s %v %v %v", img, run, found, err)
+	}
+}
+
+func TestK8sEnsureSaysWhyThePodIsNotReady(t *testing.T) {
+	h, k := newHost(t, map[string]string{"get events": `{"items":[{"reason":"FailedCreatePodSandBox",
+		"message":"failed to start noop process for unshare: fork/exec /proc/self/exe: operation not permitted",
+		"lastTimestamp":"2026-11-20T10:00:00Z"}]}`})
+	k.fails = map[string]string{"wait pod/apo-assistant-usr1": "timed out waiting for the condition"}
+	err := h.Ensure(context.Background(), "usr1", testTunnel, false)
+	if err == nil || !strings.Contains(err.Error(), "timed out") ||
+		!strings.Contains(err.Error(), "the pod's last warning: FailedCreatePodSandBox: failed to start noop process for unshare") {
+		t.Errorf("ensure = %v", err)
+	}
+	// No warning to give: the wait's own error, as it was.
+	k.answers["get events"] = `{"items":[]}`
+	if err := h.Ensure(context.Background(), "usr1", testTunnel, false); err == nil || strings.Contains(err.Error(), "warning") {
+		t.Errorf("ensure without events = %v", err)
+	}
+	// Nor when the events cannot be read.
+	k.fails["get events"] = "forbidden"
+	if err := h.Ensure(context.Background(), "usr1", testTunnel, false); err == nil || strings.Contains(err.Error(), "warning") {
+		t.Errorf("ensure with unreadable events = %v", err)
 	}
 }
 

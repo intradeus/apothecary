@@ -140,9 +140,15 @@ func TestToolPinsMatchCI(t *testing.T) {
 	}
 	// The Taskfile's guards read the same ARGs.
 	tf := read(t, "Taskfile.yml")
-	for _, arg := range []string{"HELM_VERSION", "TASK_VERSION", "SHELLCHECK_VERSION", "K3D_VERSION"} {
+	for _, arg := range []string{"HELM_VERSION", "TASK_VERSION", "SHELLCHECK_VERSION", "K3D_VERSION", "KUBECTL_VERSION"} {
 		if !strings.Contains(tf, "ARG "+arg+"=") {
 			t.Errorf("Taskfile.yml does not read %s from .devcontainer/Dockerfile", arg)
+		}
+	}
+	// The k8s suites refuse another kubectl, as they refuse another k3d.
+	for _, task := range []string{"sandbox:test:k8s", "k8s:test-live"} {
+		if !regexp.MustCompile(`(?m)^  ` + regexp.QuoteMeta(task) + `:\n(?:    .*\n)*?    deps: \[[^\]]*\bpin:kubectl\b`).MatchString(tf) {
+			t.Errorf("Taskfile.yml's %s does not depend on pin:kubectl", task)
 		}
 	}
 }

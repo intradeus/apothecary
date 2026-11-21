@@ -60,6 +60,12 @@ in workspaces*), the devcontainer included. While you iterate, run `task
 check`; leave `task ci` to the stage that verifies the run, unless your
 change is to the images, the sandbox or the Kubernetes provisioner.
 
+In a sysbox workspace, `TestLiveK8sAssistantPod` skips and says why: under
+sysbox a k3d cluster on the workspace's docker cannot run a user-namespaced
+pod (`docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md`).
+That skip is expected, not a failure to work around; CI runs the test, and
+fails on any live-suite skip (`APOTHECARY_LIVE_STRICT`).
+
 Never run `build`, `build:images` or `deploy/images.sh … --push`: they
 build every platform's binaries or publish images.
 
