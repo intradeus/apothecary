@@ -44,6 +44,8 @@ vars:
     sh: sed -n 's/^ARG SHELLCHECK_VERSION=//p' .devcontainer/Dockerfile
   K3D_VERSION:
     sh: sed -n 's/^ARG K3D_VERSION=//p' .devcontainer/Dockerfile
+  KUBECTL_VERSION:
+    sh: sed -n 's/^ARG KUBECTL_VERSION=//p' .devcontainer/Dockerfile
 
 tasks:
   default:
@@ -177,6 +179,7 @@ tasks:
 
   k8s:test-live:
     desc: Run the live Kubernetes tests (the provisioner, the project browser, the assistant pod) against the k3d cluster
+    deps: [pin:kubectl]
     cmds:
       - task: k8s:ready
       - >-
@@ -485,6 +488,16 @@ tasks:
       - sh: 'k3d version 2>/dev/null | grep -qx "k3d version {{.K3D_VERSION}}"'
         msg: 'k3d {{.K3D_VERSION}} is what CI and the devcontainer run: https://github.com/k3d-io/k3d/releases/tag/{{.K3D_VERSION}}'
 
+  # The live tests drive the cluster with kubectl, through its port-forward
+  # among the rest: another release behaves differently there (v1.31's
+  # forward stops carrying connections after one ends early, which fails the
+  # assistant suite).
+  pin:kubectl:
+    internal: true
+    preconditions:
+      - sh: 'kubectl version --client 2>/dev/null | grep -qx "Client Version: {{.KUBECTL_VERSION}}"'
+        msg: 'kubectl {{.KUBECTL_VERSION}} is what CI, the engine image and the devcontainer run: https://dl.k8s.io/release/{{.KUBECTL_VERSION}}/bin/<os>/<arch>/kubectl'
+
   pin:node:
     internal: true
     preconditions:
@@ -749,7 +762,7 @@ tasks:
   # node rather than pushed to the cluster's registry and pulled back: one
   # copy of the 2.3 GB tools bundle instead of two.
   sandbox:test:k8s:
-    deps: [pin:task, pin:k3d]
+    deps: [pin:task, pin:k3d, pin:kubectl]
     desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: images, cluster, import, live tests (needs docker, k3d) — CI: sandbox-test (k8s)'
     vars:
       CLUSTER_EXISTED:

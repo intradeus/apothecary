@@ -189,6 +189,32 @@ func TestDeleteVariants(t *testing.T) {
 	}
 }
 
+func TestLastWarningIsTheNewest(t *testing.T) {
+	events := `{"items":[
+	 {"reason":"FailedScheduling","message":"0/1 nodes","firstTimestamp":"2026-11-20T10:00:00Z","lastTimestamp":"2026-11-20T10:00:05Z"},
+	 {"reason":"FailedCreatePodSandBox","message":" unshare: operation not permitted\n","firstTimestamp":"2026-11-20T10:00:01Z","lastTimestamp":"2026-11-20T10:04:00Z"},
+	 {"reason":"BackOff","message":"newer style","eventTime":"2026-11-20T10:03:00.123456Z","firstTimestamp":null,"lastTimestamp":null}]}`
+	s := &script{resps: []resp{{out: events}, {out: `{"items":[]}`}, {out: "not json"}, {errb: "forbidden", code: 1}}}
+	c := &Client{Namespace: "ns", R: s}
+	ctx := context.Background()
+	if got, err := c.LastWarning(ctx, "p"); err != nil || got != "FailedCreatePodSandBox: unshare: operation not permitted" {
+		t.Errorf("LastWarning = %q, %v", got, err)
+	}
+	if got := strings.Join(s.calls[0].args, " "); !strings.Contains(got, "get --request-timeout") ||
+		!strings.HasSuffix(got, "events -o json --field-selector=involvedObject.kind=Pod,involvedObject.name=p,type=Warning") {
+		t.Errorf("events call = %q", got)
+	}
+	if got, err := c.LastWarning(ctx, "p"); err != nil || got != "" {
+		t.Errorf("no events = %q, %v", got, err)
+	}
+	if _, err := c.LastWarning(ctx, "p"); err == nil {
+		t.Error("unreadable events were read")
+	}
+	if _, err := c.LastWarning(ctx, "p"); err == nil {
+		t.Error("a refused get reported success")
+	}
+}
+
 func TestWaitsCarryTheirTimeout(t *testing.T) {
 	s := &script{resps: []resp{{}, {errb: "timed out", code: 1}}}
 	c := &Client{R: s}

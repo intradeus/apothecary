@@ -37,6 +37,7 @@ import (
 	"apothecary/internal/adapters/egressgw"
 	"apothecary/internal/adapters/egressgw/policyfile"
 	"apothecary/internal/adapters/kube"
+	"apothecary/internal/platform/livetest"
 	"apothecary/internal/ports/assistantport"
 	"apothecary/internal/workspace/sidecar"
 )
@@ -49,7 +50,7 @@ func TestLiveK8sAssistantPod(t *testing.T) {
 	// The task passes candidates; the first is an address the pod routes.
 	hostIP := strings.Fields(os.Getenv("APOTHECARY_LIVE_HOST_GATEWAY") + " ")[0]
 	if kc == "" || prefix == "" || os.Getenv("APOTHECARY_LIVE_HOST_GATEWAY") == "" {
-		t.Skip("needs APOTHECARY_LIVE_KUBECONFIG, APOTHECARY_LIVE_IMAGE_PREFIX and APOTHECARY_LIVE_HOST_GATEWAY: see the header comment")
+		livetest.Skip(t, "needs APOTHECARY_LIVE_KUBECONFIG, APOTHECARY_LIVE_IMAGE_PREFIX and APOTHECARY_LIVE_HOST_GATEWAY: see the header comment")
 	}
 	pull := os.Getenv("APOTHECARY_LIVE_PULL_POLICY")
 	if pull == "" {
@@ -66,6 +67,11 @@ func TestLiveK8sAssistantPod(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Minute)
 	defer cancel()
 	c := &kube.Client{Kubeconfig: kc, Namespace: ns}
+	if ok, why := userNamespaces(ctx, t, c, prefix+"/egress-gw:local", pull); !ok {
+		livetest.Skip(t, "this cluster cannot make a pod's user namespace, and the assistant pod has one (hostUsers: false): %s. "+
+			"A k3d cluster on a docker daemon that is itself in a user namespace (a sysbox workspace) cannot: "+
+			"see docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md. CI's sandbox-test (k8s) runs this test", why)
+	}
 
 	repo := assistantport.Repo{Workshop: "01LIVEWORKSHOP", WorkshopName: "live", Name: "hello", URL: liveRepoURL}
 	modelIP := deployModel(ctx, t, c, prefix+"/live-model:local", pull, map[string]string{
@@ -261,6 +267,46 @@ func liveSession(ctx context.Context, t *testing.T, m *Manager, person string, r
 	if got := ask("QUESTION_SIBLING: read the other session's file"); strings.Contains(got, "TOP-SECRET-MARKER") {
 		t.Errorf("%s read another session's state: %q", h.name, got)
 	}
+}
+
+// userNamespaces starts the smallest user-namespaced pod and reports whether
+// it ran. The assistant pod is one (hostUsers: false); a node that cannot
+// make the namespace leaves the pod at Init for good, with only a sandbox
+// event to say why, so the test asks first and quotes the event. Any other
+// failure of the probe fails the test: only this one is the environment's.
+func userNamespaces(ctx context.Context, t *testing.T, c *kube.Client, image, pull string) (bool, string) {
+	t.Helper()
+	const name = "live-userns"
+	pod := kube.Pod{TypeMeta: kube.PodType(), Metadata: kube.ObjectMeta{Name: name},
+		Spec: kube.PodSpec{RestartPolicy: "Never", HostUsers: ptr(false), AutomountServiceAccountToken: ptr(false),
+			Containers: []kube.Container{{Name: "probe", Image: image, ImagePullPolicy: pull, Command: []string{"true"}}}}}
+	if err := c.Create(ctx, pod); err != nil {
+		t.Fatalf("the user-namespace probe: %v", err)
+	}
+	defer c.Delete(context.WithoutCancel(ctx), "pod", name, false)
+	last := ""
+	for deadline := time.Now().Add(2 * time.Minute); time.Now().Before(deadline); time.Sleep(2 * time.Second) {
+		var p kube.Pod
+		if _, err := c.Get(ctx, "pod", name, &p); err != nil {
+			t.Fatalf("the user-namespace probe: %v", err)
+		}
+		switch p.Status.Phase {
+		case "Succeeded":
+			return true, ""
+		case "Failed":
+			t.Fatalf("the user-namespace probe failed: %+v", p.Status)
+		}
+		w, err := c.LastWarning(ctx, name)
+		if err != nil {
+			t.Fatalf("the user-namespace probe's events: %v", err)
+		}
+		if userNamespaceRefused(w) {
+			return false, w
+		}
+		last = w
+	}
+	t.Fatalf("the user-namespace probe neither ran nor was refused in 2 minutes; its last warning: %q", last)
+	return false, ""
 }
 
 // deployModel runs the fake model (testdata/fakemodel) as a pod and a
