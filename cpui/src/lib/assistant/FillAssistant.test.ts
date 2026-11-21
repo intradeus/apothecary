@@ -303,6 +303,46 @@ describe('FillAssistant', () => {
 		).toBeInTheDocument();
 	});
 
+	it('starts afresh on a workshop chosen in the open modal, keeping the question', async () => {
+		vi.mocked(api.assistant.open)
+			.mockResolvedValueOnce({ session: session('s1'), messages: [], busy: false })
+			.mockResolvedValueOnce({ session: session('s2'), messages: [], busy: false });
+		const p = setup({ kind: 'skill', workshop: '' });
+		await userEvent.type(await screen.findByRole('textbox'), 'notes');
+		expect(api.assistant.status).toHaveBeenLastCalledWith(undefined);
+		expect(api.assistant.open).toHaveBeenLastCalledWith('skill', 'draft-1', undefined, {
+			fresh: true
+		});
+		await p.rerender({ workshop: 'w2' });
+		await waitFor(() => expect(api.assistant.open).toHaveBeenCalledTimes(2));
+		expect(api.assistant.status).toHaveBeenLastCalledWith('w2');
+		expect(api.assistant.open).toHaveBeenLastCalledWith('skill', 'draft-1', 'w2', {
+			fresh: true
+		});
+		expect(await screen.findByRole('textbox')).toHaveValue('notes');
+		await userEvent.type(textbox(), '{Enter}');
+		expect(api.assistant.send).toHaveBeenCalledWith('s2', 'notes', expect.anything());
+	});
+
+	it('hides the workshop choice while brewing; a workshop changed then stops the answer', async () => {
+		const workshopPicker = createRawSnippet(() => ({
+			render: () => '<label>Read a workshop’s repositories<select></select></label>'
+		}));
+		const p = setup({ kind: 'skill', workshopPicker });
+		await screen.findByRole('textbox');
+		expect(screen.getByLabelText('Read a workshop’s repositories')).toBeInTheDocument();
+		await userEvent.type(textbox(), 'go{Enter}');
+		frame({ kind: 'state', busy: true });
+		await screen.findByText('Brewing your skill…');
+		expect(screen.queryByLabelText('Read a workshop’s repositories')).not.toBeInTheDocument();
+		await p.rerender({ workshop: 'w2' });
+		expect(api.assistant.cancel).toHaveBeenCalledWith('s1');
+		expect(await screen.findByLabelText('Read a workshop’s repositories')).toBeInTheDocument();
+		expect(api.assistant.open).toHaveBeenLastCalledWith('skill', 'draft-1', 'w2', {
+			fresh: true
+		});
+	});
+
 	it('says when it could not start, and retries', async () => {
 		vi.mocked(api.assistant.status).mockRejectedValueOnce(new Error('engine down'));
 		setup();

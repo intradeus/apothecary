@@ -67,14 +67,23 @@
 	};
 
 	// Each opening is its own conversation: a fresh session, nothing of the
-	// last one's answers. Closing stops the answer and drops a late fill.
+	// last one's answers, an empty question.
+	$effect(() => {
+		if (open) untrack(() => (draft = ''));
+	});
+
+	// The conversation is the opening's and the workshop's: a workshop
+	// chosen in the open modal starts a fresh one that reads its
+	// repositories, keeping the question typed so far. The picker is hidden
+	// while an answer brews; a workshop changed from outside then stops it,
+	// as closing does. Closing stops the answer and drops a late fill.
 	$effect(() => {
 		if (!open) return;
+		const ws = workshop;
 		const c = untrack(() => {
-			const c = new Conversation({ kind, subject, workshop, pageState, fill: hook });
+			const c = new Conversation({ kind, subject, workshop: ws, pageState, fill: hook });
 			convo = c;
 			landed = false;
-			draft = '';
 			return c;
 		});
 		void c.load({ fresh: true });
@@ -136,7 +145,7 @@
 >
 	{#if convo}
 		<div class="fa col">
-			{@render workshopPicker?.()}
+			{#if !convo.busy}{@render workshopPicker?.()}{/if}
 			{#if convo.loadError}
 				<ErrorCard
 					cause={t('assistant.failed')}
