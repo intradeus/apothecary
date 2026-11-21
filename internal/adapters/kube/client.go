@@ -216,6 +216,46 @@ func (c *Client) WaitReady(ctx context.Context, pod string, timeout time.Duratio
 	return err
 }
 
+// LastWarning is the newest Warning event about the pod, as "reason:
+// message", or "" when there is none: why a pod that never came Ready did
+// not (a sandbox the runtime could not create, an image it could not pull),
+// which `kubectl wait` alone does not say.
+func (c *Client) LastWarning(ctx context.Context, pod string) (string, error) {
+	b, err := c.Kubectl(ctx, []string{"get", requestTimeout, "events", "-o", "json",
+		"--field-selector=involvedObject.kind=Pod,involvedObject.name=" + pod + ",type=Warning"}, nil)
+	if err != nil {
+		return "", err
+	}
+	var list struct {
+		Items []struct {
+			Reason         string    `json:"reason"`
+			Message        string    `json:"message"`
+			FirstTimestamp time.Time `json:"firstTimestamp"`
+			LastTimestamp  time.Time `json:"lastTimestamp"`
+			EventTime      time.Time `json:"eventTime"`
+		} `json:"items"`
+	}
+	if err := json.Unmarshal(b, &list); err != nil {
+		return "", err
+	}
+	var at time.Time
+	last := ""
+	for _, e := range list.Items {
+		// An event repeats in place: lastTimestamp moves; a newer-style one
+		// carries eventTime instead.
+		t := e.FirstTimestamp
+		for _, u := range []time.Time{e.LastTimestamp, e.EventTime} {
+			if u.After(t) {
+				t = u
+			}
+		}
+		if last == "" || !t.Before(at) {
+			at, last = t, strings.TrimSpace(e.Reason+": "+strings.TrimSpace(e.Message))
+		}
+	}
+	return last, nil
+}
+
 // RolloutStatus blocks until a deployment's rollout completes.
 func (c *Client) RolloutStatus(ctx context.Context, deployment string, timeout time.Duration) error {
 	_, err := c.Kubectl(ctx, []string{"rollout", "status", "deployment/" + deployment, fmt.Sprintf("--timeout=%ds", int(timeout.Seconds()))}, nil)
