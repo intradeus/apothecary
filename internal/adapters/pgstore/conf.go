@@ -471,8 +471,8 @@ const appendTicketVersionSQL = `
 	  FROM tickets t
 	  LEFT JOIN LATERAL (SELECT * FROM ticket_versions v WHERE v.ticket_id = t.id ORDER BY v.seq DESC LIMIT 1) l ON true
 	 WHERE t.id = $1
-	   AND (l.seq IS NULL OR (l.title, l.goal, l.base_branch, l.change_type, l.type_id, l.labels)
-	        IS DISTINCT FROM (t.title, t.goal, t.base_branch, t.change_type, COALESCE(t.type_id, ''), t.labels))`
+	   AND (l.seq IS NULL OR (l.title, l.goal, l.base_branch, l.change_type, l.type_id, ARRAY(SELECT unnest(l.labels) ORDER BY 1))
+	        IS DISTINCT FROM (t.title, t.goal, t.base_branch, t.change_type, COALESCE(t.type_id, ''), ARRAY(SELECT unnest(t.labels) ORDER BY 1)))`
 
 // appendTicketVersion runs appendTicketVersionSQL in tx, then keeps the
 // newest confstore.MaxTicketVersions.

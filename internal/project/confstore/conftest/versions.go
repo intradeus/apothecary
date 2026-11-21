@@ -95,6 +95,24 @@ func ticketVersions(t *testing.T, open opener) {
 		same(t, "at", list[0].CreatedAt, at(4))
 	})
 
+	t.Run("labels are a set: the same ones in another order are no version", func(t *testing.T) {
+		s := seeded(t, open)
+		trackerLists(t, s)
+		k := ticket("k1", "i9", "u1", 1)
+		k.Labels = []string{"a", "b"}
+		ok(t, s.UpsertTicket(ctx, k, byU1))
+		k.Labels, k.UpdatedAt = []string{"b", "a"}, at(2)
+		ok(t, s.UpsertTicket(ctx, k, byU1))
+		_, err := s.SetTicketLabels(ctx, "k1", []string{"a", "b"}, false, at(3), byRun)
+		ok(t, err)
+		seen := confstore.TicketSeen{Key: "P-1", Title: k.Title, Goal: k.Goal, Labels: []string{"b", "a"}}
+		ok(t, s.SetTicketSeen(ctx, "k1", seen, "", k.ChangeType, at(4), confstore.Change{Kind: confstore.AuthorSync, AuthorID: "i9"}))
+		same(t, "reordered labels", seqs(s.versions("k1")), []int{1})
+		_, err = s.SetTicketLabels(ctx, "k1", []string{"a", "c"}, false, at(5), byRun)
+		ok(t, err)
+		same(t, "another label", seqs(s.versions("k1")), []int{2, 1})
+	})
+
 	t.Run("missing", func(t *testing.T) {
 		s := seeded(t, open)
 		_, err := s.ListTicketVersions(ctx, "nope")

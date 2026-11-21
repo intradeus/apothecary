@@ -353,7 +353,7 @@ func ticketChanges(a, b TicketVersion) []string {
 		{"base_branch", a.BaseBranch == b.BaseBranch},
 		{"change_type", a.ChangeType == b.ChangeType},
 		{"type", a.TypeID == b.TypeID},
-		{"labels", slices.Equal(a.Labels, b.Labels)},
+		{"labels", sameLabels(a.Labels, b.Labels)},
 	} {
 		if !f.same {
 			out = append(out, f.name)

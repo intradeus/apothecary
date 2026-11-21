@@ -33,6 +33,14 @@ What now:
   their seqs one after the other; the primary key is the last line of
   defence and its violation is `ErrConflict` (409). `SetTicketLabels`,
   one statement before, is now a transaction like the others.
+- **A ticket's labels are a set.** The same labels in another order are no
+  change: the SQL compares them sorted, the memory store and the summary
+  (`sameLabels`) and the History comparison (`ticketChanges` in
+  `cpui/src/lib/domain/ticket.ts`) alike.
+  A tracker returns labels in any order, so order as content would make a
+  sync append versions (and spend the retention bound) for nothing, and
+  History could not show such a difference anyway. The row keeps the order
+  it was written in; only the comparison ignores it.
 - **Who made it.** `author_kind` is `user` (a person; `author_id` their
   user id), `assistant` (an assistant's fill the person saved — the save
   body's `assisted` — or an act they confirmed from an assistant's
@@ -101,7 +109,8 @@ What now:
 Tests that hold it:
 
 - `conftest` "ticket versions" (memory and Postgres): a changed write
-  appends, an identical one and a status move do not; labels and seen
+  appends, an identical one and a status move do not; the same labels in
+  another order (an upsert, a labels write, a seen) do not; labels and seen
   writes carry their author and equal the row; newest first, by seq;
   missing is `ErrNotFound`; versions go with their ticket; 101 changes keep
   100 and never reuse a seq; a version holds no type in place; a restore

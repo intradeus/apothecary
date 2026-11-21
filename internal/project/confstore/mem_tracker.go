@@ -29,7 +29,20 @@ func ticketContent(t Ticket) TicketVersion {
 // sameTicketContent reports whether two versions hold the same content.
 func sameTicketContent(a, b TicketVersion) bool {
 	return a.Title == b.Title && a.Goal == b.Goal && a.BaseBranch == b.BaseBranch &&
-		a.ChangeType == b.ChangeType && a.TypeID == b.TypeID && slices.Equal(a.Labels, b.Labels)
+		a.ChangeType == b.ChangeType && a.TypeID == b.TypeID && sameLabels(a.Labels, b.Labels)
+}
+
+// sameLabels reports whether two label lists hold the same labels: order is
+// not content (a tracker may return them in any order), as pg's
+// appendTicketVersionSQL compares them sorted.
+func sameLabels(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	a, b = slices.Clone(a), slices.Clone(b)
+	slices.Sort(a)
+	slices.Sort(b)
+	return slices.Equal(a, b)
 }
 
 // appendTicketVersion is the version a ticket write appends, as pg's: when
