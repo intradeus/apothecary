@@ -36,6 +36,9 @@ import (
 	"apothecary/internal/project/integrations"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/tickets"
+	"apothecary/internal/run/event"
+	"apothecary/internal/skills"
+	"apothecary/internal/skills/skillstore"
 )
 
 // wireAssistant builds the assistant over the store and the resolver. stop
@@ -249,6 +252,19 @@ func (s sessionTokens) Mint(ctx context.Context, person, name string, actions, w
 
 func (s sessionTokens) Revoke(ctx context.Context, person, id string) error {
 	return s.a.DeleteToken(ctx, person, id)
+}
+
+// skillLibrary is the skill library as the assistant reads it: a ref the
+// store does not resolve (a set not found, a version gone) is
+// assistant.ErrSkillsetGone, any other failure the store's own.
+type skillLibrary struct{ *skillstore.Store }
+
+func (l skillLibrary) ResolveSkillsets(ctx context.Context, person string, refs []skills.Ref) ([]event.SkillsetPin, error) {
+	pins, err := l.Store.ResolveSkillsets(ctx, person, refs)
+	if errors.Is(err, confstore.ErrNotFound) || errors.Is(err, confstore.ErrInvalid) {
+		return nil, fmt.Errorf("%w: %w", assistant.ErrSkillsetGone, err)
+	}
+	return pins, err
 }
 
 // pageChecks are what the pages' checks read: a workshop's ticket types,

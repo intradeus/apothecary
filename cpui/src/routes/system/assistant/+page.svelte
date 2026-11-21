@@ -1,7 +1,8 @@
 <script lang="ts">
 	// The assistant's settings: the harness, model and skillsets a new
-	// conversation starts with. Picking a harness saves at once, since the
-	// models on offer are that harness's.
+	// conversation starts with. Picking a harness saves it at once, since
+	// the models on offer are that harness's; the skillsets it saves are the
+	// saved ones, a pick not yet saved waits for Save.
 	import { onMount } from 'svelte';
 	import { errorMessage } from '$lib/core/errors';
 	import { api } from '$lib/api';
@@ -38,11 +39,14 @@
 	}
 	onMount(load);
 
-	async function save(next: { integration: string; model: string }, saved?: string) {
+	async function save(
+		choice: { integration: string; model: string; skillsets: AssistantSkillsetRef[] },
+		saved?: string
+	) {
 		busy = true;
 		error = '';
 		try {
-			await api.assistant.setChoice({ ...next, skillsets });
+			await api.assistant.setChoice(choice);
 			if (saved) toast(saved);
 			const kept = skillsets;
 			await load();
@@ -55,7 +59,8 @@
 		}
 	}
 
-	const pickHarness = (id: string) => save({ integration: id, model: '' });
+	const pickHarness = (id: string) =>
+		save({ integration: id, model: '', skillsets: status?.choice.skillsets ?? [] });
 
 	const harnesses = $derived(
 		(status?.integrations ?? []).map((i) => ({ value: i.id, label: `${i.name} · ${i.kind}` }))
@@ -92,7 +97,7 @@
 			class="form"
 			onsubmit={(e) => {
 				e.preventDefault();
-				save({ integration, model }, t('ui.save.saved'));
+				save({ integration, model, skillsets }, t('ui.save.saved'));
 			}}
 		>
 			<div class="field">

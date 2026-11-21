@@ -395,7 +395,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	closers = append(closers, stopAssistant)
 	// The skillsets a person chose for their assistant install from the
 	// same library a run's do.
-	assistantSvc.Skills = skillLib
+	assistantSvc.Skills = skillLibrary{skillLib}
 	api.Assistant = assistantSvc
 	api.Analytics = analyticsSvc
 	api.Notices = notes

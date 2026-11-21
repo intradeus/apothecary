@@ -86,6 +86,28 @@ describe('System → Assistant', () => {
 		await waitFor(() => expect(toasts.list.at(-1)?.text).toBe('Saved'));
 	});
 
+	it('keeps an unsaved skillset pick out of a harness change until Save', async () => {
+		render(Page);
+		await userEvent.click(await screen.findByRole('checkbox', { name: /review/ }));
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({ choice: { integration: 'h2', model: '', skillsets: [] } })
+		);
+		await choose('Harness', /other · opencode/);
+		expect(api.assistant.setChoice).toHaveBeenLastCalledWith({
+			integration: 'h2',
+			model: '',
+			skillsets: []
+		});
+		await waitFor(() => expect(api.assistant.status).toHaveBeenCalledTimes(2));
+		expect(screen.getByRole('checkbox', { name: /review/ })).toBeChecked();
+		await userEvent.click(screen.getByRole('button', { name: 'Save' }));
+		expect(api.assistant.setChoice).toHaveBeenLastCalledWith({
+			integration: 'h2',
+			model: '',
+			skillsets: [{ id: 's1' }]
+		});
+	});
+
 	it('shows a failed save', async () => {
 		vi.mocked(api.assistant.setChoice).mockRejectedValue(new Error('nope'));
 		render(Page);

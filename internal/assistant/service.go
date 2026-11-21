@@ -278,21 +278,25 @@ func (svc *Service) SetChoice(ctx context.Context, person string, c Choice) erro
 
 // pins are a choice's skillsets as a new session installs them: each ref
 // resolved on its own, one that no longer resolves (deleted since) left
-// out, so the assistant keeps working.
-func (svc *Service) pins(ctx context.Context, person string, refs []skills.Ref) []event.SkillsetPin {
+// out, so the assistant keeps working. The library failing to answer is
+// an error: a session opened without the pin would never install it.
+func (svc *Service) pins(ctx context.Context, person string, refs []skills.Ref) ([]event.SkillsetPin, error) {
 	if svc.Skills == nil {
-		return nil
+		return nil, nil
 	}
 	var out []event.SkillsetPin
 	for _, r := range refs {
 		p, err := svc.Skills.ResolveSkillsets(ctx, person, []skills.Ref{r})
-		if err != nil {
+		if errors.Is(err, ErrSkillsetGone) {
 			svc.log().Warn("assistant: a chosen skillset is gone; skipping", "person", person, "skillset", r.ID, "err", err)
 			continue
 		}
+		if err != nil {
+			return nil, fmt.Errorf("your skills: %w", err)
+		}
 		out = append(out, p...)
 	}
-	return out
+	return out, nil
 }
 
 // Open is a person's session about a subject: their latest, or a new one;
@@ -324,8 +328,12 @@ func (svc *Service) Open(ctx context.Context, person string, kind Kind, workshop
 		if err != nil {
 			return Session{}, nil, err
 		}
+		pins, err := svc.pins(ctx, person, choice.Skillsets)
+		if err != nil {
+			return Session{}, nil, err
+		}
 		s = Session{ID: strings.ToLower(svc.newID()), UserID: person, Kind: kind, Workshop: workshop, Subject: subject,
-			Integration: choice.Integration, Model: choice.Model, Skillsets: svc.pins(ctx, person, choice.Skillsets)}
+			Integration: choice.Integration, Model: choice.Model, Skillsets: pins}
 		if err := svc.Store.SaveAssistantSession(ctx, s); err != nil {
 			return Session{}, nil, err
 		}

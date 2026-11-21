@@ -1103,18 +1103,23 @@ func TestWarm(t *testing.T) {
 }
 
 // fakeSkills is a library: a ref resolves to v3 unless it is gone or
-// another's; every pin holds one skill, "tickets", with two files.
+// another's, or the library fails (resolveE); every pin holds one skill,
+// "tickets", with two files.
 type fakeSkills struct {
-	mu     sync.Mutex
-	trees  int
-	treesE error
+	mu       sync.Mutex
+	trees    int
+	treesE   error
+	resolveE error
 }
 
 func (f *fakeSkills) ResolveSkillsets(_ context.Context, _ string, refs []skills.Ref) ([]event.SkillsetPin, error) {
+	if f.resolveE != nil {
+		return nil, f.resolveE
+	}
 	var out []event.SkillsetPin
 	for _, r := range refs {
 		if r.ID == "set-gone" || strings.HasPrefix(r.ID, "theirs") {
-			return nil, fmt.Errorf("skillset %s: not found", r.ID)
+			return nil, fmt.Errorf("skillset %s: %w", r.ID, ErrSkillsetGone)
 		}
 		seq := r.Seq
 		if seq == 0 {
@@ -1182,6 +1187,33 @@ func TestSkillsetsArePinnedAtOpen(t *testing.T) {
 	}
 	if fresh, _, _ := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1", true); fresh.Skillsets != nil {
 		t.Errorf("a new session after the choice changed = %+v", fresh.Skillsets)
+	}
+}
+
+// The library failing to answer is not a skillset gone: the session is not
+// opened (a session without the pin would never install it), and one opened
+// once the library is back pins the set.
+func TestSkillsetsLibraryFailureOpensNothing(t *testing.T) {
+	ctx := context.Background()
+	w := newWorld(t, "claude-code")
+	lib := &fakeSkills{resolveE: errors.New("connection reset")}
+	w.svc.Skills = lib
+	if err := w.store.SaveAssistantChoice(ctx, Choice{UserID: "u1", Integration: "int-1", Skillsets: []skills.Ref{{ID: "set-1"}}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := w.svc.Open(ctx, "u1", KindGeneral, "", "palette", false); err == nil || !strings.Contains(err.Error(), "connection reset") {
+		t.Fatalf("open while the library fails = %v", err)
+	}
+	if list, _ := w.store.AssistantSessions(ctx, "u1"); len(list) != 0 {
+		t.Fatalf("sessions saved while the library failed = %+v", list)
+	}
+	lib.resolveE = nil
+	s, _, err := w.svc.Open(ctx, "u1", KindGeneral, "", "palette", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []event.SkillsetPin{{ID: "set-1", Name: "name-set-1", Seq: 3, Hash: "h-set-1"}}; !slices.Equal(s.Skillsets, want) {
+		t.Errorf("pins once the library is back = %+v", s.Skillsets)
 	}
 }
 

@@ -146,11 +146,16 @@ type Choice struct {
 // Skills is the person's skill library, as a session installs it.
 type Skills interface {
 	// ResolveSkillsets pins refs to versions: each skillset must be
-	// person's own.
+	// person's own. A ref that does not resolve (the set deleted or
+	// another's, the version gone) is an error wrapping ErrSkillsetGone;
+	// any other error is the library failing to answer.
 	ResolveSkillsets(ctx context.Context, person string, refs []skills.Ref) ([]event.SkillsetPin, error)
 	// SkillTrees are the pins' skills, each once, with their files.
 	SkillTrees(ctx context.Context, pins []event.SkillsetPin) ([]skills.Tree, error)
 }
+
+// ErrSkillsetGone is a skillset ref the library no longer resolves.
+var ErrSkillsetGone = errors.New("assistant: no such skillset")
 
 // Store keeps sessions, their messages and persons' choices.
 type Store interface {
