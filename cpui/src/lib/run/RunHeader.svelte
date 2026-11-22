@@ -70,10 +70,25 @@
 		open_pings: rs.pendingPings.length,
 		merge_requests: run.mrs.map((m) => m.url)
 	});
+	/** The YAML of a change this tab could not hold for the editor: its
+	 *  callout stays, saying so, with the YAML to copy instead. */
+	let unheld = $state<string | null>(null);
 	function openInEditor(ws: string, f: RunFill) {
-		stashFlowFill(ws, f.flow, f.yaml);
+		if (!stashFlowFill(ws, f.flow, f.yaml)) {
+			unheld = f.yaml;
+			return;
+		}
+		unheld = null;
 		guard.revert();
 		void goto(to.flow(ws, f.flow));
+	}
+	async function copyYaml(yaml: string) {
+		try {
+			await navigator.clipboard.writeText(yaml);
+			toast(t('assistant.yamlCopied'));
+		} catch {
+			toast(t('ui.copy.failed'), { tone: 'bad' });
+		}
 	}
 </script>
 
@@ -114,7 +129,15 @@
 							<button class="btn-primary btn-sm" onclick={() => openInEditor(ws, f)}
 								>{t('assistant.openInEditor')}</button
 							>
+							{#if unheld === f.yaml}
+								<button class="btn-sm" onclick={() => copyYaml(f.yaml)}
+									>{t('assistant.copyYaml')}</button
+								>
+							{/if}
 						</div>
+						{#if unheld === f.yaml}
+							<div class="error" role="alert">{t('assistant.handoffUnheld')}</div>
+						{/if}
 					</div>
 				</Callout>
 			{/if}

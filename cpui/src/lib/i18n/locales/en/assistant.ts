@@ -36,6 +36,10 @@ export default {
 	'assistant.namesRun': '{arg}: the run “{name}”',
 	'assistant.handoff': 'The assistant proposes a change to the flow {flow}.',
 	'assistant.openInEditor': 'Open in the flow editor',
+	'assistant.handoffUnheld':
+		'This browser would not hold the change for the flow editor (its session storage is off). Copy the YAML and paste it into the editor’s YAML tab.',
+	'assistant.copyYaml': 'Copy the YAML',
+	'assistant.yamlCopied': 'Copied the YAML',
 	'assistant.dismiss': 'Dismiss',
 	'assistant.changed': 'Filled: {fields}',
 	'assistant.undo': 'Undo',

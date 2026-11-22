@@ -534,14 +534,26 @@ describe('FlowEditorPage', () => {
 			expect((await readPage()).yaml).not.toBe('name: builder\nstages: {}\n');
 		});
 
-		it('drops a handed-off change when the flow does not load', async () => {
-			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\n');
-			vi.mocked(api.flows.get).mockRejectedValue(new Error('gone'));
+		it('keeps a handed-off change through a failed load, and fills it once Retry loads', async () => {
+			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\nstages: {}\n');
+			vi.mocked(api.flows.get).mockRejectedValueOnce(new Error('engine down'));
+			vi.mocked(api.flows.validate).mockImplementation(async () => validated(plainDoc()));
+			vi.mocked(api.flows.binding).mockResolvedValue(null);
 			render(FlowEditorPage, { projectId: 'p1', name: 'builder' });
 			expect(await screen.findByRole('alert')).toBeInTheDocument();
-			await waitFor(() =>
-				expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull()
+			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBe(
+				'name: builder\nstages: {}\n'
 			);
+			expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument();
+
+			vi.mocked(api.flows.get).mockResolvedValue(aFlow());
+			await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+			expect(await screen.findByText('Filled: yaml')).toBeInTheDocument();
+			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull();
+			expect(api.flows.save).not.toHaveBeenCalled();
+			await userEvent.click(fillButton());
+			expect((await readPage()).yaml).toBe('name: builder\nstages: {}\n');
+			await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
 			expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument();
 		});
 	});

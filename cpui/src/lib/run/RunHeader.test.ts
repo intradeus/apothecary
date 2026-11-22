@@ -258,6 +258,43 @@ describe('RunHeader', () => {
 			expect(screen.queryByText(/proposes a change/)).not.toBeInTheDocument();
 		});
 
+		it('keeps a change this tab cannot hold, saying so, with its YAML to copy', async () => {
+			const user = userEvent.setup();
+			const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+				throw new DOMException('denied', 'SecurityError');
+			});
+			const write = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue();
+			try {
+				await open();
+				await offer({ flow: 'builder', yaml: 'name: builder\n' });
+				await user.click(btn('Open in the flow editor'));
+				expect(goto).not.toHaveBeenCalled();
+				expect(screen.getByText(/proposes a change/)).toBeInTheDocument();
+				expect(screen.getByRole('alert')).toHaveTextContent(/session storage is off/);
+
+				await user.click(btn('Copy the YAML'));
+				expect(write).toHaveBeenCalledWith('name: builder\n');
+				await waitFor(() => expect(toasts.list.map((x) => x.text)).toEqual(['Copied the YAML']));
+
+				write.mockRejectedValue(new Error('denied'));
+				await user.click(btn('Copy the YAML'));
+				await waitFor(() =>
+					expect(toasts.list.map((x) => [x.text, x.tone])).toContainEqual([
+						'Could not copy — the browser refused clipboard access.',
+						'bad'
+					])
+				);
+
+				set.mockRestore();
+				await user.click(btn('Open in the flow editor'));
+				expect(goto).toHaveBeenCalledWith('/w/p1/flows/builder');
+				expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+			} finally {
+				set.mockRestore();
+				write.mockRestore();
+			}
+		});
+
 		it('drops a proposed change, and ignores what is not one', async () => {
 			await open();
 			await offer({ yaml: 'no flow' });

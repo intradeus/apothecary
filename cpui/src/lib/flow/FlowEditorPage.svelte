@@ -42,18 +42,16 @@
 		untrack(() => flowGuard.settle());
 	});
 	// Once loaded whole, a change the assistant proposed from a run (handed
-	// off) fills the editor; the fill button's mark offers its Undo. A flow
-	// that does not load drops it: it must not wait in the tab for a later
-	// opening.
+	// off) fills the editor; the fill button's mark offers its Undo. A load
+	// that fails leaves it held: Retry loads the flow and then fills it.
 	let handoffTaken = false;
 	$effect(() => {
-		const done = ed.loaded > 0;
-		const failed = !!ed.error && !ed.flow;
+		if (ed.loaded === 0) return;
 		untrack(() => {
-			if (handoffTaken || (!done && !failed)) return;
+			if (handoffTaken) return;
 			handoffTaken = true;
 			const yaml = takeFlowFill(projectId, name);
-			if (done && yaml !== null) flowGuard.applyNow({ yaml });
+			if (yaml !== null) flowGuard.applyNow({ yaml });
 		});
 	});
 	let assistOpen = $state(false);

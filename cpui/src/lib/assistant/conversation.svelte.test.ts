@@ -472,6 +472,30 @@ describe('Conversation frames', () => {
 		expect([c.busy, c.live, fill.asking]).toEqual([false, '', false]);
 	});
 
+	it('takes the fill of an answer whose frame a gap lost, from its message played after the record', async () => {
+		const fill = hook();
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'go'));
+		const c = await loaded({ kind: 'ticket', subject: 'T-1', fill });
+		await c.ask('go');
+		const reread = Promise.withResolvers<SessionView>();
+		vi.mocked(api.assistant.session).mockReturnValueOnce(reread.promise);
+		// The fill's frame was among those lost.
+		c.onFrame(gap);
+		await vi.waitFor(() => expect(api.assistant.session).toHaveBeenCalledTimes(1));
+		const answer = msg(2, 'assistant', 'Done.', { fill: { title: 'new' } });
+		c.onFrame(f({ kind: 'message', message: answer }));
+		c.onFrame(f({ kind: 'state', busy: false }));
+		// The record was read before the answer: still answering, no answer.
+		reread.resolve({ session, messages: [msg(1, 'person', 'go')], busy: true });
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		expect(c.messages).toEqual([msg(1, 'person', 'go'), answer]);
+		expect(fill.offered).toEqual([{ title: 'new' }]);
+		expect([c.busy, fill.asking]).toEqual([false, false]);
+		// Played again (another gap's reread): not offered twice.
+		c.onFrame(f({ kind: 'message', message: answer }));
+		expect(fill.offered).toHaveLength(1);
+	});
+
 	it('answers only the latest gap’s reread, and plays what it held after a failed one', async () => {
 		const c = await loaded();
 		const first = Promise.withResolvers<SessionView>();

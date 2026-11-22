@@ -103,7 +103,12 @@ each doing one job.
   default).
 - **The run desk's Assistant view is retired.** The run's local assistant
   sits beside its title; a stored desk layout that names the view loads
-  without it and keeps its other tabs.
+  without it and keeps its other tabs. Its proposed flow change still goes
+  to the flow editor through the tab's session storage, with two changes
+  from the earlier note: a tab that cannot store it keeps the proposal in
+  the modal, says so and offers its YAML to copy; and a flow that fails to
+  load keeps it held (no longer dropped), so *Retry* loads the flow and
+  then fills it, unsaved, with Undo.
 
 ## Tests that hold it
 
@@ -119,7 +124,10 @@ each doing one job.
   `TestAssistantSessionsArePersonal` (fresh, by id, the subject route gone).
 - CPUI: `conversation.svelte.test.ts` (a gap rereads the session held, not
   a newer one, atomically: no question during it, a question on its way
-  first, frames played over an older record; switching sessions),
+  first, frames played over an older record, a lost fill frame recovered
+  from the answer's message; switching sessions),
+  `RunHeader.test.ts` (a handoff this tab cannot store),
+  `FlowEditorPage.test.ts` (a handoff kept through a failed load),
   `GlobalAssistant.test.ts` (no question
   while *New conversation* opens), `AssistantPanel.test.ts` (an older
   conversation after a harness switch), `FillAssistant.test.ts` (another

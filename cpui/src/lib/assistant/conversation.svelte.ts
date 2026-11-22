@@ -225,6 +225,8 @@ export class Conversation {
 					this.live = '';
 					this.tool = '';
 					this.liveRequest = null;
+					// Its fill's frame may be the one a gap lost.
+					this.#recover();
 				}
 				break;
 			case 'request':
@@ -374,9 +376,10 @@ export class Conversation {
 	}
 
 	/** The engine sends a fill's frame before it records the answer holding
-	 *  it, so a gap can lose the frame of an answer the record already has:
-	 *  the page's question still waiting takes the answer's fill from the
-	 *  record, once — not when a frame already brought it, nor again. */
+	 *  it, so a gap can lose the frame of an answer the record (or the
+	 *  answer's own message frame, played after a reread) already has: the
+	 *  page's question still waiting takes the answer's fill from the
+	 *  messages, once — not when a frame already brought it, nor again. */
 	#recover() {
 		if (!this.#fill?.asking) return;
 		const m = this.messages.findLast(
