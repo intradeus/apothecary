@@ -42,12 +42,15 @@ type engine struct {
 	wakes   []string
 	wakeErr error
 	holds   int
+	// heldAtWake is holds when WakeEnv was last called.
+	heldAtWake int
 }
 
 func (e *engine) WakeEnv(_ context.Context, runID, by string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.wakes = append(e.wakes, runID+":"+by)
+	e.heldAtWake = e.holds
 	return e.wakeErr
 }
 
@@ -1311,10 +1314,13 @@ func TestAQuestionWakesAndHoldsTheWorkspace(t *testing.T) {
 	}
 	r.answered(t, 2)
 	r.eng.mu.Lock()
-	wakes, holds := r.eng.wakes, r.eng.holds
+	wakes, holds, held := r.eng.wakes, r.eng.holds, r.eng.heldAtWake
 	r.eng.mu.Unlock()
 	if len(wakes) != 1 || wakes[0] != runID+":ask" {
 		t.Errorf("wakes = %v", wakes)
+	}
+	if held != 1 {
+		t.Errorf("the wake ran with %d holds: the hold comes first, or a sweep may stop it under the question", held)
 	}
 	if holds != 0 {
 		t.Errorf("%d holds left after the answer", holds)
@@ -1323,5 +1329,11 @@ func TestAQuestionWakesAndHoldsTheWorkspace(t *testing.T) {
 	r.eng.wakeErr = errors.New("no pod")
 	if _, err := r.svc.Ask(ctx, runID, "", "u", "q2", nil); err == nil || !strings.Contains(err.Error(), "no pod") {
 		t.Errorf("ask on a workspace that would not wake = %v", err)
+	}
+	r.eng.mu.Lock()
+	holds = r.eng.holds
+	r.eng.mu.Unlock()
+	if holds != 0 {
+		t.Errorf("a refused question left %d holds", holds)
 	}
 }

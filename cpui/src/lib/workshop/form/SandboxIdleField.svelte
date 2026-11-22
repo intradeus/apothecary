@@ -2,28 +2,33 @@
 	// The workshop's stop-on-idle: how long a sandbox nobody uses stays up
 	// before it is stopped, its checkout and containers kept for the next use.
 	// The instance's default, never, or its own minutes. A provisioner whose
-	// storage does not outlive a pod cannot keep a stopped sandbox: the field
-	// says why and the engine refuses minutes there.
+	// storage does not outlive a pod, or a runtime whose disks are its VM's,
+	// cannot keep a stopped sandbox: the field says why (for the workshop's
+	// runtime) and the engine refuses minutes there.
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
-	import { IDLE_NEVER } from '$lib/domain';
+	import { IDLE_NEVER, sleepRefusal, type RuntimeOffer } from '$lib/domain';
 	import RadioGroup, { type ChoiceOption } from '$lib/ui/RadioGroup.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 
 	let {
-		idleMinutes = $bindable()
+		idleMinutes = $bindable(),
+		runtime = ''
 	}: {
 		/** 0 the instance's default, IDLE_NEVER never, else minutes. */
 		idleMinutes: number;
+		/** The workshop's runtime pick, '' the provisioner's default. */
+		runtime?: string;
 	} = $props();
 
-	let noSleep = $state<string | undefined>(undefined);
+	let offer = $state<RuntimeOffer | undefined>(undefined);
 	$effect(() => {
 		api.system
 			.runtimeOffer()
-			.then((o) => (noSleep = o.noSleep))
-			.catch(() => (noSleep = undefined));
+			.then((o) => (offer = o))
+			.catch(() => (offer = undefined));
 	});
+	const noSleep = $derived(offer && sleepRefusal(offer, runtime));
 
 	type Mode = 'default' | 'never' | 'after';
 	const modeOf = (m: number): Mode => (m === 0 ? 'default' : m < 0 ? 'never' : 'after');

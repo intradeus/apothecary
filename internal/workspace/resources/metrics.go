@@ -9,9 +9,11 @@ import (
 )
 
 // RegisterMetrics reports the memory sandboxes hold against their limits,
-// summed per runtime from each live run's latest sample: what capacity
-// planning under a VM runtime needs (a Kata guest keeps what it touched).
-// Read at collection time; nothing is recorded on the sampling path.
+// summed per runtime from the last sample pass: every sandbox that answered
+// it, a finished run's not yet reaped included, a sleeping one's not. What
+// capacity planning under a VM runtime needs (a Kata guest keeps what it
+// touched). Read at collection time; nothing is recorded on the sampling
+// path.
 func (s *Sampler) RegisterMetrics(meter metric.Meter) error {
 	used, err1 := meter.Int64ObservableGauge("apothecary.sandboxes.memory.used",
 		metric.WithUnit("By"), metric.WithDescription("working-set memory of live sandboxes, by runtime"))
@@ -33,24 +35,20 @@ func (s *Sampler) RegisterMetrics(meter metric.Meter) error {
 
 type memory struct{ used, limit int64 }
 
-// memoryByRuntime sums each live run's latest sample per runtime ("default":
-// a provisioner that offers no choice).
+// memoryByRuntime sums the last pass's samples per runtime ("default": a
+// provisioner that offers no choice).
 func (s *Sampler) memoryByRuntime() map[string]memory {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := map[string]memory{}
-	for id, buf := range s.buf {
-		if len(buf) == 0 {
-			continue
-		}
-		rt := string(s.runtime[id])
+	for _, x := range s.mem {
+		rt := string(x.runtime)
 		if rt == "" {
 			rt = "default"
 		}
-		last := buf[len(buf)-1]
 		m := out[rt]
-		m.used += last.MemUsed
-		m.limit += last.MemLimit
+		m.used += x.used
+		m.limit += x.limit
 		out[rt] = m
 	}
 	return out

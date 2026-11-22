@@ -161,7 +161,7 @@ picks among them (Settings → Workspace).
 | Runtime | Isolation | Nodes need | Storage | Stops when idle |
 |---|---|---|---|---|
 | `sysbox` (default) | containers in a user namespace of the pod's own; root in the sandbox is an unprivileged uid on the node | sysbox ≥ 0.7, containerd ≥ 2.0.5, kernel ≥ 6.3 ([above](#cluster-requirements)) | `pvc` or `emptydir` | with `pvc` |
-| `kata` | a VM per sandbox (Kata Containers, Cloud Hypervisor); the sandbox is privileged inside its own guest kernel, never on the node | KVM (`/dev/kvm`), Kata ≥ 4.4 with a `kata` RuntimeClass | `emptydir` only | no |
+| `kata` | a VM per sandbox (Kata Containers, Cloud Hypervisor); the sandbox is privileged inside its own guest kernel, never on the node | KVM (`/dev/kvm`), Kata ≥ 4.4 with a `kata` RuntimeClass | disks of its own in its VM, whatever the provisioner's storage | no |
 | `privileged` | none: sandbox root is root on its node | nothing | `pvc` or `emptydir` | with `pvc` |
 
 All three run docker inside, compose and k3d included.
@@ -216,8 +216,11 @@ sandbox:test:kata` runs on). On a real node:
    Add a `scheduling` block if only some nodes have Kata.
 5. Deploy with `--set workspaces.runtimes='{sysbox,kata}'` (or
    `workspaces.runtime=kata` for Kata by default), and on the provisioner
-   set storage to `emptydir` with a `storage_size` (an integration that
-   approves Kata and sets no storage gets `emptydir`).
+   set a `storage_size`. Its storage (`pvc` by default) stays the other
+   runtimes': a Kata sandbox always gets two emptyDirs of its own, disks in
+   its VM. A Kata RuntimeClass of another name goes in the provisioner's
+   runtime class as `kata=<class>` (a class alone is the default
+   runtime's).
 
 **Kata sandboxes must be sized** (System → Limits sets a default, a workshop
 its own): an unsized one is refused, not given Kata's 2 GB default. Each of
@@ -240,11 +243,22 @@ Under **Kata**, the RuntimeClass overhead comes on top of each pod, and the
 VM is the limit: the guest gets exactly the memory and one vCPU more than
 the CPUs. A node with 64 GiB holds about seven 8 GiB Kata sandboxes once the
 overhead and the system's share are counted. Under sysbox and privileged an
-unsized sandbox may use what the node has; under Kata one is refused.
+unsized sandbox may use what the node has, or, under a ceiling, up to the
+ceiling: it is limited there and requests only 100m and 1 GiB, so a large
+ceiling never makes it unschedulable. Under Kata an unsized sandbox is
+refused (a ceiling alone does not size a VM). Each sandbox's tunnel and
+relay sidecars request 10m and 32 MiB more.
+
+A new size or runtime applies to the next run's sandbox, or a rebuild: a
+rebuild replaces the pod when its shape changed and the run's checkout is
+on its claim (`pvc`). On `emptydir` storage, and to or from Kata, the pod's
+disks go with it, so a rebuild keeps the pod and says the change waits for
+the next run.
 
 The run page's graphs show what a sandbox reached against its limit, and a
 workshop's Settings → Workspace lists its recent runs' peaks: the evidence
-for its size.
+for its size. A process killed at the memory limit, or the sandbox
+container killed and restarted, is told in the run's workspace log.
 
 ### Stopping idle sandboxes
 
@@ -255,8 +269,9 @@ own or never. The pod is deleted; its volumes and the gateway stay, and the
 sandbox still counts toward `max_environments`. Its next use (a stage, the
 terminal, the editor, a port, SSH, the run page's **Wake**) starts a pod on
 the same volumes in seconds; processes it ran start again from the
-project's hooks. With `emptydir` storage (Kata's) there is nothing to keep,
-so sandboxes there are never stopped and the form says why.
+project's hooks. With `emptydir` storage, or under Kata (whose disks are
+its VM's), there is nothing to keep, so those sandboxes are never stopped:
+the form says why for the workshop's runtime, and refuses minutes there.
 
 ## A local cluster
 

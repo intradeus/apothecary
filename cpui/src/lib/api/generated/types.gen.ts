@@ -1820,6 +1820,7 @@ export type RuntimeCapabilities = {
 export type RuntimeInfo = {
 	capabilities: RuntimeCapabilities;
 	name: string;
+	noSleep?: string;
 };
 
 export type RuntimeOffer = {

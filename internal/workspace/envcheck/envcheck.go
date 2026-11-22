@@ -153,6 +153,7 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 		EgressAllowedPorts: res.EgressAllowedPorts,
 		Docker:             res.WorkspaceDocker,
 		Size:               res.WorkspaceSize,
+		SizeCap:            res.WorkspaceSizeCap,
 		GitUser:            res.GitUser,
 		GitPass:            res.GitPass,
 	})

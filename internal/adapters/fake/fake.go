@@ -91,11 +91,19 @@ type EnvProvisioner struct {
 	WakeErr     error // a Provision that would wake a sleeping workspace fails so
 	Slept       []envport.EnvID
 	Woken       []envport.EnvID
+	// SleepHook and WakeHook, when set, run as a Sleep, or a Provision that
+	// wakes, begins (no lock held): where a test puts what happens while a
+	// sandbox is being stopped or started.
+	SleepHook func(id envport.EnvID)
+	WakeHook  func(id envport.EnvID)
 }
 
-func (p *EnvProvisioner) CanSleep() error { return p.CannotSleep }
+func (p *EnvProvisioner) CanSleep(envport.Runtime) error { return p.CannotSleep }
 
 func (p *EnvProvisioner) Sleep(_ context.Context, id envport.EnvID) error {
+	if p.SleepHook != nil {
+		p.SleepHook(id)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.SleepErr != nil {
@@ -142,6 +150,19 @@ func NewEnvProvisioner() *EnvProvisioner {
 }
 
 func (p *EnvProvisioner) Provision(_ context.Context, spec envport.EnvSpec) (envport.EnvID, error) {
+	if p.WakeHook != nil {
+		p.mu.Lock()
+		var asleep envport.EnvID
+		for id, e := range p.envs {
+			if spec.Name != "" && e.Spec.Name == spec.Name && e.Status == envport.EnvAsleep {
+				asleep = id
+			}
+		}
+		p.mu.Unlock()
+		if asleep != "" {
+			p.WakeHook(asleep)
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.provisions < len(p.ProvisionErrs) {

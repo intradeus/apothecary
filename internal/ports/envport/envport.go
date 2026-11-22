@@ -117,9 +117,13 @@ type EnvSpec struct {
 	Docker bool
 	// Size is what the sandbox may use, already resolved against the
 	// instance's default and ceiling (SandboxPolicy.Effective). Zero fields:
-	// no limit. It applies when the sandbox is created (a provision, a
+	// no size. It applies when the sandbox is created (a provision, a
 	// rebuild that replaces it), never to a live one.
 	Size SandboxSize
+	// SizeCap is the most the sandbox may use where Size sets nothing (the
+	// instance's ceiling, SandboxPolicy.Cap): a limit, never a reservation.
+	// Zero fields: no limit.
+	SizeCap SandboxSize
 	// Runtime is what isolates the sandbox, already chosen against the
 	// provisioner's offer (RuntimeChoice.Choose); "" is its default. Like
 	// Size, it applies when the sandbox is created.
@@ -457,8 +461,9 @@ type EngineURLProvider interface {
 // storage, its secrets and its egress identity stay, its processes go.
 // Provision with the same spec wakes it (EnvAsleep until then).
 type EnvSleeper interface {
-	// CanSleep says whether this provisioner's workspaces can sleep, and
-	// why not (storage that goes with the sandbox).
-	CanSleep() error
+	// CanSleep says whether this provisioner's workspaces under runtime rt
+	// ("" its default) can sleep, and why not (storage that goes with the
+	// sandbox).
+	CanSleep(rt Runtime) error
 	Sleep(ctx context.Context, env EnvID) error
 }

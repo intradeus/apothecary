@@ -24,10 +24,12 @@ type sandboxRuntime struct {
 	ownUserNamespace bool
 	// vm is a runtime whose pod is a virtual machine (Kata):
 	//   - no volumeMount.subPath (Kata does not support it), so the run
-	//     folder and the inner docker's data are a volume each, and on
-	//     emptyDir storage only: a block emptyDir is a disk in the guest,
+	//     folder and the inner docker's data are a volume each, and always
+	//     emptyDirs of its own, whatever the integration's storage (which
+	//     the other runtimes keep): a block emptyDir is a disk in the guest,
 	//     while a claim from a directory-backed class arrives over virtio-fs,
-	//     where docker cannot keep its layers;
+	//     where docker cannot keep its layers. So a VM sandbox cannot be
+	//     stopped and kept (CanStopUnder);
 	//   - a minimal /dev in a privileged container, which the sandbox
 	//     completes before dockerd (APO_DEV_PRELUDE);
 	//   - a size, required: the pod's limits size the VM.
@@ -78,21 +80,6 @@ func (rt sandboxRuntime) className(override string) string {
 	return rt.class
 }
 
-// CheckStorage refuses a runtime the integration's workspace storage
-// ("pvc" or "emptydir") cannot serve: a VM runtime's volumes must be
-// emptyDirs (the vm trait says why). The kind checks it when an
-// integration approves runtimes, before any workshop picks one.
-func CheckStorage(name envport.Runtime, storage string) error {
-	rt, err := lookupRuntime(name)
-	if err != nil {
-		return err
-	}
-	if rt.vm && storage != "emptydir" {
-		return fmt.Errorf("the %s runtime needs the integration's storage set to emptydir, not %s (a claim reaches its VM over virtio-fs, where docker cannot keep its layers)", name, storage)
-	}
-	return nil
-}
-
 // CanStop says why sandboxes on this workspace storage cannot be stopped
 // and kept (stop-on-idle): an emptyDir goes with its pod.
 func CanStop(storage string) error {
@@ -102,13 +89,16 @@ func CanStop(storage string) error {
 	return nil
 }
 
-// DefaultStorage is the workspace storage an integration that sets none
-// gets: emptydir when one of its runtimes is a VM (CheckStorage), else pvc.
-func DefaultStorage(approved []envport.Runtime) string {
-	for _, name := range approved {
-		if rt, err := lookupRuntime(name); err == nil && rt.vm {
-			return "emptydir"
-		}
+// CanStopUnder says why a sandbox under runtime name cannot be stopped and
+// kept whatever the integration's storage: a VM's disks are emptyDirs of
+// its own (the vm trait), gone with its pod.
+func CanStopUnder(name envport.Runtime) error {
+	rt, err := lookupRuntime(name)
+	if err != nil {
+		return err
 	}
-	return "pvc"
+	if rt.vm {
+		return fmt.Errorf("a %s sandbox keeps its checkout and containers on disks inside its VM, which go with its pod: it cannot be stopped and kept", name)
+	}
+	return nil
 }

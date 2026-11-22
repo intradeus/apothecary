@@ -34,7 +34,7 @@ type Host interface {
 	// deployment cannot honor (the daemon door); prepare calls it as soon as
 	// the checkout exists, so such a repo fails before the (expensive) sandbox
 	// comes up wherever the host allows it.
-	prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error)
+	prepare(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error)
 
 	// contained reports that this host's sandboxes are contained from their
 	// node (the runtime's trait): sandbox root is not node root. It decides
@@ -59,9 +59,12 @@ type Host interface {
 	destroySandbox(ctx context.Context, name string) error
 	// stopSandbox ends the sandbox and keeps what it stands on: its storage,
 	// its secrets, its network policy (Sleep). canStop says why a host's
-	// sandboxes cannot be stopped and kept.
+	// sandboxes under runtime rt cannot be stopped and kept; checkStop says
+	// it of a run's live sandbox (the runtime it was built under), before
+	// Sleep marks it asleep.
 	stopSandbox(ctx context.Context, name string) error
-	canStop() error
+	canStop(rt envport.Runtime) error
+	checkStop(ctx context.Context, name string) error
 	// resetSandbox empties the sandbox for a compose rebuild: every workspace
 	// and side container goes, and with them what they hold in the daemon.
 	// The checkout stays: agent commits live there and nowhere else yet.

@@ -109,7 +109,7 @@ workspaces:
   # namespace of its own; sysbox-runc installed on the nodes that run
   # sandboxes), `kata` (a VM per sandbox: Kata Containers with Cloud
   # Hypervisor and a `kata` RuntimeClass, KVM on the nodes; sandboxes must be
-  # sized, System → Limits, and use emptydir storage) or `privileged`
+  # sized, System → Limits, on disks of their own in the VM) or `privileged`
   # (sandbox root is root on its node: for a cluster of your own, k3d or a
   # dev box, never a shared one). Empty: from the older `privileged` below
   # (true: privileged; false: sysbox).

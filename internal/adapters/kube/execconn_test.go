@@ -2,7 +2,9 @@ package kube
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -49,8 +51,39 @@ func TestExecConn(t *testing.T) {
 	if conn.RemoteAddr().String() != "pod/p1" || conn.LocalAddr().Network() != "kubectl-exec" {
 		t.Errorf("addrs = %v %v", conn.LocalAddr(), conn.RemoteAddr())
 	}
-	if conn.SetDeadline(time.Now()) == nil || conn.SetReadDeadline(time.Now()) == nil || conn.SetWriteDeadline(time.Now()) == nil {
-		t.Error("deadlines are not supported over a pipe")
+}
+
+// A deadline bounds a read (and a write) like a socket's: past it the call
+// fails with a timeout, and a later deadline lets the connection go on.
+func TestExecConnDeadlines(t *testing.T) {
+	c, _ := fakeExecKubectl(t, "exec cat")
+	conn, err := c.ExecConn(context.Background(), "p1", "relay", []string{"x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if err := conn.SetReadDeadline(time.Now().Add(50 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	var ne net.Error
+	if _, err := conn.Read(make([]byte, 1)); !errors.As(err, &ne) || !ne.Timeout() || !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("read past its deadline: %v", err)
+	}
+	if err := conn.SetDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(conn, "x"); err != nil {
+		t.Fatal(err)
+	}
+	b := make([]byte, 1)
+	if _, err := io.ReadFull(conn, b); err != nil || b[0] != 'x' {
+		t.Errorf("after a new deadline: %q, %v", b, err)
+	}
+	if err := conn.SetWriteDeadline(time.Now().Add(-time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(conn, "y"); !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Errorf("write past its deadline: %v", err)
 	}
 }
 

@@ -66,6 +66,57 @@ func TestSandboxSizesCheck(t *testing.T) {
 	}
 }
 
+// A field's floor and top: a slip of the unit, or a number past what the
+// store holds, is refused rather than saved (or failing the write).
+func TestSandboxSizeBounds(t *testing.T) {
+	for _, s := range []SandboxSize{
+		{MilliCPU: MinMilliCPU, MemoryMiB: MinMemoryMiB},
+		{MilliCPU: MaxMilliCPU, MemoryMiB: MaxMemoryMiB},
+		{},
+	} {
+		if err := s.Validate("x"); err != nil {
+			t.Errorf("%+v: %v", s, err)
+		}
+	}
+	for s, want := range map[SandboxSize]string{
+		{MilliCPU: MinMilliCPU - 1}:   "CPU must be",
+		{MilliCPU: MaxMilliCPU + 1}:   "CPU must be",
+		{MilliCPU: -1}:                "CPU must be",
+		{MemoryMiB: 4}:                "memory must be",
+		{MemoryMiB: MaxMemoryMiB + 1}: "memory must be",
+		{MemoryMiB: 1 << 40}:          "memory must be",
+	} {
+		if err := s.Validate("x"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%+v: err = %v, want %q", s, err, want)
+		}
+	}
+}
+
+// Saving a project again checks only what the save changes: a ceiling
+// lowered under its size does not refuse every later save.
+func TestSandboxSizesCheckChange(t *testing.T) {
+	p := SandboxPolicy{Ceiling: SandboxSize{MilliCPU: 2000, MemoryMiB: 4096}}
+	prev := SandboxSize{MilliCPU: 8000, MemoryMiB: 16384} // saved under an older ceiling
+	if err := p.CheckChange(prev, prev); err != nil {
+		t.Errorf("unchanged: %v", err)
+	}
+	if err := p.CheckChange(prev, SandboxSize{MilliCPU: 8000, MemoryMiB: 2048}); err != nil {
+		t.Errorf("memory lowered, CPU kept: %v", err)
+	}
+	if err := p.CheckChange(prev, SandboxSize{MilliCPU: 9000, MemoryMiB: 16384}); err == nil || !strings.Contains(err.Error(), "2000 mCPU") {
+		t.Errorf("CPU raised: %v", err)
+	}
+	if err := p.CheckChange(prev, SandboxSize{MilliCPU: 8000, MemoryMiB: 20000}); err == nil || !strings.Contains(err.Error(), "4096 MiB") {
+		t.Errorf("memory raised: %v", err)
+	}
+	if err := p.CheckChange(SandboxSize{MemoryMiB: 100}, SandboxSize{MemoryMiB: 100}); err != nil {
+		t.Errorf("an older out-of-bounds field kept: %v", err)
+	}
+	if err := p.CheckChange(prev, SandboxSize{MilliCPU: 50, MemoryMiB: 16384}); err == nil {
+		t.Error("a changed field below the floor is refused")
+	}
+}
+
 func TestSandboxSizesEffective(t *testing.T) {
 	p := SandboxPolicy{Default: SandboxSize{MilliCPU: 2000, MemoryMiB: 4096}, Ceiling: SandboxSize{MilliCPU: 4000, MemoryMiB: 8192}}
 	for _, c := range []struct {
@@ -79,9 +130,19 @@ func TestSandboxSizesEffective(t *testing.T) {
 			t.Errorf("Effective(%+v) = %+v, want %+v", c.own, got, c.want)
 		}
 	}
-	// A ceiling without a default bounds every sandbox.
-	if got := (SandboxPolicy{Ceiling: SandboxSize{MemoryMiB: 8192}}).Effective(SandboxSize{}); got != (SandboxSize{MemoryMiB: 8192}) {
-		t.Errorf("ceiling only = %+v", got)
+	// A ceiling without a default sizes nothing: it caps (Cap).
+	ceilOnly := SandboxPolicy{Ceiling: SandboxSize{MilliCPU: 4000, MemoryMiB: 65536}}
+	if got := ceilOnly.Effective(SandboxSize{}); !got.IsZero() {
+		t.Errorf("ceiling only = %+v, want unset", got)
+	}
+	if got := ceilOnly.Cap(SandboxSize{}); got != ceilOnly.Ceiling {
+		t.Errorf("Cap(unset) = %+v, want the ceiling", got)
+	}
+	if got := ceilOnly.Cap(SandboxSize{MemoryMiB: 4096}); got != (SandboxSize{MilliCPU: 4000}) {
+		t.Errorf("Cap(memory set) = %+v, want the CPU ceiling alone", got)
+	}
+	if got := p.Cap(p.Effective(SandboxSize{})); !got.IsZero() {
+		t.Errorf("a sized sandbox has no cap: %+v", got)
 	}
 	// Nothing set anywhere: no limits, as before sizes existed.
 	if got := (SandboxPolicy{}).Effective(SandboxSize{}); !got.IsZero() {

@@ -14,8 +14,11 @@ kernel has none.
   kept by hand.
 - `apo-wg-up` sets up the link in a function the watchdog can run again. It
   tries `ip link add wg0 type wireguard`. When the kernel refuses the link
-  type, it starts `wireguard-go -f wg0` as its own child. Every `wg` and
-  `ip` call after that is the same on both paths. The log line and
+  type, it logs the kernel's own words ("Unknown device type", "Operation
+  not permitted") and starts `wireguard-go -f wg0` as its own child. If
+  userspace fails too (no `/dev/net/tun`), the error repeats the kernel's
+  refusal, so a node without the module is named for what it is. Every
+  `wg` and `ip` call after that is the same on both paths. The log line and
   `/run/apo/wg-mode` say which WireGuard runs.
 - **The watchdog** restarts a dead wireguard-go and puts the link back:
   wg0, its address and the routes all go with the process. The handshake
@@ -48,7 +51,9 @@ rules, as the private key's path already does.
 ## Tests that hold it
 
 - `TestLiveK8sWireGuardFallback`: the sandbox image's `apo-wg-up` against a
-  kernel-WireGuard peer, on the docker host the k3d suite uses:
+  kernel-WireGuard peer, on the docker host the k3d suite uses, on a
+  network whose range docker picks (a fixed one would fail on a docker
+  that already holds it):
   - userspace: a ping over the tunnel, then wireguard-go killed and the
     link back;
   - kernel: no wireguard-go runs.

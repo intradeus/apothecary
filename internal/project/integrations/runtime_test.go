@@ -139,11 +139,53 @@ func TestRuntimeChoiceOffered(t *testing.T) {
 	}
 }
 
+// Docker in workspaces asks for a daemon in the sandbox, and, under the
+// daemon door left on auto, a contained sandbox: what the save check holds
+// a workshop to, before any run is refused at provision.
 func TestProjectNeeds(t *testing.T) {
-	if n := projectNeeds(confstore.WorkspaceConfig{Docker: true}); !n.NestedContainers {
-		t.Errorf("docker = %+v", n)
+	docker := confstore.WorkspaceConfig{Docker: true}
+	if n := projectNeeds(docker, "auto"); !n.NestedContainers || !n.Contained {
+		t.Errorf("docker, auto = %+v", n)
 	}
-	if n := projectNeeds(confstore.WorkspaceConfig{}); n != (envport.RuntimeCapabilities{}) {
+	if n := projectNeeds(docker, ""); !n.Contained {
+		t.Errorf("docker, unset door = %+v", n)
+	}
+	if n := projectNeeds(docker, "on"); !n.NestedContainers || n.Contained {
+		t.Errorf("docker, on = %+v", n)
+	}
+	if n := projectNeeds(confstore.WorkspaceConfig{}, "auto"); n != (envport.RuntimeCapabilities{}) {
 		t.Errorf("nothing = %+v", n)
+	}
+}
+
+// The save check refuses Docker in workspaces under a privileged sandbox
+// while the door is on auto (naming why and the fix), and anywhere while it
+// is off; on, it is the operator's call.
+func TestCheckRuntimeHoldsDockerToTheDoor(t *testing.T) {
+	r, _, p := offering(t, map[string]any{"privileged": "on"})
+	ctx := context.Background()
+	priv := confstore.WorkspaceConfig{Docker: true, Runtime: envport.RuntimePrivileged}
+	err := r.CheckRuntime(ctx, p.ProvisionerID, priv)
+	if err == nil || !strings.Contains(err.Error(), "choose sysbox") || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER=auto") {
+		t.Errorf("auto, privileged: %v", err)
+	}
+	if err := r.CheckRuntime(ctx, p.ProvisionerID, confstore.WorkspaceConfig{Docker: true}); err != nil {
+		t.Errorf("auto, sysbox: %v", err)
+	}
+	if err := r.CheckRuntime(ctx, p.ProvisionerID, confstore.WorkspaceConfig{Runtime: envport.RuntimePrivileged}); err != nil {
+		t.Errorf("auto, privileged, no docker: %v", err)
+	}
+	// Not approved stays the refusal, without the door's explanation.
+	if err := r.CheckRuntime(ctx, p.ProvisionerID, confstore.WorkspaceConfig{Docker: true, Runtime: envport.RuntimeKata}); err == nil ||
+		!strings.Contains(err.Error(), "not approved") || strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER") {
+		t.Errorf("auto, unapproved: %v", err)
+	}
+	r.workspaceDocker = "on"
+	if err := r.CheckRuntime(ctx, p.ProvisionerID, priv); err != nil {
+		t.Errorf("on: %v", err)
+	}
+	r.workspaceDocker = "off"
+	if err := r.CheckRuntime(ctx, p.ProvisionerID, confstore.WorkspaceConfig{Docker: true}); !errors.Is(err, errDoorClosed) {
+		t.Errorf("off: %v", err)
 	}
 }

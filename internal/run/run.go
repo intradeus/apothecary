@@ -191,7 +191,9 @@ func Apply(v *View, e *event.Event) {
 	if v.RunID == "" {
 		v.RunID = e.RunID
 	}
-	v.UpdatedAt = e.TS
+	if e.Payload == nil || !housekeeping[e.Payload.EventType()] {
+		v.UpdatedAt = e.TS
+	}
 	v.Facts.accrue(v, e)
 	switch p := e.Payload.(type) {
 	case *event.RunCreated:
@@ -435,6 +437,11 @@ func Apply(v *View, e *event.Event) {
 	}
 	v.Facts.observe(v, e)
 }
+
+// housekeeping are the events that do not move a run's UpdatedAt: a
+// sandbox stopped when idle and started again is no change to the run, and
+// the reaper's window for a completed run counts from its last one.
+var housekeeping = map[event.Type]bool{event.TypeEnvSlept: true, event.TypeEnvWoke: true}
 
 // ViewSource is an OPTIONAL event.Store capability: the runs read-model as
 // rows, every run in one query. The engine's pollers, boot recovery and the

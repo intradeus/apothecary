@@ -54,20 +54,22 @@ import (
 // assertions check, at the composition root, that what main hands them
 // satisfies it.
 var (
-	_ automation.Runs    = (*engine.Engine)(nil)
-	_ automation.MRs     = (*mrs.Service)(nil)
-	_ envcheck.Flows     = (*engine.Engine)(nil)
-	_ engine.EnvTeardown = (*egress.Service)(nil)
-	_ engine.EnvTeardown = (*runports.Service)(nil)
-	_ engine.RunPorts    = (*runports.Service)(nil)
-	_ engine.EnvTeardown = (*browsermcp.Service)(nil)
-	_ services.Events    = (*engine.Engine)(nil)
-	_ services.Exposer   = (*runports.Service)(nil)
-	_ egress.AuditStore  = (*pgstore.Store)(nil)
-	_ ask.Engine         = (*engine.Engine)(nil)
-	_ ask.Store          = (*pgstore.Store)(nil)
-	_ analytics.Store    = (*pgstore.Store)(nil)
-	_ notices.Store      = (*pgstore.Store)(nil)
+	_ automation.Runs     = (*engine.Engine)(nil)
+	_ automation.MRs      = (*mrs.Service)(nil)
+	_ envcheck.Flows      = (*engine.Engine)(nil)
+	_ engine.EnvTeardown  = (*egress.Service)(nil)
+	_ engine.EnvSleepHook = (*egress.Service)(nil)
+	_ engine.EnvSleepHook = (*runports.Service)(nil)
+	_ engine.EnvTeardown  = (*runports.Service)(nil)
+	_ engine.RunPorts     = (*runports.Service)(nil)
+	_ engine.EnvTeardown  = (*browsermcp.Service)(nil)
+	_ services.Events     = (*engine.Engine)(nil)
+	_ services.Exposer    = (*runports.Service)(nil)
+	_ egress.AuditStore   = (*pgstore.Store)(nil)
+	_ ask.Engine          = (*engine.Engine)(nil)
+	_ ask.Store           = (*pgstore.Store)(nil)
+	_ analytics.Store     = (*pgstore.Store)(nil)
+	_ notices.Store       = (*pgstore.Store)(nil)
 )
 
 // app is the daemon, built: what serving and the background loops need.
@@ -195,8 +197,8 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// The daemon door under privileged sandboxes is the operator's explicit
 	// call (README, "Docker in workspaces"): say so once, where the choice is
 	// read off the deployment, not discovered from a run.
-	if boot.WorkspaceDocker == "on" && boot.K8s.Runtime == "privileged" {
-		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with privileged sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on its node")
+	if rt := uncontainedRuntime(boot.K8s.Runtime, boot.K8s.Runtimes); boot.WorkspaceDocker == "on" && rt != "" {
+		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with "+string(rt)+" sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on its node", "runtime", rt)
 	}
 	// The keeper is the one party that redeems provider refresh tokens
 	// (docs/model-providers-plan.md): harness credentials are opened through
@@ -367,6 +369,8 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	})
 	// Every connection to an exposed port is use of its run (stop-on-idle).
 	portRelay.Track = e.Use().PortConn
+	// A connection to an exposure kept across a sleep wakes its workspace.
+	portRelay.Wake = func(ctx context.Context, runID string) error { return e.WakeEnv(ctx, runID, engine.WokeByPort) }
 	egressSvc.ActiveRuns = e.ActiveRunIDs
 	wsSvc := wsinfo.New(runs, resolver, envSt)
 	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
@@ -501,4 +505,20 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		keeper: keeper, attachments: attachments, blobs: blobs,
 		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, tickets: ticketFactory, notes: notes,
 	}, closeAll, nil
+}
+
+// uncontainedRuntime is the first runtime the deployment offers (its
+// default, then its list) whose sandbox root is its node's root, by the
+// runtime's trait, never its name; "" when every one is contained.
+func uncontainedRuntime(def string, listed []string) envport.Runtime {
+	for _, name := range append([]string{def}, listed...) {
+		rt := envport.Runtime(name)
+		if name == "" {
+			rt = envport.RuntimePrivileged
+		}
+		if !rt.Capabilities().Contained {
+			return rt
+		}
+	}
+	return ""
 }

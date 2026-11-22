@@ -8,13 +8,7 @@
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { session } from '$lib/app/session.svelte';
 	import { api } from '$lib/api';
-	import {
-		aboveCeiling,
-		sizeFieldValid,
-		unsetSize,
-		type Limits,
-		type SandboxSize
-	} from '$lib/domain';
+	import { aboveCeiling, outOfBounds, unsetSize, type Limits, type SandboxSize } from '$lib/domain';
 	import SizeFields from '$lib/ui/SizeFields.svelte';
 	import SettingRow from '$lib/ui/SettingRow.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
@@ -65,11 +59,9 @@
 		draft?.sandbox ?? { default: unsetSize(), ceiling: unsetSize(), idleMinutes: 0 }
 	);
 	const overCeiling = $derived(aboveCeiling(sandbox.default, sandbox.ceiling));
-	const sizesValid = $derived(
-		[sandbox.default, sandbox.ceiling].every(
-			(s) => sizeFieldValid(s.cpus) && sizeFieldValid(s.memoryGiB)
-		)
-	);
+	const defaultOut = $derived(outOfBounds(sandbox.default));
+	const ceilingOut = $derived(outOfBounds(sandbox.ceiling));
+	const sizesValid = $derived(defaultOut.length === 0 && ceilingOut.length === 0);
 	const valid = $derived(
 		!!draft &&
 			[draft.maxConcurrentRuns, draft.maxEnvironments].every(
@@ -179,7 +171,7 @@
 					idPrefix="lim-size-default"
 					bind:size={draft.sandbox.default}
 					placeholder={{ cpus: t('page.limits.sizeNone'), memoryGiB: t('page.limits.sizeNone') }}
-					invalid={overCeiling}
+					invalid={[...overCeiling, ...defaultOut]}
 				/>
 			{:else}
 				<span class="mono val">{sizeText(fleet.limits?.sandbox?.default)}</span>
@@ -191,6 +183,7 @@
 					idPrefix="lim-size-ceiling"
 					bind:size={draft.sandbox.ceiling}
 					placeholder={{ cpus: t('page.limits.sizeNone'), memoryGiB: t('page.limits.sizeNone') }}
+					invalid={ceilingOut}
 				/>
 			{:else}
 				<span class="mono val">{sizeText(fleet.limits?.sandbox?.ceiling)}</span>
@@ -219,6 +212,9 @@
 		</SettingRow>
 		{#if overCeiling.length > 0}
 			<p class="error small">{t('page.limits.sizeOverCeiling')}</p>
+		{/if}
+		{#if !sizesValid}
+			<p class="error small">{t('ui.size.bounds')}</p>
 		{/if}
 	</section>
 

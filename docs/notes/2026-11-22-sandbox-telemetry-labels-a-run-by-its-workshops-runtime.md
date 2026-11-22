@@ -11,9 +11,11 @@ a label.
   op in flight (`running`, `asleep`, `sleeping`, `waking`, `rebuilding`,
   …). Absent sandboxes are not counted.
 - `apothecary.sandboxes.memory.used` and `.limit` (bytes, the resource
-  sampler): each live run's latest sample, summed per `runtime`. Used is
-  the cgroup's working set, and the limit is the node's memory when the
-  sandbox is uncapped. A run that ended drops out with its series.
+  sampler): the last sample pass, summed per `runtime`: every sandbox that
+  answered it, a completed run's not yet reaped included, a sleeping one's
+  not (the note 2026-11-22-idle-sandboxes-stop-and-keep-their-disks).
+  Used is the cgroup's working set, and the limit is the node's memory
+  when the sandbox is uncapped.
 - Both are on the engine dashboard (`observability/grafana/dashboards/engine.json`).
 
 ## The decision: the runtime label is the workshop's, not the pod's

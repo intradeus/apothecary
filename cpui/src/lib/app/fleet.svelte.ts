@@ -15,6 +15,7 @@ import type { Limits, Notice, Ping, Project, ProjectAction, Run } from '$lib/dom
 import { projectCan } from '$lib/domain';
 
 const POLL_MS = 4000;
+const LIMITS_MS = 60_000;
 
 class Fleet {
 	runs = $state<Run[]>([]);
@@ -22,8 +23,11 @@ class Fleet {
 	/** Undismissed system notices, newest first. */
 	notices = $state<Notice[]>([]);
 	projects = $state<Project[]>([]);
-	/** The deployment's caps, read once: they come from the boot env. */
+	/** The instance's limits (System → Limits): read again once LIMITS_MS
+	 *  old, so another admin's change reaches every form within a minute. */
 	limits = $state<Limits | null>(null);
+	/** ms epoch of the last limits read; 0 = never. */
+	#limitsAt = 0;
 	/** ms epoch of the last successful refresh; null before the first. */
 	updatedAt = $state<number | null>(null);
 	/** The tab was hidden and nothing has refreshed since it came back. */
@@ -151,20 +155,23 @@ class Fleet {
 
 	async #load() {
 		const epoch = this.#epoch;
+		const fresh = !!this.limits && Date.now() - this.#limitsAt < LIMITS_MS;
 		try {
 			const [runs, pending, notices, projects, limits] = await Promise.all([
 				api.runs.list(),
 				api.pings.pending(),
 				api.notices.list(),
 				api.projects.list(),
-				this.limits ? Promise.resolve(this.limits) : api.system.limits().catch(() => null)
+				fresh ? Promise.resolve(this.limits) : api.system.limits().catch(() => null)
 			]);
 			if (epoch !== this.#epoch) return;
 			this.runs = runs;
 			this.pending = pending;
 			this.notices = notices;
 			this.projects = projects;
-			this.limits = limits;
+			if (!fresh && limits) this.#limitsAt = Date.now();
+			// A failed read keeps what was read before.
+			this.limits = limits ?? this.limits;
 			this.updatedAt = Date.now();
 			this.paused = false;
 			this.error = '';
@@ -181,6 +188,8 @@ class Fleet {
 		this.pending = [];
 		this.notices = [];
 		this.projects = [];
+		// The instance's limits are everyone's: kept, but read again.
+		this.#limitsAt = 0;
 		this.updatedAt = null;
 		this.error = '';
 	}

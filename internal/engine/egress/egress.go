@@ -101,6 +101,10 @@ func (s *Service) Forget(runID string) {
 	delete(s.adopted, runID)
 }
 
+// Slept is the engine's sleep hook (engine.EnvSleepHook): the hosts the
+// run's provisioning allowed are kept, the workspace comes back to them.
+func (s *Service) Slept(string) {}
+
 // BeforeDestroy flushes the run's audit one last time before its workspace
 // (and possibly the project gateway) is torn down, so the trail is durable
 // even for the last activity — and allows what a provisioning that ended

@@ -411,8 +411,8 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !s.sandboxSizeFits(w, r, body.Workspace.Size) || !s.runtimeFits(w, r, body.ProvisionerID, "", body.Workspace) ||
-		!s.idleFits(w, r, body.ProvisionerID, body.Workspace.IdleMinutes) {
+	if !s.sandboxSizeFits(w, r, "", body.Workspace.Size) || !s.runtimeFits(w, r, body.ProvisionerID, "", body.Workspace) ||
+		!s.idleFits(w, r, body.ProvisionerID, "", body.Workspace) {
 		return
 	}
 	p := body.toProject()
@@ -425,16 +425,25 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	s.writeProject(w, r, http.StatusCreated, p)
 }
 
-// sandboxSizeFits refuses (400) a workshop's sandbox size above the
-// instance's ceiling (System → Limits), when it is saved: a ceiling lowered
-// later caps the size at the next provision instead.
-func (s *Server) sandboxSizeFits(w http.ResponseWriter, r *http.Request, size envport.SandboxSize) bool {
+// sandboxSizeFits refuses (400) a workshop's sandbox size out of bounds or
+// above the instance's ceiling (System → Limits), when it is saved: a
+// ceiling lowered later caps the size at the next provision instead. On an
+// update (projectID) only a field the save changes is checked, so a ceiling
+// lowered under the workshop's size does not refuse its every later save.
+func (s *Server) sandboxSizeFits(w http.ResponseWriter, r *http.Request, projectID string, size envport.SandboxSize) bool {
 	l, err := s.currentLimits(r.Context())
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return false
 	}
-	if err := l.Sandbox.Check(size); err != nil {
+	var prev envport.SandboxSize
+	if projectID != "" {
+		// Unreadable (or gone, the update's own 404): every field is checked.
+		if p, err := s.Conf.GetProject(r.Context(), projectID); err == nil {
+			prev = p.Workspace.Size
+		}
+	}
+	if err := l.Sandbox.CheckChange(prev, size); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return false
 	}
@@ -442,29 +451,53 @@ func (s *Server) sandboxSizeFits(w http.ResponseWriter, r *http.Request, size en
 }
 
 // idleFits refuses (400) a workshop idle setting out of range, and one that
-// would stop sandboxes its provisioner cannot keep (emptyDir storage),
-// saying why.
-func (s *Server) idleFits(w http.ResponseWriter, r *http.Request, provisionerID string, own int) bool {
-	if err := envport.ValidateIdle(own); err != nil {
+// would stop sandboxes its provisioner cannot keep (emptyDir storage, a VM
+// runtime), saying why. The provisioner is found as runtimeFits finds it.
+func (s *Server) idleFits(w http.ResponseWriter, r *http.Request, provisionerID, projectID string, ws confstore.WorkspaceConfig) bool {
+	if err := envport.ValidateIdle(ws.IdleMinutes); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return false
 	}
-	if own <= 0 || s.Runtimes == nil {
+	if ws.IdleMinutes <= 0 || s.Runtimes == nil {
 		return true
 	}
-	if provisionerID == "" {
-		in, err := s.Conf.InstanceProvisioner(r.Context())
-		if err != nil {
-			return true // no provisioner yet: nothing to refuse against
-		}
-		provisionerID = in.ID
+	provisionerID, ok := s.provisionerFor(w, r, provisionerID, projectID)
+	if !ok || provisionerID == "" {
+		return ok // none yet: nothing to refuse against
 	}
-	c, ok, err := s.Runtimes.RuntimeChoice(r.Context(), provisionerID)
-	if err == nil && ok && c.NoSleep != "" {
-		writeErr(w, http.StatusBadRequest, "idle sandboxes cannot be stopped here: "+c.NoSleep)
+	c, offered, err := s.Runtimes.RuntimeChoice(r.Context(), provisionerID)
+	if why := c.SleepRefusal(ws.Runtime); err == nil && offered && why != "" {
+		writeErr(w, http.StatusBadRequest, "idle sandboxes cannot be stopped here: "+why)
 		return false
 	}
 	return true
+}
+
+// provisionerFor is the provisioner a workshop's settings are checked
+// against: the body's, else the workshop's own (an update), else the
+// instance's ("" when there is none yet). false: the answer is written.
+func (s *Server) provisionerFor(w http.ResponseWriter, r *http.Request, provisionerID, projectID string) (string, bool) {
+	ctx := r.Context()
+	if provisionerID == "" && projectID != "" {
+		p, err := s.Conf.GetProject(ctx, projectID)
+		if err != nil {
+			confErr(w, err)
+			return "", false
+		}
+		provisionerID = p.ProvisionerID
+	}
+	if provisionerID == "" {
+		in, err := s.Conf.InstanceProvisioner(ctx)
+		if errors.Is(err, confstore.ErrNotFound) {
+			return "", true
+		}
+		if err != nil {
+			confErr(w, err)
+			return "", false
+		}
+		provisionerID = in.ID
+	}
+	return provisionerID, true
 }
 
 // RuntimeOffers is the resolver's sandbox runtime surface.
@@ -481,27 +514,11 @@ func (s *Server) runtimeFits(w http.ResponseWriter, r *http.Request, provisioner
 	if s.Runtimes == nil {
 		return true
 	}
-	ctx := r.Context()
-	if provisionerID == "" && projectID != "" {
-		p, err := s.Conf.GetProject(ctx, projectID)
-		if err != nil {
-			confErr(w, err)
-			return false
-		}
-		provisionerID = p.ProvisionerID
+	provisionerID, ok := s.provisionerFor(w, r, provisionerID, projectID)
+	if !ok || provisionerID == "" {
+		return ok
 	}
-	if provisionerID == "" {
-		in, err := s.Conf.InstanceProvisioner(ctx)
-		if errors.Is(err, confstore.ErrNotFound) {
-			return true
-		}
-		if err != nil {
-			confErr(w, err)
-			return false
-		}
-		provisionerID = in.ID
-	}
-	if err := s.Runtimes.CheckRuntime(ctx, provisionerID, ws); err != nil {
+	if err := s.Runtimes.CheckRuntime(r.Context(), provisionerID, ws); err != nil {
 		if errors.Is(err, confstore.ErrNotFound) {
 			confErr(w, err)
 			return false
@@ -536,7 +553,7 @@ func (s *Server) getRuntimeOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Offered, out.Default, out.NoSleep = true, c.Default, c.NoSleep
 	for _, rt := range c.Approved {
-		out.Approved = append(out.Approved, RuntimeInfo{Name: rt, Capabilities: rt.Capabilities()})
+		out.Approved = append(out.Approved, RuntimeInfo{Name: rt, Capabilities: rt.Capabilities(), NoSleep: c.NoSleepUnder[rt]})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -555,8 +572,8 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	if !s.sandboxSizeFits(w, r, body.Workspace.Size) || !s.runtimeFits(w, r, body.ProvisionerID, r.PathValue("id"), body.Workspace) ||
-		!s.idleFits(w, r, body.ProvisionerID, body.Workspace.IdleMinutes) {
+	if !s.sandboxSizeFits(w, r, r.PathValue("id"), body.Workspace.Size) || !s.runtimeFits(w, r, body.ProvisionerID, r.PathValue("id"), body.Workspace) ||
+		!s.idleFits(w, r, body.ProvisionerID, r.PathValue("id"), body.Workspace) {
 		return
 	}
 	p, err := s.Conf.UpdateProject(r.Context(), r.PathValue("id"), body.toProject())

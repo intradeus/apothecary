@@ -207,8 +207,8 @@ type K8s struct {
 	Runtime, RuntimeClass string
 	// Runtimes are the runtimes projects may choose among
 	// (APOTHECARY_K8S_RUNTIMES, comma-separated, each one of SandboxRuntimes):
-	// the ones this cluster's nodes can run. Unset is Runtime alone; set, it
-	// must include Runtime.
+	// the ones this cluster's nodes can run. Unset (nil): each integration
+	// approves its own default alone; set, it must include Runtime.
 	Runtimes []string
 }
 
@@ -341,9 +341,9 @@ func FromEnv() (*Boot, error) {
 		// The runtime wins only where the older setting agrees with it.
 		return nil, fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED=%s contradicts APOTHECARY_K8S_RUNTIME=%s: drop APOTHECARY_K8S_PRIVILEGED", privileged, b.K8s.Runtime)
 	}
-	b.K8s.Runtimes = []string{b.K8s.Runtime}
+	// Unset stays unset: an integration that picks another default runtime
+	// then approves that one alone, never this one behind its back.
 	if listed := splitComma(strings.ToLower(os.Getenv("APOTHECARY_K8S_RUNTIMES"))); len(listed) > 0 {
-		b.K8s.Runtimes = nil
 		for _, r := range listed {
 			if !slices.Contains(SandboxRuntimes, r) {
 				return nil, fmt.Errorf("config: APOTHECARY_K8S_RUNTIMES must list runtimes among %s, got %q", strings.Join(SandboxRuntimes, ", "), r)

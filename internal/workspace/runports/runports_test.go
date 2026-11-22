@@ -498,6 +498,33 @@ func TestForgetAndBeforeDestroy(t *testing.T) {
 	h.s.BeforeDestroy(context.Background(), run.View{}, nil) // no-op
 }
 
+// A sleep keeps a run's exposures (dormant, on their URLs) and its saved
+// allocation, so the wake brings every port back; the discovered ports go.
+func TestSleptKeepsTheExposures(t *testing.T) {
+	ctx := context.Background()
+	h := newFixture()
+	h.s.Relay = portrelay.New("127.0.0.1")
+	defer h.s.Relay.CloseAll()
+	h.res.Envp = &exposerEnvp{EnvProvisioner: h.envp, target: echoListener(t)}
+	addRun(t, h, "r1")
+	url, err := h.s.Expose(ctx, "r1", 3000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.s.ReportObservedPorts("r1", []envport.ObservedPort{{Port: 3000}})
+	h.s.Slept("r1")
+	if l := h.s.List("r1"); len(l) != 1 || l[0].URL != url {
+		t.Errorf("exposures while asleep = %v", l)
+	}
+	if got := h.s.Relay.SavedPorts("r1"); len(got) != 1 || got[0] != 3000 {
+		t.Errorf("saved ports = %v", got)
+	}
+	if got := h.s.ObservedPorts("r1"); got != nil {
+		t.Errorf("observed while asleep = %v", got)
+	}
+	newFixture().s.Slept("r1") // no relay: nothing to keep
+}
+
 func TestConfigMaxAuto(t *testing.T) {
 	if (Config{}).maxAuto() != 5 {
 		t.Error("default maxAuto")

@@ -522,20 +522,27 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	if len(text) > maxMessageLen {
 		return Message{}, fmt.Errorf("the question is longer than %d bytes", maxMessageLen)
 	}
+	// Held before the wake: a sweep stopping the workspace now is waited
+	// out, and one about to leaves it up.
+	hold := svc.Engine.HoldEnv(runID)
 	if err := svc.Engine.WakeEnv(ctx, runID, wokeByAsk); err != nil {
+		hold()
 		return Message{}, err
 	}
 	s, err := svc.setup(ctx, runID)
 	if err != nil {
+		hold()
 		return Message{}, err
 	}
 	if s.reason != "" {
+		hold()
 		s.release()
 		return Message{}, fmt.Errorf("%w: %s", ErrOff, s.reason)
 	}
 	a := svc.state(runID)
 	th, fresh, err := svc.findThread(ctx, s, a, threadID)
 	if err != nil {
+		hold()
 		s.release()
 		return Message{}, err
 	}
@@ -548,12 +555,12 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	t := a.thread(th.ID)
 	if t.busy {
 		svc.mu.Unlock()
+		hold()
 		s.release()
 		return Message{}, ErrBusy
 	}
 	t.busy = true
 	svc.mu.Unlock()
-	hold := svc.Engine.HoldEnv(runID)
 	free := func() {
 		hold()
 		svc.mu.Lock()

@@ -15,6 +15,12 @@ const offer = (o: Partial<RuntimeOffer> = {}): RuntimeOffer => ({
 	approved: [],
 	...o
 });
+const caps = {
+	nestedContainers: true,
+	nestedKubernetes: true,
+	userNamespaces: true,
+	contained: true
+};
 const limits = (idleMinutes: number) => ({
 	maxConcurrentRuns: 3,
 	maxEnvironments: 6,
@@ -66,6 +72,25 @@ describe('SandboxIdleField', () => {
 			await screen.findByText(/never stopped when idle: emptydir storage/)
 		).toBeInTheDocument();
 		expect(screen.getByText(/save will be refused/)).toBeInTheDocument();
+	});
+
+	it("says why under the workshop's runtime alone: a VM's disks go with it", async () => {
+		vi.mocked(api.system.runtimeOffer).mockResolvedValue(
+			offer({
+				approved: [
+					{ name: 'sysbox', capabilities: caps },
+					{
+						name: 'kata',
+						capabilities: caps,
+						noSleep: 'a kata sandbox keeps its disks inside its VM'
+					}
+				]
+			})
+		);
+		const { rerender } = render(SandboxIdleField, { idleMinutes: 15, runtime: 'kata' });
+		expect(await screen.findByText(/never stopped when idle: a kata sandbox/)).toBeInTheDocument();
+		await rerender({ idleMinutes: 15, runtime: '' });
+		expect(screen.queryByText(/never stopped when idle/)).not.toBeInTheDocument();
 	});
 
 	it('treats an unreadable offer, or none at all, as sleeping allowed', async () => {

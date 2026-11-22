@@ -24,7 +24,7 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "port must be 1-65535")
 		return
 	}
-	if !s.wakeFor(w, r, engine.WokeByPort) {
+	if !s.useFor(w, r, engine.WokeByPort) {
 		return
 	}
 	url, err := s.Ports.Expose(r.Context(), r.PathValue("id"), body.Port)
@@ -53,7 +53,7 @@ func (s *Server) reach(r *http.Request, url string) string {
 // its browser URL (the run-page "Open editor" path). Blocks while code-server
 // boots on first open; idempotent thereafter.
 func (s *Server) postOpenEditor(w http.ResponseWriter, r *http.Request) {
-	if !s.wakeFor(w, r, engine.WokeByEditor) {
+	if !s.useFor(w, r, engine.WokeByEditor) {
 		return
 	}
 	url, err := s.Ports.OpenEditor(r.Context(), r.PathValue("id"))

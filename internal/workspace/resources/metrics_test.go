@@ -62,7 +62,8 @@ func TestMemoryGaugesByRuntime(t *testing.T) {
 		t.Errorf("two kata sandboxes = %v", got)
 	}
 
-	// A provisioner offering no choice is "default"; a run that ended drops out.
+	// A provisioner offering no choice is "default". A run that ended still
+	// holds its sandbox until it is reaped: counted, without graphs.
 	h.res.WorkspaceRuntime = ""
 	if _, err := h.store.Append(ctx, "r2", &event.RunCompleted{}); err != nil {
 		t.Fatal(err)
@@ -71,7 +72,29 @@ func TestMemoryGaugesByRuntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	got = read()
-	if got["apothecary.sandboxes.memory.used/default"] != 100 || got["apothecary.sandboxes.memory.limit/default"] != 200 || len(got) != 2 {
-		t.Errorf("one default sandbox = %v", got)
+	if got["apothecary.sandboxes.memory.used/default"] != 200 || got["apothecary.sandboxes.memory.limit/default"] != 400 || len(got) != 2 {
+		t.Errorf("two default sandboxes, one finished = %v", got)
+	}
+	if len(h.s.Samples("r2")) != 0 {
+		t.Error("a finished run's graphs went on")
+	}
+	// Reaped, it drops out.
+	if _, err := h.store.Append(ctx, "r2", &event.EnvDestroyed{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got = read(); got["apothecary.sandboxes.memory.used/default"] != 100 {
+		t.Errorf("after the reap = %v", got)
+	}
+	// A sandbox that does not answer (stopped when idle) holds nothing: its
+	// last sample is not carried forward.
+	h.res.Envp = samplerEnvp{EnvProvisioner: h.envp, fail: true}
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got = read(); len(got) != 0 {
+		t.Errorf("sleeping sandboxes counted: %v", got)
 	}
 }

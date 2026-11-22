@@ -11,8 +11,10 @@ type TypeMeta struct {
 }
 
 type ObjectMeta struct {
-	Name        string            `json:"name,omitempty"`
-	Namespace   string            `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	// UID is the API server's, set on what it answers (never on a manifest).
+	UID         string            `json:"uid,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
@@ -203,6 +205,8 @@ type ContainerStatus struct {
 	Ready        bool           `json:"ready"`
 	RestartCount int            `json:"restartCount"`
 	State        ContainerState `json:"state,omitempty"`
+	// LastState is how the previous run of a restarted container ended.
+	LastState ContainerState `json:"lastState,omitempty"`
 }
 
 // ContainerState is which of its states a container is in (one is set).

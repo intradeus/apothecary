@@ -56,16 +56,16 @@ func (k Kubernetes) Descriptor() Descriptor {
 			{Name: "tools_image", Label: "Tools image (harnesses + code-server)", Placeholder: d.ToolsImage},
 			{Name: "gateway_image", Label: "Egress gateway image", Placeholder: d.GatewayImage},
 			{Name: "image_pull_policy", Label: "Image pull policy", Placeholder: orDefault(d.PullPolicy, "IfNotPresent")},
-			{Name: "storage", Label: "Workspace storage (pvc/emptydir)", Placeholder: "pvc (emptydir when kata is approved)",
-				Help: "Where a sandbox keeps its checkout and inner Docker data. pvc: a claim per run, kept while the run lives. emptydir: the node's disk, gone with the pod. A kata sandbox needs emptydir (a block disk in its VM)."},
+			{Name: "storage", Label: "Workspace storage (pvc/emptydir)", Placeholder: "pvc",
+				Help: "Where a sandbox keeps its checkout and inner Docker data. pvc: a claim per run, kept while the run lives; stopped idle sandboxes keep it. emptydir: the node's disk, gone with the pod. A kata sandbox always gets emptyDirs of its own (disks in its VM), whatever this says: it cannot be stopped when idle."},
 			{Name: "storage_class", Label: "Storage class", Help: "Must be a local or block filesystem: the inner docker daemon cannot run on NFS."},
 			{Name: "storage_size", Label: "Storage size per run", Placeholder: "20Gi"},
 			{Name: "runtime", Label: "Sandbox runtime (" + strings.Join(runtimeNames(), "/") + ")", Placeholder: orDefault(d.Runtime, string(envport.RuntimePrivileged)),
-				Help: "What isolates each sandbox. privileged: sandbox root is root on its node (CI, a cluster of your own). sysbox: unprivileged, in a user namespace of its own (hostUsers: false; sysbox-runc on the nodes, containerd 2.0.5+, sysbox 0.7+; README, cluster requirements). kata: a VM per sandbox (Kata Containers with Cloud Hypervisor, KVM on the nodes; needs emptydir storage and sized sandboxes)."},
+				Help: "What isolates each sandbox. privileged: sandbox root is root on its node (CI, a cluster of your own). sysbox: unprivileged, in a user namespace of its own (hostUsers: false; sysbox-runc on the nodes, containerd 2.0.5+, sysbox 0.7+; README, cluster requirements). kata: a VM per sandbox (Kata Containers with Cloud Hypervisor, KVM on the nodes; sized sandboxes, on disks of their own that a stop would lose)."},
 			{Name: "runtimes", Label: "Approved runtimes (comma-separated)", Placeholder: orDefault(strings.Join(d.Runtimes, ","), "the default runtime alone"),
 				Help: "The runtimes a workshop may choose for its sandboxes, the default among them; only list runtimes this cluster's nodes run (Test starts a pod under each). privileged sandboxes are root on their node: approve it only on a cluster of your own."},
 			{Name: "runtime_class", Label: "Runtime class", Placeholder: orDefault(d.RuntimeClass, "the runtime's own"),
-				Help: "The RuntimeClass sandbox pods name, when not the runtime's own (sysbox: sysbox-runc; privileged: none, the node's default)."},
+				Help: "The RuntimeClass sandbox pods name, when not the runtime's own (sysbox: sysbox-runc; kata: kata; privileged: none, the node's default). A class alone is the default runtime's; runtime=class pairs, comma-separated, name any approved runtime's (e.g. kata=kata-clh). Empty: the deployment's class, for the deployment's own runtime only."},
 			{Name: "privileged", Label: "Privileged sandboxes (on/off, older: use the runtime)",
 				Help: "Read only when the runtime is empty: on is the privileged runtime, off is sysbox (with a runtime class)."},
 			{Name: "firewall", Label: "Egress firewall (on/off)", Placeholder: "on", Default: "on"},
@@ -111,12 +111,12 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		cleanup()
 		return nil, fmt.Errorf("kubernetes: no engine URL (set the integration's or APOTHECARY_K8S_ENGINE_URL)")
 	}
-	choice, runtimeClass, err := kubernetesChoice(cfg, d)
+	choice, classes, err := kubernetesChoice(cfg, d)
 	if err != nil {
 		cleanup()
 		return nil, err
 	}
-	storage := kubernetesStorage(cfg, choice.Approved)
+	storage := kubernetesStorage(cfg)
 	if storage != "pvc" && storage != "emptydir" {
 		cleanup()
 		return nil, fmt.Errorf("kubernetes: storage must be pvc or emptydir, got %q", storage)
@@ -140,7 +140,7 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 			StorageClass:    cfg.Str("storage_class", ""),
 			StorageSize:     cfg.Str("storage_size", ""),
 			Runtime:         runtime,
-			RuntimeClass:    runtimeClass,
+			RuntimeClasses:  classes,
 			Runtimes:        choice.Approved,
 			Firewall:        cfg.Str("firewall", "on") != "off",
 			ProtectCIDRs:    d.ProtectCIDRs,
@@ -150,45 +150,96 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 	return &kubernetesProvisioner{Adapter: a, cleanup: cleanup}, nil
 }
 
-// kubernetesRuntime is the integration's sandbox runtime and the runtime
-// class override its pods name: its own runtime field, else its older
-// privileged field (on: privileged; off, with a runtime class: sysbox), else
-// the deployment's. A runtime field the older one contradicts is refused.
-func kubernetesRuntime(cfg Config, d KubernetesDefaults) (envport.Runtime, string, error) {
-	class := cfg.Str("runtime_class", d.RuntimeClass)
+// kubernetesRuntime is the integration's default sandbox runtime: its own
+// runtime field, else its older privileged field (on: privileged; off, with
+// a runtime class: sysbox), else the deployment's. A runtime field the
+// older one contradicts is refused.
+func kubernetesRuntime(cfg Config, d KubernetesDefaults) (envport.Runtime, error) {
 	privileged := strings.ToLower(cfg.Str("privileged", ""))
 	switch privileged {
 	case "", "on", "off":
 	default:
-		return "", "", fmt.Errorf("kubernetes: privileged must be on or off, got %q", privileged)
+		return "", fmt.Errorf("kubernetes: privileged must be on or off, got %q", privileged)
 	}
 	if name := cfg.Str("runtime", ""); name != "" {
 		rt, err := envport.ParseRuntime(name)
 		if err != nil {
-			return "", "", fmt.Errorf("kubernetes: %w", err)
+			return "", fmt.Errorf("kubernetes: %w", err)
 		}
 		if privileged != "" && (privileged == "on") != (rt == envport.RuntimePrivileged) {
-			return "", "", fmt.Errorf("kubernetes: privileged=%s contradicts runtime=%s: clear privileged", privileged, rt)
+			return "", fmt.Errorf("kubernetes: privileged=%s contradicts runtime=%s: clear privileged", privileged, rt)
 		}
-		return rt, class, nil
+		return rt, nil
 	}
 	switch privileged {
 	case "on":
-		return envport.RuntimePrivileged, class, nil
+		return envport.RuntimePrivileged, nil
 	case "off":
-		if class == "" {
-			return "", "", fmt.Errorf("kubernetes: privileged=off needs a runtime_class that can nest dockerd (e.g. sysbox-runc), or set runtime=sysbox")
+		if cfg.Str("runtime_class", d.RuntimeClass) == "" {
+			return "", fmt.Errorf("kubernetes: privileged=off needs a runtime_class that can nest dockerd (e.g. sysbox-runc), or set runtime=sysbox")
 		}
-		return envport.RuntimeSysbox, class, nil
+		return envport.RuntimeSysbox, nil
 	}
-	if d.Runtime == "" {
-		return envport.RuntimePrivileged, class, nil
-	}
-	rt, err := envport.ParseRuntime(d.Runtime)
+	rt, err := deploymentRuntime(d)
 	if err != nil {
-		return "", "", fmt.Errorf("kubernetes: the deployment's %w", err)
+		return "", fmt.Errorf("kubernetes: the deployment's %w", err)
 	}
-	return rt, class, nil
+	return rt, nil
+}
+
+// deploymentRuntime is the deployment's default runtime
+// (APOTHECARY_K8S_RUNTIME; "" is privileged).
+func deploymentRuntime(d KubernetesDefaults) (envport.Runtime, error) {
+	if d.Runtime == "" {
+		return envport.RuntimePrivileged, nil
+	}
+	return envport.ParseRuntime(d.Runtime)
+}
+
+// runtimeClasses is the RuntimeClass the pods of each runtime name when not
+// the runtime's own. The integration's runtime_class is a class for its
+// default runtime, or runtime=class pairs (comma-separated, at most one
+// entry without a runtime: the default's). Without one, the deployment's
+// class (APOTHECARY_K8S_RUNTIME_CLASS) is its own runtime's: it applies to
+// an integration whose default is that runtime (or sysbox under the older
+// privileged=off), never to another runtime's pods.
+func runtimeClasses(cfg Config, d KubernetesDefaults, def envport.Runtime) (map[envport.Runtime]string, error) {
+	out := map[envport.Runtime]string{}
+	raw := cfg.Str("runtime_class", "")
+	if raw == "" {
+		dep, _ := deploymentRuntime(d)
+		legacyOff := cfg.Str("runtime", "") == "" && strings.ToLower(cfg.Str("privileged", "")) == "off"
+		if d.RuntimeClass != "" && (dep == def || legacyOff) {
+			out[def] = d.RuntimeClass
+		}
+		return out, nil
+	}
+	bare := false
+	for _, entry := range strings.Split(raw, ",") {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		rt, class := def, entry
+		if name, c, paired := strings.Cut(entry, "="); paired {
+			var err error
+			if rt, err = envport.ParseRuntime(name); err != nil {
+				return nil, fmt.Errorf("kubernetes: runtime_class: %w", err)
+			}
+			if class = strings.TrimSpace(c); class == "" {
+				return nil, fmt.Errorf("kubernetes: runtime_class: %q names no class", entry)
+			}
+		} else if bare {
+			return nil, fmt.Errorf("kubernetes: runtime_class: more than one class without a runtime (%q): write the others as runtime=class", entry)
+		} else {
+			bare = true
+		}
+		if _, dup := out[rt]; dup {
+			return nil, fmt.Errorf("kubernetes: runtime_class names a class for %s twice", rt)
+		}
+		out[rt] = class
+	}
+	return out, nil
 }
 
 // RuntimeChoice is what the integration offers projects (kinds.RuntimeOffering).
@@ -197,14 +248,16 @@ func (k Kubernetes) RuntimeChoice(cfg Config) (envport.RuntimeChoice, error) {
 	return c, err
 }
 
-// kubernetesChoice is the integration's runtime choice: its default
-// (kubernetesRuntime), and the runtimes it approves (its runtimes field,
-// which must include the default; else the deployment's, the default added
-// when they lack it), with what the workspace definition needs.
-func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, string, error) {
-	def, class, err := kubernetesRuntime(cfg, d)
+// kubernetesChoice is the integration's runtime choice and the runtime
+// classes its pods name: its default (kubernetesRuntime), and the runtimes
+// it approves (its runtimes field, which must include the default; else the
+// deployment's list, the default added when it lacks it; else the default
+// alone), with what the workspace definition needs and which sandboxes
+// cannot be stopped and kept.
+func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, map[envport.Runtime]string, error) {
+	def, err := kubernetesRuntime(cfg, d)
 	if err != nil {
-		return envport.RuntimeChoice{}, "", err
+		return envport.RuntimeChoice{}, nil, err
 	}
 	c := envport.RuntimeChoice{Default: def, Needs: workspaceadapter.Needs()}
 	own := cfg.Str("runtimes", "")
@@ -218,7 +271,7 @@ func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, 
 		}
 		rt, err := envport.ParseRuntime(name)
 		if err != nil {
-			return envport.RuntimeChoice{}, "", fmt.Errorf("kubernetes: runtimes: %w", err)
+			return envport.RuntimeChoice{}, nil, fmt.Errorf("kubernetes: runtimes: %w", err)
 		}
 		if !slices.Contains(c.Approved, rt) {
 			c.Approved = append(c.Approved, rt)
@@ -228,24 +281,35 @@ func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, 
 		c.Approved = append([]envport.Runtime{def}, c.Approved...)
 	}
 	if err := c.Validate(); err != nil {
-		return envport.RuntimeChoice{}, "", fmt.Errorf("kubernetes: %w", err)
+		return envport.RuntimeChoice{}, nil, fmt.Errorf("kubernetes: %w", err)
 	}
-	storage := kubernetesStorage(cfg, c.Approved)
-	for _, rt := range c.Approved {
-		if err := workspaceadapter.CheckStorage(rt, storage); err != nil {
-			return envport.RuntimeChoice{}, "", fmt.Errorf("kubernetes: %w", err)
+	classes, err := runtimeClasses(cfg, d, def)
+	if err != nil {
+		return envport.RuntimeChoice{}, nil, err
+	}
+	for rt := range classes {
+		if !slices.Contains(c.Approved, rt) {
+			return envport.RuntimeChoice{}, nil, fmt.Errorf("kubernetes: runtime_class names a class for %s, which the integration does not approve", rt)
 		}
 	}
-	if err := workspaceadapter.CanStop(storage); err != nil {
+	if err := workspaceadapter.CanStop(kubernetesStorage(cfg)); err != nil {
 		c.NoSleep = err.Error()
 	}
-	return c, class, nil
+	for _, rt := range c.Approved {
+		if err := workspaceadapter.CanStopUnder(rt); err != nil {
+			if c.NoSleepUnder == nil {
+				c.NoSleepUnder = map[envport.Runtime]string{}
+			}
+			c.NoSleepUnder[rt] = err.Error()
+		}
+	}
+	return c, classes, nil
 }
 
-// kubernetesStorage is the integration's workspace storage: its own, else
-// the approved runtimes' default (emptydir when one of them needs it).
-func kubernetesStorage(cfg Config, approved []envport.Runtime) string {
-	return strings.ToLower(cfg.Str("storage", workspaceadapter.DefaultStorage(approved)))
+// kubernetesStorage is the integration's workspace storage (default pvc),
+// for every runtime but a VM one, whose disks are always its own emptyDirs.
+func kubernetesStorage(cfg Config) string {
+	return strings.ToLower(cfg.Str("storage", "pvc"))
 }
 
 func runtimeNames() []string {

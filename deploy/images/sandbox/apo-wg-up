@@ -43,6 +43,10 @@ sysctl -qw net.ipv6.conf.all.disable_ipv6=1 net.ipv4.conf.all.rp_filter=0 net.ip
 # runs the node's kernel WireGuard; the two interoperate.
 MODE=kernel
 [ "${APO_WG_USERSPACE:-}" = 1 ] && MODE=userspace
+# Why the kernel's link was refused, when it was: said before the fallback,
+# and again if the fallback fails too, so a node without the module (or a
+# sandbox without NET_ADMIN) is named for what it is, not as a missing TUN.
+KERNEL_WHY=
 userspace_link() {
   if [ ! -c /dev/net/tun ]; then
     # Not every runtime hands out the TUN device; with CAP_MKNOD (not in a
@@ -50,6 +54,7 @@ userspace_link() {
     mkdir -p /dev/net
     if ! mknod -m 0600 /dev/net/tun c 10 200; then
       echo "apo-wg-up: no /dev/net/tun, and it cannot be made here: no WireGuard link" >&2
+      [ -z "$KERNEL_WHY" ] || echo "apo-wg-up: (the kernel's WireGuard was refused first: $KERNEL_WHY)" >&2
       exit 1
     fi
   fi
@@ -77,7 +82,11 @@ userspace_link() {
 }
 link() {
   if [ "$MODE" = kernel ] && ! ip link show wg0 >/dev/null 2>&1; then
-    ip link add wg0 type wireguard 2>/dev/null || MODE=userspace
+    if ! KERNEL_WHY=$(ip link add wg0 type wireguard 2>&1); then
+      KERNEL_WHY=$(echo "$KERNEL_WHY" | tr '\n' ' ' | sed 's/ *$//')
+      echo "apo-wg-up: no kernel WireGuard link ($KERNEL_WHY); falling back to wireguard-go" >&2
+      MODE=userspace
+    fi
   fi
   if [ "$MODE" = userspace ] && ! ip link show wg0 >/dev/null 2>&1; then
     userspace_link

@@ -10,7 +10,8 @@
       "apothecary.io/sandbox": "true"
     },
     "annotations": {
-      "apothecary.io/project-name": "My App"
+      "apothecary.io/project-name": "My App",
+      "apothecary.io/shape": "2ca4559e6a7233e5"
     }
   },
   "spec": {
@@ -110,7 +111,13 @@
           "periodSeconds": 1,
           "failureThreshold": 60
         },
-        "restartPolicy": "Always"
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
       },
       {
         "name": "relay",
@@ -141,7 +148,13 @@
             "readOnly": true
           }
         ],
-        "restartPolicy": "Always"
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
       }
     ],
     "containers": [

@@ -27,7 +27,7 @@ func TestSleepKeepsTheRunAndStatusSaysAsleep(t *testing.T) {
 		return "running", nil
 	}
 
-	if err := a.CanSleep(); err != nil {
+	if err := a.CanSleep(""); err != nil {
 		t.Fatal(err)
 	}
 	if err := a.Sleep(ctx, name); err != nil {
@@ -52,7 +52,7 @@ func TestSleepKeepsTheRunAndStatusSaysAsleep(t *testing.T) {
 		t.Errorf("absent run: %v", err)
 	}
 	h.canStopErr = errors.New("emptydir")
-	if a.CanSleep() == nil || a.Sleep(ctx, name) == nil {
+	if a.CanSleep("") == nil || a.Sleep(ctx, name) == nil {
 		t.Error("a host that cannot stop refuses")
 	}
 }
@@ -86,5 +86,46 @@ func TestK8sStopKeepsTheClaim(t *testing.T) {
 	h.cfg.Storage = "emptydir"
 	if err := h.stopSandbox(context.Background(), "w"); err == nil || !strings.Contains(err.Error(), "storage set to pvc") {
 		t.Errorf("emptydir: %v", err)
+	}
+}
+
+// On claims, a sandbox under a VM runtime still cannot be stopped and kept:
+// its disks are its own emptyDirs. The answer follows the runtime asked
+// about, and Sleep asks the live pod (built under whichever runtime it was).
+func TestK8sAVMSandboxCannotSleep(t *testing.T) {
+	ctx := context.Background()
+	k := &kubeFake{secrets: map[string]string{}}
+	a := New(Config{RunsDir: testRunsDir, Kube: goldenKubeConfig(k, func(c *KubeConfig) {
+		c.Runtime, c.Storage = envport.RuntimeSysbox, "pvc"
+		c.Runtimes = []envport.Runtime{envport.RuntimeSysbox, envport.RuntimeKata}
+	})})
+	h := a.host.(*k8sHost)
+	if err := a.CanSleep(""); err != nil {
+		t.Errorf("sysbox: %v", err)
+	}
+	if err := a.CanSleep(envport.RuntimeKata); err == nil || !strings.Contains(err.Error(), "inside its VM") {
+		t.Errorf("kata: %v", err)
+	}
+	if err := a.CanSleep(envport.RuntimePrivileged); err == nil || !strings.Contains(err.Error(), "not approved") {
+		t.Errorf("unapproved: %v", err)
+	}
+	h.cfg.Storage = "emptydir"
+	if a.CanSleep("") == nil {
+		t.Error("emptydir")
+	}
+	h.cfg.Storage = "pvc"
+
+	// The live pod decides: a kata pod refuses, a sysbox one (or none) stops.
+	k.pod = `{"spec":{"runtimeClassName":"kata"},"status":{"phase":"Running"}}`
+	if err := h.stopSandbox(ctx, "w"); err == nil || !strings.Contains(err.Error(), "runs in a VM") || len(k.deleted) != 0 {
+		t.Errorf("kata pod: %v, deleted %v", err, k.deleted)
+	}
+	k.pod = `{"spec":{"runtimeClassName":"sysbox-runc"},"status":{"phase":"Running"}}`
+	if err := h.stopSandbox(ctx, "w"); err != nil || !slices.Equal(k.deleted, []string{"pod/w"}) {
+		t.Errorf("sysbox pod: %v, deleted %v", err, k.deleted)
+	}
+	_, h2 := k8sWith(t, &kubeFake{secrets: map[string]string{}}, false, kubeRule{match: "get --request-timeout=30s pod", stderr: "boom", code: 1})
+	if err := h2.checkStop(ctx, "w"); err == nil {
+		t.Error("an unreadable pod is no answer")
 	}
 }

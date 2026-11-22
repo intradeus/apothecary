@@ -62,7 +62,7 @@
 	<SandboxRuntimeField bind:runtime {docker} />
 
 	<FormSub>
-		<SandboxIdleField bind:idleMinutes />
+		<SandboxIdleField bind:idleMinutes {runtime} />
 	</FormSub>
 
 	<FormSub>

@@ -21,3 +21,23 @@ func TestBootRuntimesAreThePorts(t *testing.T) {
 		t.Errorf("config.SandboxRuntimes = %v, envport.Runtimes() = %v", config.SandboxRuntimes, port)
 	}
 }
+
+// The daemon-door warning follows the runtimes' trait: any runtime the
+// deployment offers whose sandbox root is node root, the default or listed.
+func TestUncontainedRuntime(t *testing.T) {
+	for _, c := range []struct {
+		def    string
+		listed []string
+		want   envport.Runtime
+	}{
+		{"", nil, envport.RuntimePrivileged},
+		{"privileged", nil, envport.RuntimePrivileged},
+		{"sysbox", nil, ""},
+		{"kata", []string{"kata", "sysbox"}, ""},
+		{"sysbox", []string{"sysbox", "privileged"}, envport.RuntimePrivileged},
+	} {
+		if got := uncontainedRuntime(c.def, c.listed); got != c.want {
+			t.Errorf("%q %v = %q, want %q", c.def, c.listed, got, c.want)
+		}
+	}
+}

@@ -257,6 +257,10 @@ type RuntimeOffer struct {
 type RuntimeInfo struct {
 	Name         envport.Runtime             `json:"name"`
 	Capabilities envport.RuntimeCapabilities `json:"capabilities"`
+	// NoSleep is why idle sandboxes under this runtime cannot be stopped
+	// and kept, whatever the provisioner's storage (a VM's disks go with
+	// it); "" when they can.
+	NoSleep string `json:"noSleep,omitempty"`
 }
 
 // SandboxUsage is what a workshop's recent runs' sandboxes reached, newest

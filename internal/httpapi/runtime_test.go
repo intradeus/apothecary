@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/confstore"
 )
@@ -18,9 +20,11 @@ type fakeOffers struct {
 	ok      bool
 	err     error
 	checked []string
+	offered []string // the provisioners RuntimeChoice was asked about
 }
 
-func (f *fakeOffers) RuntimeChoice(context.Context, string) (envport.RuntimeChoice, bool, error) {
+func (f *fakeOffers) RuntimeChoice(_ context.Context, id string) (envport.RuntimeChoice, bool, error) {
+	f.offered = append(f.offered, id)
 	return f.choice, f.ok, f.err
 }
 
@@ -142,6 +146,33 @@ func TestWorkshopIdleSettingIsChecked(t *testing.T) {
 			t.Errorf("%d: %d %s", m, code, data)
 		}
 	}
+	// The update asks the workshop's own provisioner, not the instance's.
+	if got := offers.offered[len(offers.offered)-1]; got != p.ProvisionerID {
+		t.Errorf("asked %s, want the workshop's %s", got, p.ProvisionerID)
+	}
+	// A runtime whose sandboxes cannot be kept (a VM's disks go with it):
+	// refused under it, whether picked or the default, fine under another.
+	offers.choice = envport.RuntimeChoice{Default: envport.RuntimeSysbox,
+		Approved:     []envport.Runtime{envport.RuntimeSysbox, envport.RuntimeKata},
+		NoSleepUnder: map[envport.Runtime]string{envport.RuntimeKata: "a kata sandbox keeps its disks inside its VM"}}
+	body.Workspace.Runtime = envport.RuntimeKata
+	if code, data := put(45); code != http.StatusBadRequest || !strings.Contains(data, "inside its VM") {
+		t.Errorf("kata: %d %s", code, data)
+	}
+	res, data := x.do(t, "GET", "/api/provisioner/runtimes", nil, nil)
+	if res.StatusCode != http.StatusOK || !strings.Contains(string(data), `"name":"kata","capabilities":`) ||
+		!strings.Contains(string(data), `"noSleep":"a kata sandbox keeps its disks inside its VM"`) {
+		t.Errorf("offer: %d %s", res.StatusCode, data)
+	}
+	body.Workspace.Runtime = ""
+	if code, data := put(45); code != http.StatusOK {
+		t.Errorf("sysbox: %d %s", code, data)
+	}
+	offers.choice.Default = envport.RuntimeKata
+	if code, data := put(45); code != http.StatusBadRequest {
+		t.Errorf("kata by default: %d %s", code, data)
+	}
+	offers.choice = sysboxOnly
 	offers.choice.NoSleep = "emptydir storage"
 	if code, data := put(45); code != http.StatusBadRequest || !strings.Contains(data, "emptydir storage") {
 		t.Errorf("no sleep: %d %s", code, data)
@@ -149,8 +180,52 @@ func TestWorkshopIdleSettingIsChecked(t *testing.T) {
 	if code, data := put(envport.IdleNever); code != http.StatusOK {
 		t.Errorf("never is always fine: %d %s", code, data)
 	}
-	res, data := x.do(t, "GET", "/api/provisioner/runtimes", nil, nil)
+	res, data = x.do(t, "GET", "/api/provisioner/runtimes", nil, nil)
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(data), `"noSleep":"emptydir storage"`) {
 		t.Errorf("offer: %d %s", res.StatusCode, data)
+	}
+	// A workshop that is not there is no pass.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequestWithContext(t.Context(), "PUT", "/", nil)
+	if x.srv.idleFits(rec, req, "", "nope", confstore.WorkspaceConfig{IdleMinutes: 45}) || rec.Code != http.StatusNotFound {
+		t.Errorf("unknown workshop: %d", rec.Code)
+	}
+}
+
+// unreadableIntegrations is a configuration store that cannot list its
+// integrations.
+type unreadableIntegrations struct{ confstore.DB }
+
+func (unreadableIntegrations) ListIntegrations(confstore.Ctx, string) ([]confstore.StoredIntegration, error) {
+	return nil, errors.New("db down")
+}
+
+// The provisioner a workshop's settings are checked against: the body's,
+// else the workshop's own, else the instance's; none at all is nothing to
+// check against, and a store that cannot say is a 500, not a pass.
+func TestProvisionerFor(t *testing.T) {
+	key, err := secrets.ParseKey(secrets.GenerateKey())
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), "PUT", "/", nil)
+	s := &Server{Conf: confstore.New(confstore.NewMem(), key)}
+	rec := httptest.NewRecorder()
+	if id, ok := s.provisionerFor(rec, req, "", ""); id != "" || !ok {
+		t.Errorf("none yet = %q, %v", id, ok)
+	}
+	if !s.runtimeFits(rec, req, "", "", confstore.WorkspaceConfig{}) || s.Runtimes != nil {
+		t.Error("nothing wired passes")
+	}
+	s.Runtimes = &fakeOffers{choice: sysboxOnly, ok: true}
+	if !s.runtimeFits(rec, req, "", "", confstore.WorkspaceConfig{}) {
+		t.Error("no provisioner yet: nothing to refuse against")
+	}
+	if id, ok := s.provisionerFor(rec, req, "p1", ""); id != "p1" || !ok {
+		t.Errorf("the body's = %q, %v", id, ok)
+	}
+	s.Conf = confstore.New(unreadableIntegrations{confstore.NewMem()}, key)
+	if id, ok := s.provisionerFor(rec, req, "", ""); id != "" || ok || rec.Code != http.StatusInternalServerError {
+		t.Errorf("unreadable = %q, %v, %d", id, ok, rec.Code)
 	}
 }

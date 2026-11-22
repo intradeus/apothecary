@@ -4134,6 +4134,8 @@ components:
           $ref: '#/components/schemas/RuntimeCapabilities'
         name:
           type: string
+        noSleep:
+          type: string
       required:
         - capabilities
         - name

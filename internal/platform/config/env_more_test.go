@@ -210,17 +210,18 @@ func TestBootSandboxRuntime(t *testing.T) {
 	}
 }
 
-// The approved runtimes: the default alone unless listed; listed, deduped
+// The approved runtimes: none unless listed (each integration then approves
+// its own default alone, never the deployment's behind it); listed, deduped
 // in the order given, case and space ignored.
 func TestBootApprovedRuntimes(t *testing.T) {
 	for _, c := range []struct {
 		env  map[string]string
 		want []string
 	}{
-		{map[string]string{}, []string{"privileged"}},
-		{map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox"}, []string{"sysbox"}},
+		{map[string]string{}, nil},
+		{map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox"}, nil},
 		{map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_RUNTIMES": " Sysbox, privileged,sysbox "}, []string{"sysbox", "privileged"}},
-		{map[string]string{"APOTHECARY_K8S_RUNTIMES": " , "}, []string{"privileged"}},
+		{map[string]string{"APOTHECARY_K8S_RUNTIMES": " , "}, nil},
 	} {
 		clearEnv(t)
 		for k, v := range c.env {

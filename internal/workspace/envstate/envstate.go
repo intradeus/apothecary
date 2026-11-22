@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"slices"
 	"sync"
 	"time"
 
@@ -63,8 +64,48 @@ func (s *Store) Begin(runID, kind string) (func(error), error) {
 			} else {
 				delete(s.ops, runID)
 			}
+			if s.ended != nil {
+				close(s.ended)
+				s.ended = nil
+			}
 		})
 	}, nil
+}
+
+// Op is the kind of the run's workspace op in flight ("" when none; a
+// failed one does not count).
+func (s *Store) Op(runID string) string {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if op := s.ops[runID]; op != nil && !op.failed {
+		return op.kind
+	}
+	return ""
+}
+
+// WaitOps waits, until ctx ends, while the run has an op of one of kinds
+// in flight: what a use of the sandbox does while it is being put to sleep
+// or woken, so it meets the sandbox on the other side instead of the dying
+// pod or a second wake. It returns ctx's cause when ctx ends first.
+func (s *Store) WaitOps(ctx context.Context, runID string, kinds ...string) error {
+	for {
+		s.opMu.Lock()
+		op := s.ops[runID]
+		if op == nil || op.failed || !slices.Contains(kinds, op.kind) {
+			s.opMu.Unlock()
+			return nil
+		}
+		if s.ended == nil {
+			s.ended = make(chan struct{})
+		}
+		ended := s.ended
+		s.opMu.Unlock()
+		select {
+		case <-ended:
+		case <-ctx.Done():
+			return context.Cause(ctx)
+		}
+	}
 }
 
 // Store holds the reconciled statuses and the op gate.
@@ -105,6 +146,8 @@ type Store struct {
 	// (re-appears as unreconciled).
 	opMu sync.Mutex
 	ops  map[string]*op
+	// ended is closed (and dropped) when any op ends: WaitOps' wake-up.
+	ended chan struct{}
 }
 
 func New(runs *run.Reader, resolver resolution.Resolver, clock func() time.Time, log *slog.Logger) *Store {
@@ -166,6 +209,14 @@ func (s *Store) SetStatus(runID string, st envport.EnvStatus) {
 	s.statusMu.Lock()
 	defer s.statusMu.Unlock()
 	s.status[runID] = st
+}
+
+// Status is one run's last known status (false: not reconciled yet).
+func (s *Store) Status(runID string) (envport.EnvStatus, bool) {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	st, ok := s.status[runID]
+	return st, ok
 }
 
 // ClearDirty drops a run's "config changed" hint: its container was just

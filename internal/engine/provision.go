@@ -78,6 +78,12 @@ func (x *exec) ensureEnv() (err error) {
 	// at Provision time (from the EnvSpec egress fields), so there is nothing to
 	// prime here.
 	if rs.EnvID != "" {
+		// A sweep may have claimed the workspace's sleep before this loop
+		// registered (sleep.go): the status is read after it, never off the
+		// pod it is stopping. A person's wake in flight is waited out too.
+		if err := x.e.envState.WaitOps(x.ctx, rs.RunID, opSleeping, opWaking); err != nil {
+			return err
+		}
 		status, err := x.res.Envp.Status(x.ctx, rs.EnvID)
 		// A container caught mid-restart reads Starting/Stopped for a moment;
 		// re-probe once after a short pause before deciding to re-provision, so
@@ -162,7 +168,10 @@ func (x *exec) ensureEnv() (err error) {
 	}
 	runtime, err := x.res.SandboxRuntime()
 	if err != nil {
-		return err
+		// Refused (a runtime withdrawn, one the workshop's Docker cannot
+		// have): the run fails on the record like any provisioning, nothing
+		// made, instead of its loop ending with it stuck in provisioning.
+		return x.append(&event.EnvFailed{Error: err.Error()})
 	}
 	spec := envport.EnvSpec{
 		Runtime: runtime,
@@ -189,6 +198,7 @@ func (x *exec) ensureEnv() (err error) {
 		EgressAllowedPorts: x.res.EgressAllowedPorts,
 		Docker:             x.res.WorkspaceDocker,
 		Size:               x.res.WorkspaceSize,
+		SizeCap:            x.res.WorkspaceSizeCap,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the repository host credential before the env exists.
 		GitUser: x.res.GitUser,

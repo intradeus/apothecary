@@ -65,13 +65,14 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		return fmt.Errorf("run %s: load flow: %w", runID, err)
 	}
 
-	if err = e.AppendEvents(ctx, runID, &event.EnvRebuildStarted{EnvID: v.EnvID}); err != nil {
-		return err
-	}
-
+	// The spec before the start: a refused one (a runtime no longer
+	// approved) refuses the rebuild, never leaves it started and unfinished.
 	spec, err := runEnvSpec(v, res)
 	if err != nil {
 		return fmt.Errorf("run %s: %w", runID, err)
+	}
+	if err = e.AppendEvents(ctx, runID, &event.EnvRebuildStarted{EnvID: v.EnvID}); err != nil {
+		return err
 	}
 	spec.NoCache = noCache
 	// Egress policy is delivered to the per-project gateway by the provisioner's
@@ -170,6 +171,7 @@ func runEnvSpec(v run.View, res *resolution.Resolution) (envport.EnvSpec, error)
 		EgressAllowedPorts: res.EgressAllowedPorts,
 		Docker:             res.WorkspaceDocker,
 		Size:               res.WorkspaceSize,
+		SizeCap:            res.WorkspaceSizeCap,
 		GitUser:            res.GitUser,
 		GitPass:            res.GitPass,
 	}, nil

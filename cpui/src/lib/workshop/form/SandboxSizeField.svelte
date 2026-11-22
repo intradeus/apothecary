@@ -1,13 +1,20 @@
 <script lang="ts">
 	// The workshop's sandbox size: its own CPUs and memory, what an unset
-	// field falls back to (the instance's default), the instance's ceiling,
-	// and — once the workshop exists — what its recent runs reached, the
-	// evidence for choosing a size.
+	// field falls back to (the instance's default, else the ceiling as a
+	// limit), the instance's ceiling, and — once the workshop exists — what
+	// its recent runs reached, the evidence for choosing a size. As the
+	// engine does, a save checks only the fields it changes: one kept above
+	// a ceiling lowered since is capped, not refused.
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { fmtBytes } from '$lib/core/format';
+	import { untrack } from 'svelte';
 	import {
 		aboveCeiling,
+		changedFields,
+		effectiveSize,
+		outOfBounds,
+		sizeCap,
 		unsetSize,
 		usageSummary,
 		type SandboxRunUsage,
@@ -28,9 +35,22 @@
 	const policy = $derived(
 		fleet.limits?.sandbox ?? { default: unsetSize(), ceiling: unsetSize(), idleMinutes: 0 }
 	);
-	const over = $derived(aboveCeiling(size, policy.ceiling));
-	const fallback = (v: number | null, unit: string) =>
-		v === null ? t('form.project.sizeNoLimit') : t('form.project.sizeDefault', { v, unit });
+	// What the form opened with: the stored size a save is checked against.
+	const saved = untrack(() => ({ ...size }));
+	const changed = $derived(changedFields(saved, size));
+	const over = $derived(aboveCeiling(changed, policy.ceiling));
+	const capped = $derived(aboveCeiling(size, policy.ceiling).filter((k) => !over.includes(k)));
+	const bad = $derived(outOfBounds(changed));
+	// An unset field: the default, else the ceiling as a limit, else none.
+	const unsetGets = $derived(effectiveSize(unsetSize(), policy));
+	const unsetCap = $derived(sizeCap(unsetGets, policy));
+	const fallback = (k: 'cpus' | 'memoryGiB', unit: string) => {
+		const d = unsetGets[k];
+		if (d !== null) return t('form.project.sizeDefault', { v: d, unit });
+		const c = unsetCap[k];
+		if (c !== null) return t('form.project.sizeUpTo', { v: c, unit });
+		return t('form.project.sizeNoLimit');
+	};
 
 	let usage = $state<SandboxRunUsage[] | null>(null);
 	$effect(() => {
@@ -53,10 +73,10 @@
 	idPrefix="ws-size"
 	bind:size
 	placeholder={{
-		cpus: fallback(policy.default.cpus, t('ui.size.cpusUnit')),
-		memoryGiB: fallback(policy.default.memoryGiB, t('ui.size.memoryUnit'))
+		cpus: fallback('cpus', t('ui.size.cpusUnit')),
+		memoryGiB: fallback('memoryGiB', t('ui.size.memoryUnit'))
 	}}
-	invalid={over}
+	invalid={[...over, ...bad]}
 />
 {#if over.length > 0}
 	<div class="error small">
@@ -65,6 +85,17 @@
 			memory: policy.ceiling.memoryGiB ?? t('page.limits.sizeAny')
 		})}
 	</div>
+{/if}
+{#if capped.length > 0}
+	<div class="help hue-warning">
+		{t('form.project.sizeCapped', {
+			cpus: policy.ceiling.cpus ?? t('page.limits.sizeAny'),
+			memory: policy.ceiling.memoryGiB ?? t('page.limits.sizeAny')
+		})}
+	</div>
+{/if}
+{#if bad.length > 0}
+	<div class="error small">{t('ui.size.bounds')}</div>
 {/if}
 <div class="help">{t('form.project.sizeHelp')}</div>
 {#if summary}

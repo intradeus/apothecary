@@ -298,7 +298,7 @@ func (h *testHost) innerSock(name string) string {
 	return filepath.Join(h.a.folderFor(name), "docker.sock")
 }
 
-func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
+func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
 	a := h.a
 	if h.prepErr != nil {
 		return prep{}, h.prepErr
@@ -362,7 +362,8 @@ func (h *testHost) stopSandbox(_ context.Context, name string) error {
 	return h.stopErr
 }
 
-func (h *testHost) canStop() error { return h.canStopErr }
+func (h *testHost) canStop(envport.Runtime) error           { return h.canStopErr }
+func (h *testHost) checkStop(context.Context, string) error { return h.canStopErr }
 
 func (h *testHost) resetSandbox(_ context.Context, name string) error {
 	h.resets = append(h.resets, name)

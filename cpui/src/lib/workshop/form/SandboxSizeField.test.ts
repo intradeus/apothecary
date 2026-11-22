@@ -38,16 +38,33 @@ describe('SandboxSizeField', () => {
 		const props = bindable({ size: { ...unset } });
 		render(SandboxSizeField, props);
 		expect(screen.getByLabelText('CPUs')).toHaveAttribute('placeholder', 'default 2 cores');
-		expect(screen.getByLabelText('Memory')).toHaveAttribute('placeholder', 'no limit');
+		// No default: the ceiling limits it, it does not size it.
+		expect(screen.getByLabelText('Memory')).toHaveAttribute('placeholder', 'up to 8 GiB');
 		await userEvent.type(screen.getByLabelText('Memory'), '6');
 		expect(props.size).toEqual({ cpus: null, memoryGiB: 6 });
 		expect(api.projects.sandboxUsage).not.toHaveBeenCalled();
 	});
 
-	it('says a size above the ceiling will be refused', () => {
-		render(SandboxSizeField, { size: { cpus: 2, memoryGiB: 16 } });
+	it('says a size changed above the ceiling will be refused', async () => {
+		render(SandboxSizeField, bindable({ size: { cpus: 2, memoryGiB: null } }));
+		await userEvent.type(screen.getByLabelText('Memory'), '16');
 		expect(screen.getByLabelText('Memory')).toHaveAttribute('aria-invalid', 'true');
 		expect(screen.getByText(/Above this instance’s ceiling \(4 CPUs, 8 GiB/)).toBeInTheDocument();
+		expect(screen.getByText(/the save will be refused/)).toBeInTheDocument();
+	});
+
+	it('says a size kept above a ceiling lowered since is capped, not refused', () => {
+		render(SandboxSizeField, { size: { cpus: 2, memoryGiB: 16 } });
+		expect(screen.getByLabelText('Memory')).not.toHaveAttribute('aria-invalid');
+		expect(screen.queryByText(/the save will be refused/)).not.toBeInTheDocument();
+		expect(screen.getByText(/lowered since it was set/)).toHaveClass('hue-warning');
+	});
+
+	it('marks a changed field out of its bounds', async () => {
+		render(SandboxSizeField, bindable({ size: { ...unset } }));
+		await userEvent.type(screen.getByLabelText('CPUs'), '0.01');
+		expect(screen.getByLabelText('CPUs')).toHaveAttribute('aria-invalid', 'true');
+		expect(screen.getByText(/A size is 0.1 to 1000 CPUs/)).toBeInTheDocument();
 	});
 
 	it('works on an instance whose limits are not loaded yet', () => {

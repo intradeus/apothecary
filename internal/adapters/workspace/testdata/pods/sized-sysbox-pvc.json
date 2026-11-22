@@ -10,7 +10,8 @@
       "apothecary.io/sandbox": "true"
     },
     "annotations": {
-      "apothecary.io/project-name": "My App"
+      "apothecary.io/project-name": "My App",
+      "apothecary.io/shape": "739071dc404372c2"
     }
   },
   "spec": {
@@ -81,7 +82,13 @@
             "readOnly": true
           }
         ],
-        "restartPolicy": "Always"
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
       }
     ],
     "containers": [

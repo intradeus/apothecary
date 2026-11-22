@@ -30,8 +30,10 @@ func (h *k8sHost) probePod(name string, rt sandboxRuntime) kube.Pod {
 		Spec: kube.PodSpec{
 			RestartPolicy:                 "Never",
 			TerminationGracePeriodSeconds: kube.Ptr(int64(0)),
-			Containers:                    []kube.Container{c},
-			RuntimeClassName:              h.classFor(rt),
+			// Like a sandbox's: no cluster credential in a pod that needs none.
+			AutomountServiceAccountToken: kube.Ptr(false),
+			Containers:                   []kube.Container{c},
+			RuntimeClassName:             h.classFor(rt),
 		}}
 	if rt.ownUserNamespace {
 		pod.Spec.HostUsers = kube.Ptr(false)

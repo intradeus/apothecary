@@ -148,5 +148,13 @@ describe('LimitsSection', () => {
 			await userEvent.type(field('default', 'CPUs'), '0');
 			expect(save()).toBeDisabled();
 		});
+
+		it('will not save a size out of its bounds, and says which', async () => {
+			render(LimitsSection);
+			await userEvent.type(field('ceiling', 'Memory'), '99999');
+			expect(field('ceiling', 'Memory')).toHaveAttribute('aria-invalid', 'true');
+			expect(screen.getByText(/A size is 0.1 to 1000 CPUs/)).toBeInTheDocument();
+			expect(save()).toBeDisabled();
+		});
 	});
 });

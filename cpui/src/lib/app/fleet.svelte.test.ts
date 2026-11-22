@@ -205,11 +205,31 @@ describe('fleet.refresh', () => {
 		expect(api.runs.list).toHaveBeenCalledTimes(2);
 	});
 
-	it('reads the deployment caps once', async () => {
+	it('reads the limits once a minute, keeping them through a failed read', async () => {
+		vi.useFakeTimers({ now: 1_000_000 });
 		await fleet.refresh();
 		await fleet.refresh();
 		expect(api.system.limits).toHaveBeenCalledOnce();
 		expect(fleet.limits).toEqual(limits);
+
+		const raised = { ...limits, maxConcurrentRuns: 9 };
+		vi.mocked(api.system.limits).mockResolvedValueOnce(raised);
+		vi.setSystemTime(1_000_000 + 60_000);
+		await fleet.refresh();
+		expect(fleet.limits).toEqual(raised);
+
+		vi.mocked(api.system.limits).mockRejectedValueOnce(new Error('down'));
+		vi.setSystemTime(1_000_000 + 130_000);
+		await fleet.refresh();
+		vi.useRealTimers();
+		expect(fleet.limits).toEqual(raised);
+	});
+
+	it('reads the limits again after a reset', async () => {
+		await fleet.refresh();
+		fleet.reset();
+		await fleet.refresh();
+		expect(api.system.limits).toHaveBeenCalledTimes(2);
 	});
 
 	it('survives without caps, and asks again on the next refresh', async () => {

@@ -495,7 +495,7 @@ export default {
 	'form.project.idleHelp':
 		'A sandbox nobody uses (no agent working, no terminal, editor, port or SSH connection) is stopped after this long, its checkout and containers kept. The next use starts it again in seconds; processes it ran start again from the hooks.',
 	'form.project.runtimeHelp':
-		'What isolates this workshop’s sandboxes from the machine they run on, among the runtimes an admin approved on the provisioner. Applies to the next run’s sandbox, or a rebuild — never to one already running.',
+		'What isolates this workshop’s sandboxes from the machine they run on, among the runtimes an admin approved on the provisioner. Applies to the next run’s sandbox, or a rebuild — never to one already running. A rebuild cannot apply it to a sandbox whose disks go with its pod (emptydir storage, kata): there it waits for the next run.',
 	'form.project.rtDefault': 'The default ({name})',
 	'form.project.rtNested': 'docker inside',
 	'form.project.rtKube': 'Kubernetes inside',
@@ -509,11 +509,14 @@ export default {
 		'{name} cannot run docker inside the sandbox, which Docker in workspaces needs: pick another runtime, or the save will be refused.',
 	'form.project.size': 'Sandbox size',
 	'form.project.sizeHelp':
-		'What each run’s sandbox may use. Memory is reserved at its limit, so a sandbox that needs more than it is given has processes killed; CPU is a limit. Empty fields take the instance’s default. Applies to the next run’s sandbox, or a rebuild — never to one already running.',
+		'What each run’s sandbox may use. Memory is reserved at its limit, so a sandbox that needs more than it is given has processes killed (the run’s workspace log says so); CPU is a limit. Empty fields take the instance’s default, else the ceiling as a limit only. Applies to the next run’s sandbox, or a rebuild — never to one already running. A rebuild cannot apply it to a sandbox whose disks go with its pod (emptydir storage, kata): there it waits for the next run.',
 	'form.project.sizeDefault': 'default {v} {unit}',
 	'form.project.sizeNoLimit': 'no limit',
+	'form.project.sizeUpTo': 'up to {v} {unit}',
 	'form.project.sizeOverCeiling':
 		'Above this instance’s ceiling ({cpus} CPUs, {memory} GiB, System → Limits): the save will be refused.',
+	'form.project.sizeCapped':
+		'Above this instance’s ceiling, lowered since it was set ({cpus} CPUs, {memory} GiB, System → Limits): its sandboxes get the ceiling.',
 	'form.project.sizeUsage_one': 'Its last run peaked at {peak} of memory.',
 	'form.project.sizeUsage_other': 'Its last {count} runs peaked at {peak} of memory.',
 	'form.project.sizeOOM_one': '{count} process was killed at the memory limit',

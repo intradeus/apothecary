@@ -196,7 +196,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 			EngineURL:       "http://" + engineIP + ":8080",
 			EngineNamespace: ns,
 			Forward:         true,
-			Storage:         DefaultStorage([]envport.Runtime{runtime}),
+			Storage:         "pvc",
 			Runtime:         runtime,
 			Firewall:        gateway,
 			// The tunnel either way: kernel WireGuard by default, userspace
@@ -440,17 +440,39 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
 	}
-	if a.CanSleep() == nil {
+	// Stop-on-idle: a sandbox on a claim sleeps and wakes; one on emptyDir
+	// storage (a VM runtime's) is refused, by design, and that refusal is
+	// what is checked — never a quiet pass over the part that did not run.
+	if err := a.CanSleep(runtime); vm {
+		if err == nil {
+			t.Error("a sandbox on emptyDir storage says it can sleep: its checkout would go with the pod")
+		} else {
+			t.Logf("sleep and wake: not part of a %s sandbox's lifecycle (%v)", runtime, err)
+		}
+	} else if err != nil {
+		t.Errorf("a sandbox on a claim cannot sleep: %v", err)
+	} else {
 		liveSleepWake(ctx, t, a, c, env, spec)
 	}
 }
 
 // liveSleepWake: the run sleeps (its pod deleted, its claim kept) and wakes
 // by provisioning its spec again, with the same workspace container (no
-// rebuild) and the checkout as it was.
+// rebuild), the checkout as it was, and the project's own containers — one
+// started beside the workspace on the sandbox's docker, with a restart
+// policy, as a project's services are — running again.
 func liveSleepWake(ctx context.Context, t *testing.T, a *Adapter, c *kube.Client, env envport.EnvID, spec envport.EnvSpec) {
 	t.Helper()
 	name := string(env)
+	h := a.host.(*k8sHost)
+	inner := func(script string) string {
+		t.Helper()
+		out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script}, nil, nil)
+		if err != nil || code != 0 {
+			t.Fatalf("%s: exit %d %v %s", script, code, err, stderr)
+		}
+		return strings.TrimSpace(string(out))
+	}
 	if _, err := a.Exec(ctx, env, envport.Command{Script: "echo kept > .apo-live-sleep"}); err != nil {
 		t.Fatal(err)
 	}
@@ -458,6 +480,10 @@ func liveSleepWake(ctx context.Context, t *testing.T, a *Adapter, c *kube.Client
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The workspace's own image is on the sandbox's docker already: nothing
+	// is pulled for the project container.
+	image := inner("docker inspect -f '{{.Config.Image}}' " + before)
+	service := inner("docker run -d --restart unless-stopped --name apo-live-service " + image + " sleep 2147483647")
 	if err := a.Sleep(ctx, env); err != nil {
 		t.Fatalf("sleep: %v", err)
 	}
@@ -481,6 +507,16 @@ func liveSleepWake(ctx context.Context, t *testing.T, a *Adapter, c *kube.Client
 	}
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "cat .apo-live-sleep"}); err != nil || !strings.Contains(res.Output, "kept") {
 		t.Errorf("checkout after waking: %+v %v", res, err)
+	}
+	var state string
+	for i := 0; i < 30; i++ {
+		if state = inner("docker inspect -f '{{.Id}} {{.State.Running}}' apo-live-service"); state == service+" true" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if state != service+" true" {
+		t.Errorf("the project's container after waking: %q, want %s running", state, service)
 	}
 }
 

@@ -29,8 +29,13 @@ and nothing would say so until a run failed.
     default runtime;
   - otherwise the deployment's list, with the default runtime added when it
     is missing;
-  - with neither set, the default runtime alone, so a deployment that sets
-    nothing behaves as before.
+  - with neither set, the integration's default runtime alone, so a
+    deployment that sets nothing behaves as before. The boot leaves the
+    deployment's list empty when `APOTHECARY_K8S_RUNTIMES` is unset. The
+    first version filled it with the deployment's default, so an
+    integration set to `sysbox` on a deployment defaulting to `privileged`
+    (the default boot, dev, CI) approved `privileged` too, and any
+    workshop could pick root-on-node sandboxes nobody had approved.
 
   `envport.RuntimeChoice` carries the default, the approved list and what
   the workspace definition needs (`workspace.Needs()`; a devcontainer needs
@@ -40,8 +45,13 @@ and nothing would say so until a run failed.
   - a runtime that is not approved is refused, and the error names the
     approved ones;
   - a runtime that cannot give what the definition and the workshop need
-    (Docker in workspaces means nested containers) is refused, and the error
-    names the approved runtimes that would do.
+    is refused, and the error names the approved runtimes that would do.
+    Docker in workspaces needs nested containers and, under the daemon door
+    left on `auto`, a contained runtime (`projectNeeds`), so a workshop
+    with Docker on a privileged pick is refused when it is saved, not at
+    its next provision; with the door `off`, Docker is refused whatever
+    the runtime. Before, the check could refuse nothing (every runtime
+    nests containers).
 - **When the check runs:**
   - when the workshop is saved (`runtimeFits`, a 400);
   - at each provision, rebuild and envcheck. The resolver computes the
@@ -49,12 +59,24 @@ and nothing would say so until a run failed.
     (`WorkspaceRuntimeErr`) instead of failing the resolve, so a workshop
     whose runtime an admin later withdraws keeps its merge requests, tickets
     and logs readable. Only a new sandbox is refused (`SandboxRuntime()`),
-    and envcheck reports it as its first step, `runtime`.
+    and envcheck reports it as its first step, `runtime`. A provision so
+    refused is an `env_failed` on the run, nothing made (it ended the loop
+    with the run stuck in provisioning); a rebuild so refused is refused
+    before `env_rebuild_started` (it left the run rebuilding).
 - **The adapter builds a pod for each env's own runtime** (`EnvSpec.Runtime`)
   and refuses one it was not offered (`runtimeFor`).
-  - The integration's `runtime_class` override applies only to its default
-    runtime. Another runtime uses its own RuntimeClass, because an override
-    names one class and the runtimes would otherwise share it.
+  - The integration's `runtime_class` names classes per runtime: a class
+    alone is its default runtime's, and `runtime=class` pairs
+    (comma-separated, e.g. `sysbox-runc-v2,kata=kata-clh`) name any
+    approved runtime's, so a Kata class of another name can be used beside
+    a default sysbox. A runtime with none uses its own RuntimeClass. A pair
+    for a runtime the integration does not approve is refused.
+  - The deployment's class (`APOTHECARY_K8S_RUNTIME_CLASS`, the chart's
+    `workspaces.runtimeClassName`) is its own runtime's: it applies to an
+    integration whose default is the deployment's runtime (or sysbox under
+    the older `privileged=off`), never to another. The first version gave
+    it to any integration with an empty `runtime_class`, so a kata
+    integration on a sysbox deployment named `sysbox-runc`.
   - The daemon door's `auto` setting follows the env's runtime.
 - **The Test button's probe**: a pod per approved runtime, in that runtime's
   shape (its class, its user namespace, its privilege), running `shim
@@ -71,15 +93,22 @@ and nothing would say so until a run failed.
 
 - `envport`: `TestRuntimeChoiceValidate`, `TestRuntimeChoiceChoose`,
   `TestCapabilitiesUnion`.
-- `kinds`: `TestKubernetesRuntimeChoice`.
+- `kinds`: `TestKubernetesRuntimeChoice` (the leak case),
+  `TestKubernetesRuntimeClasses`.
 - `integrations`: `TestResolveChoosesTheRuntime`, `TestCheckRuntime`,
+  `TestCheckRuntimeHoldsDockerToTheDoor`, `TestProjectNeeds`,
   `TestRuntimeChoiceOffered`.
+- `engine`: `TestARefusedRuntimeFailsTheRunBeforeAnySandbox`,
+  `TestRebuildFailures`' refused runtime.
 - `envcheck`: `TestRunChecksTheSandboxRuntime`.
 - The workspace adapter: `TestEnvRunsUnderItsRuntime`,
-  `TestDaemonDoorFollowsTheEnvRuntime`, `TestRuntimeProbe`, and the live
+  `TestDaemonDoorFollowsTheEnvRuntime`, `TestRuntimeProbe`,
+  `TestRuntimeClassesPerRuntime`, and the live
   `TestLiveK8sRuntimeProbe` on k3d.
 - `httpapi`: `TestWorkshopRuntimeIsChecked`, `TestRuntimeOffer`.
-- `config`: `TestBootApprovedRuntimes`.
+- `config`: `TestBootApprovedRuntimes`; `cmd/apothecaryd`:
+  `TestUncontainedRuntime` (the daemon-door warning follows the runtime's
+  trait).
 - The chart: `chart:lint` refuses `workspaces.runtimes` without the default
   runtime.
 - The UI: the `SandboxRuntimeField` tests.

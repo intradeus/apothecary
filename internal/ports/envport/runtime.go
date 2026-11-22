@@ -133,8 +133,23 @@ type RuntimeChoice struct {
 	// Needs is the definition's (a devcontainer: nested containers).
 	Needs RuntimeCapabilities `json:"-"`
 	// NoSleep is why this provisioner's sandboxes cannot be stopped when
-	// idle and kept (EnvSleeper.CanSleep); "" when they can.
-	NoSleep string `json:"-"`
+	// idle and kept (EnvSleeper.CanSleep); "" when they can. NoSleepUnder
+	// is the same, for sandboxes under one approved runtime alone (a VM's
+	// disks go with its pod, whatever the storage).
+	NoSleep      string             `json:"-"`
+	NoSleepUnder map[Runtime]string `json:"-"`
+}
+
+// SleepRefusal is why a sandbox under want ("" the default) cannot be
+// stopped when idle and kept; "" when it can.
+func (c RuntimeChoice) SleepRefusal(want Runtime) string {
+	if c.NoSleep != "" {
+		return c.NoSleep
+	}
+	if want == "" {
+		want = c.Default
+	}
+	return c.NoSleepUnder[want]
 }
 
 // Validate: a known default, approved, and only known runtimes approved.

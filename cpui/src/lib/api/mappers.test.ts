@@ -2736,6 +2736,16 @@ describe('the runtime offer', () => {
 							user_namespaces: false,
 							contained: true
 						}
+					},
+					{
+						name: 'kata',
+						capabilities: {
+							nested_containers: true,
+							nested_kubernetes: true,
+							user_namespaces: true,
+							contained: true
+						},
+						noSleep: 'a VM'
 					}
 				]
 			})
@@ -2750,7 +2760,18 @@ describe('the runtime offer', () => {
 						nestedKubernetes: true,
 						userNamespaces: false,
 						contained: true
-					}
+					},
+					noSleep: undefined
+				},
+				{
+					name: 'kata',
+					capabilities: {
+						nestedContainers: true,
+						nestedKubernetes: true,
+						userNamespaces: true,
+						contained: true
+					},
+					noSleep: 'a VM'
 				}
 			],
 			error: undefined

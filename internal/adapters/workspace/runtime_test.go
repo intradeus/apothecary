@@ -87,24 +87,38 @@ func TestDevcontainerNeedsNestedContainers(t *testing.T) {
 // Memory is requested at its limit, CPU at a quarter of it (overcommitted),
 // never below a floor nor above the limit; an unset field sets nothing.
 func TestSandboxResources(t *testing.T) {
-	if r := sandboxResources(envport.SandboxSize{}); r != nil {
+	if r := sandboxResources(envport.SandboxSize{}, envport.SandboxSize{}); r != nil {
 		t.Errorf("unset = %+v", r)
 	}
-	r := sandboxResources(envport.SandboxSize{MilliCPU: 4000, MemoryMiB: 8192})
+	r := sandboxResources(envport.SandboxSize{MilliCPU: 4000, MemoryMiB: 8192}, envport.SandboxSize{})
 	if r.Limits["cpu"] != "4000m" || r.Requests["cpu"] != "1000m" || r.Limits["memory"] != "8192Mi" || r.Requests["memory"] != "8192Mi" {
 		t.Errorf("4 CPUs, 8 GiB = %+v", r)
 	}
-	r = sandboxResources(envport.SandboxSize{MilliCPU: 200})
+	r = sandboxResources(envport.SandboxSize{MilliCPU: 200}, envport.SandboxSize{})
 	if r.Requests["cpu"] != "100m" || r.Limits["cpu"] != "200m" || r.Limits["memory"] != "" {
 		t.Errorf("0.2 CPU = %+v", r)
 	}
-	r = sandboxResources(envport.SandboxSize{MilliCPU: 50})
+	r = sandboxResources(envport.SandboxSize{MilliCPU: 50}, envport.SandboxSize{})
 	if r.Requests["cpu"] != "50m" {
 		t.Errorf("a request above its limit: %+v", r)
 	}
-	r = sandboxResources(envport.SandboxSize{MemoryMiB: 512})
+	r = sandboxResources(envport.SandboxSize{MemoryMiB: 512}, envport.SandboxSize{})
 	if _, ok := r.Limits["cpu"]; ok || r.Limits["memory"] != "512Mi" {
 		t.Errorf("memory only = %+v", r)
+	}
+	// Under a ceiling, an unset field is limited at it and requested at a
+	// floor: a 64 GiB ceiling never asks a node for 64 GiB.
+	r = sandboxResources(envport.SandboxSize{}, envport.SandboxSize{MilliCPU: 16000, MemoryMiB: 65536})
+	if r.Limits["cpu"] != "16000m" || r.Requests["cpu"] != "100m" || r.Limits["memory"] != "65536Mi" || r.Requests["memory"] != "1024Mi" {
+		t.Errorf("capped = %+v", r)
+	}
+	r = sandboxResources(envport.SandboxSize{MemoryMiB: 2048}, envport.SandboxSize{MilliCPU: 50, MemoryMiB: 512})
+	if r.Limits["cpu"] != "50m" || r.Requests["cpu"] != "50m" || r.Limits["memory"] != "2048Mi" || r.Requests["memory"] != "2048Mi" {
+		t.Errorf("sized memory, tiny CPU cap = %+v", r)
+	}
+	r = sandboxResources(envport.SandboxSize{}, envport.SandboxSize{MemoryMiB: 768})
+	if r.Requests["memory"] != "768Mi" {
+		t.Errorf("a request above its cap: %+v", r)
 	}
 }
 
@@ -186,7 +200,8 @@ func TestRuntimeProbe(t *testing.T) {
 			t.Fatalf("created %d pods", len(k.created))
 		}
 		spec := k.created[0]["spec"].(map[string]any)
-		if spec["runtimeClassName"] != "sysbox-runc" || spec["hostUsers"] != false || spec["restartPolicy"] != "Never" {
+		if spec["runtimeClassName"] != "sysbox-runc" || spec["hostUsers"] != false || spec["restartPolicy"] != "Never" ||
+			spec["automountServiceAccountToken"] != false {
 			t.Errorf("sysbox probe spec = %v", spec)
 		}
 		c := spec["containers"].([]any)[0].(map[string]any)
@@ -282,7 +297,8 @@ func TestWireGuardUserspaceSwitch(t *testing.T) {
 
 // A VM runtime's sandbox: no subPath (a volume each for the run folder and
 // docker), the /dev prelude asked for, privileged inside its VM, no
-// hostUsers; refused unsized, or on claims.
+// hostUsers; refused unsized. Its disks are emptyDirs of its own whatever
+// the integration's storage.
 func TestKataSandboxShape(t *testing.T) {
 	k := &kubeFake{secrets: map[string]string{}}
 	h := New(Config{RunsDir: testRunsDir, Kube: goldenKubeConfig(k, func(c *KubeConfig) {
@@ -330,8 +346,14 @@ func TestKataSandboxShape(t *testing.T) {
 		}
 	}
 	h.cfg.Storage = "pvc"
-	if _, err := h.podManifest(ctx, "w", sized, egressgw.Attachment{}); err == nil || !strings.Contains(err.Error(), "storage set to emptydir") {
-		t.Errorf("pvc: %v", err)
+	pod, err = h.podManifest(ctx, "w", sized, egressgw.Attachment{})
+	if err != nil {
+		t.Fatalf("pvc: %v", err)
+	}
+	for _, v := range pod.Spec.Volumes {
+		if v.PersistentVolumeClaim != nil || v.Name == "data" {
+			t.Errorf("pvc: a VM sandbox mounts %+v", v)
+		}
 	}
 	// Other runtimes keep the one data volume, split by subPath.
 	h.rt, _ = lookupRuntime(envport.RuntimeSysbox)
@@ -341,27 +363,67 @@ func TestKataSandboxShape(t *testing.T) {
 	}
 }
 
-func TestCheckStorage(t *testing.T) {
-	for _, c := range []struct {
-		rt      envport.Runtime
-		storage string
-		ok      bool
-	}{
-		{envport.RuntimeKata, "emptydir", true},
-		{envport.RuntimeKata, "pvc", false},
-		{envport.RuntimeSysbox, "pvc", true},
-		{envport.RuntimePrivileged, "emptydir", true},
-		{"gvisor", "emptydir", false},
-	} {
-		if err := CheckStorage(c.rt, c.storage); (err == nil) != c.ok {
-			t.Errorf("%s on %s: %v", c.rt, c.storage, err)
+// What can be stopped and kept: a sandbox on claims, under a runtime whose
+// disks are not its VM's own.
+func TestCanStop(t *testing.T) {
+	if CanStop("pvc") != nil || CanStop("emptydir") == nil {
+		t.Error("storage")
+	}
+	for rt, ok := range map[envport.Runtime]bool{envport.RuntimePrivileged: true, envport.RuntimeSysbox: true, envport.RuntimeKata: false, "gvisor": false} {
+		if err := CanStopUnder(rt); (err == nil) != ok {
+			t.Errorf("%s: %v", rt, err)
 		}
 	}
-	if got := DefaultStorage([]envport.Runtime{envport.RuntimeSysbox}); got != "pvc" {
-		t.Errorf("sysbox defaults to %s", got)
+}
+
+// On claims, a sysbox sandbox gets its claim and a kata one none: approving
+// kata leaves the integration's storage to its other runtimes. An env under
+// a runtime the integration does not approve is refused before anything is
+// made.
+func TestAVMSandboxTakesNoClaim(t *testing.T) {
+	ctx := context.Background()
+	sized := envport.EnvSpec{Size: envport.SandboxSize{MilliCPU: 2000, MemoryMiB: 4096}}
+	for rt, claims := range map[envport.Runtime]bool{envport.RuntimeSysbox: true, envport.RuntimeKata: false} {
+		k := &kubeFake{secrets: map[string]string{}}
+		_, h := k8sWith(t, k, false)
+		h.cfg.Storage = "pvc"
+		h.rt, _ = lookupRuntime(rt)
+		if err := h.ensurePod(ctx, "w", sized, false, egressgw.Attachment{}, discard); err != nil {
+			t.Fatalf("%s: %v", rt, err)
+		}
+		if got := k.obj(k.created, "PersistentVolumeClaim") != nil; got != claims {
+			t.Errorf("%s: claim created = %v", rt, got)
+		}
 	}
-	if got := DefaultStorage([]envport.Runtime{envport.RuntimeSysbox, envport.RuntimeKata}); got != "emptydir" {
-		t.Errorf("with kata: %s", got)
+	k := &kubeFake{secrets: map[string]string{}}
+	_, h := k8sWith(t, k, false)
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{Runtime: envport.RuntimeKata}, false, egressgw.Attachment{}, discard); err == nil ||
+		!strings.Contains(err.Error(), "not approved") || len(k.created) != 0 {
+		t.Errorf("unapproved: %v, created %d", err, len(k.created))
+	}
+}
+
+// An integration may name another class for any runtime it approves; it
+// wins over the default's override, and a VM pod is known by its class.
+func TestRuntimeClassesPerRuntime(t *testing.T) {
+	k := &kubeFake{secrets: map[string]string{}}
+	h := New(Config{RunsDir: testRunsDir, Kube: goldenKubeConfig(k, func(c *KubeConfig) {
+		c.Runtime, c.RuntimeClass = envport.RuntimeSysbox, "sysbox-runc-v2"
+		c.Runtimes = []envport.Runtime{envport.RuntimeSysbox, envport.RuntimeKata}
+		c.RuntimeClasses = map[envport.Runtime]string{envport.RuntimeKata: "kata-clh"}
+	})}).host.(*k8sHost)
+	sysbox, _ := lookupRuntime(envport.RuntimeSysbox)
+	kata, _ := lookupRuntime(envport.RuntimeKata)
+	if h.classFor(sysbox) != "sysbox-runc-v2" || h.classFor(kata) != "kata-clh" {
+		t.Errorf("classes %q, %q", h.classFor(sysbox), h.classFor(kata))
+	}
+	h.cfg.RuntimeClasses[envport.RuntimeSysbox] = "sysbox-runc-v3"
+	if h.classFor(sysbox) != "sysbox-runc-v3" {
+		t.Errorf("a pair wins over the default's override: %q", h.classFor(sysbox))
+	}
+	pod := func(class string) kube.Pod { var p kube.Pod; p.Spec.RuntimeClassName = class; return p }
+	if !h.isVMPod(pod("kata-clh")) || h.isVMPod(pod("kata")) || h.isVMPod(pod("sysbox-runc-v3")) {
+		t.Error("a VM pod is the one under the VM runtime's class")
 	}
 }
 

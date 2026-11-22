@@ -1341,6 +1341,7 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	for _, h := range e.teardown {
 		h.Forget(v.RunID)
 	}
+	e.use.Forget(v.RunID)
 	if v.ProjectID == "" {
 		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
 	}

@@ -433,3 +433,66 @@ func TestNilClockAndLogFallBack(t *testing.T) {
 		t.Error("nil log must fall back")
 	}
 }
+
+// WaitOps returns at once without a matching op, waits out one that is, and
+// gives up with ctx.
+func TestWaitOps(t *testing.T) {
+	s := New(nil, nil, nil, nil)
+	ctx := context.Background()
+	if err := s.WaitOps(ctx, "r", "sleeping"); err != nil {
+		t.Fatalf("no op: %v", err)
+	}
+	rel, err := s.Begin("r", "rebuilding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.Op("r") != "rebuilding" {
+		t.Errorf("op = %q", s.Op("r"))
+	}
+	if err := s.WaitOps(ctx, "r", "sleeping", "waking"); err != nil {
+		t.Fatalf("another kind of op is not waited for: %v", err)
+	}
+	rel(errors.New("boom"))
+	if s.Op("r") != "" {
+		t.Errorf("a failed op is no op: %q", s.Op("r"))
+	}
+	rel, _ = s.Begin("r", "sleeping")
+	waiting := make(chan struct{})
+	done := make(chan error)
+	go func() {
+		close(waiting)
+		done <- s.WaitOps(ctx, "r", "sleeping")
+	}()
+	<-waiting
+	// Another run's op ending wakes the waiter, which finds its own still on.
+	other, _ := s.Begin("o", "waking")
+	other(nil)
+	select {
+	case err := <-done:
+		t.Fatalf("returned while the sleep was in flight: %v", err)
+	default:
+	}
+	rel(nil)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	rel, _ = s.Begin("r", "waking")
+	defer rel(nil)
+	cctx, cancel := context.WithCancelCause(ctx)
+	cause := errors.New("gone")
+	cancel(cause)
+	if err := s.WaitOps(cctx, "r", "waking"); !errors.Is(err, cause) {
+		t.Errorf("ctx ended: %v", err)
+	}
+}
+
+func TestStatusOfOneRun(t *testing.T) {
+	s := New(nil, nil, nil, nil)
+	if _, ok := s.Status("r"); ok {
+		t.Error("never reconciled")
+	}
+	s.SetStatus("r", envport.EnvAsleep)
+	if st, ok := s.Status("r"); !ok || st != envport.EnvAsleep {
+		t.Errorf("status = %s %v", st, ok)
+	}
+}

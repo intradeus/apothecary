@@ -4,6 +4,7 @@ export default {
 	'ui.size.cpusUnit': 'cores',
 	'ui.size.memory': 'Memory',
 	'ui.size.memoryUnit': 'GiB',
+	'ui.size.bounds': 'A size is 0.1 to 1000 CPUs and 0.5 to 16384 GiB of memory.',
 	'ui.copy.label': 'copy',
 	'ui.copy.done': 'copied',
 	'ui.copy.aria': 'Copy {command}',

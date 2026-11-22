@@ -45,9 +45,34 @@ export interface SandboxRunUsage {
 
 export const unsetSize = (): SandboxSize => ({ cpus: null, memoryGiB: null });
 
-/** A size field is unset (null) or a positive number. */
-export function sizeFieldValid(v: number | null): boolean {
-	return v === null || (Number.isFinite(v) && v > 0);
+type SizeKey = 'cpus' | 'memoryGiB';
+
+/** A set size field's bounds, in the form's units (the engine's
+ *  envport.MinMilliCPU … MaxMemoryMiB). */
+export const SIZE_BOUNDS: Record<SizeKey, { min: number; max: number }> = {
+	cpus: { min: 0.1, max: 1000 },
+	memoryGiB: { min: 0.5, max: 16384 }
+};
+
+/** A size field is unset (null) or a number within its bounds. */
+export function sizeFieldValid(v: number | null, key: SizeKey): boolean {
+	const b = SIZE_BOUNDS[key];
+	return v === null || (Number.isFinite(v) && v >= b.min && v <= b.max);
+}
+
+/** Which of size's fields is out of its bounds, by name; empty when none. */
+export function outOfBounds(size: SandboxSize): SizeKey[] {
+	return (['cpus', 'memoryGiB'] as const).filter((k) => !sizeFieldValid(size[k], k));
+}
+
+/** size with only the fields that differ from prev; the others unset. What
+ *  a save checks: a field it keeps is never refused (the engine's
+ *  SandboxPolicy.CheckChange). */
+export function changedFields(prev: SandboxSize, size: SandboxSize): SandboxSize {
+	return {
+		cpus: size.cpus === prev.cpus ? null : size.cpus,
+		memoryGiB: size.memoryGiB === prev.memoryGiB ? null : size.memoryGiB
+	};
 }
 
 /** Which of size's fields is above the ceiling, by name; empty when none. */
@@ -62,16 +87,27 @@ export function aboveCeiling(size: SandboxSize, ceiling: SandboxSize): ('cpus' |
 }
 
 /** The size a project's sandbox gets: each field its own, else the default;
- *  never above the ceiling (the engine's SandboxPolicy.Effective). */
+ *  never above the ceiling. A field neither sets stays unset: the ceiling
+ *  caps it (sizeCap), it is not its size (the engine's
+ *  SandboxPolicy.Effective). */
 export function effectiveSize(own: SandboxSize, policy: SandboxPolicy): SandboxSize {
 	const pick = (o: number | null, d: number | null, c: number | null) => {
 		const v = o ?? d;
-		if (c !== null && (v === null || v > c)) return c;
+		if (c !== null && v !== null && v > c) return c;
 		return v;
 	};
 	return {
 		cpus: pick(own.cpus, policy.default.cpus, policy.ceiling.cpus),
 		memoryGiB: pick(own.memoryGiB, policy.default.memoryGiB, policy.ceiling.memoryGiB)
+	};
+}
+
+/** The most a sandbox of the effective size may use where that size sets
+ *  nothing: the ceiling, a limit never reserved (SandboxPolicy.Cap). */
+export function sizeCap(effective: SandboxSize, policy: SandboxPolicy): SandboxSize {
+	return {
+		cpus: effective.cpus === null ? policy.ceiling.cpus : null,
+		memoryGiB: effective.memoryGiB === null ? policy.ceiling.memoryGiB : null
 	};
 }
 
@@ -104,6 +140,8 @@ export interface RuntimeCapabilities {
 export interface SandboxRuntime {
 	name: string;
 	capabilities: RuntimeCapabilities;
+	/** Why its idle sandboxes cannot be stopped and kept, whatever the storage (a VM's disks). */
+	noSleep?: string;
 }
 
 /** What a workshop may choose for its sandboxes' runtime. */
@@ -117,6 +155,10 @@ export interface RuntimeOffer {
 	/** Why idle sandboxes cannot be stopped and kept there (emptyDir storage). */
 	noSleep?: string;
 }
+
+/** Why the workshop's idle sandboxes cannot be stopped and kept under its pick; undefined when they can. */
+export const sleepRefusal = (offer: RuntimeOffer, pick: string): string | undefined =>
+	offer.noSleep ?? offer.approved.find((r) => r.name === effectiveRuntime(offer, pick))?.noSleep;
 
 /** The runtime a workshop's sandboxes run under: its pick, else the default. */
 export const effectiveRuntime = (offer: RuntimeOffer, pick: string): string =>

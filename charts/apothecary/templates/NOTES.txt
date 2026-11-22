@@ -23,7 +23,8 @@ Apothecary is starting in {{ .Release.Namespace }}; workspaces will run in {{ .V
 {{- end }}
 
 {{- $rt := include "apothecary.sandboxRuntime" . }}
-Sandboxes run {{ if eq $rt "privileged" }}PRIVILEGED (sandbox root is root on its node){{ else }}unprivileged under {{ $rt }}, its RuntimeClass ({{ .Values.workspaces.runtimeClassName | default "sysbox-runc" }}) installed on the nodes that run them{{ end }}.
+{{- $class := .Values.workspaces.runtimeClassName | default (ternary "kata" "sysbox-runc" (eq $rt "kata")) }}
+Sandboxes run {{ if eq $rt "privileged" }}PRIVILEGED (sandbox root is root on its node){{ else if eq $rt "kata" }}each in a VM under kata, its RuntimeClass ({{ $class }}) installed on the nodes that run them (KVM on those nodes){{ else }}unprivileged under {{ $rt }}, its RuntimeClass ({{ $class }}) installed on the nodes that run them{{ end }}.
 Nodes need the wireguard kernel module (in-tree since Linux 5.6), and
 workspace volumes a local or block storage class (the inner docker daemon
 cannot run on NFS).

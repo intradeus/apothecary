@@ -6,22 +6,30 @@ records them, as measured on the rig (`deploy/kata/rig.sh`: k3s
 v1.36.4 in a privileged container with the host's `/dev/kvm`, Kata 4.4.0
 static, Cloud Hypervisor, the stock guest kernel 6.18.62).
 
-## The decision: `pvc` storage is refused, not supported
+## The decision: a Kata sandbox's disks are always its own emptyDirs
 
 A claim from a directory-backed class (k3s `local-path`, most `hostPath`
 provisioners) reaches the guest over virtio-fs, where docker cannot keep its
 layers. A block-backed class (EBS) or a raw-block claim might work, but each
 would need its own tests and setup that the fresh-box install does not
 provide. So a Kata sandbox's volumes are emptyDirs, which Kata's
-`emptydir_mode = "block-plain"` turns into ext4 disks:
+`emptydir_mode = "block-plain"` turns into ext4 disks.
 
-- `workspace.CheckStorage` refuses `kata` with `pvc` storage, both when an
-  integration approves it and when a pod is built.
-- `workspace.DefaultStorage`: an integration that sets no storage gets
-  `emptydir` when it approves a VM runtime, else `pvc` as before. The field
-  lost its `pvc` form default, so an empty field means "the runtime's".
-- A sandbox's checkout lasts as long as its pod; a replaced pod starts
-  afresh, as `emptydir` storage already did under the other runtimes.
+This is the runtime's trait (`vm`), not the integration's storage:
+
+- The integration's `storage` (default `pvc`) is for its other runtimes. A
+  Kata sandbox gets its two emptyDirs whatever it says, and no claim is
+  made for it. Approving `kata` beside `sysbox` leaves the sysbox
+  sandboxes on their claims, and stop-on-idle with them.
+- The first version flipped the whole integration to `emptydir` when kata
+  was approved and `storage` was empty (sysbox runs lost their claims and
+  their stop-on-idle), and refused `pvc` + `kata` only when a run's
+  provisioner was built (every run then failed). Both are gone with the
+  storage check: `pvc` + `kata` is a valid integration.
+- A Kata sandbox's checkout lasts as long as its pod; a replaced pod starts
+  afresh. It cannot be stopped and kept (`workspace.CanStopUnder`): the
+  note 2026-11-22-idle-sandboxes-stop-and-keep-their-disks says how a
+  workshop is told.
 
 ## What was verified
 
@@ -47,6 +55,26 @@ provide. So a Kata sandbox's volumes are emptyDirs, which Kata's
 - **MTU**: the inner docker took the default 1500 whenever no gateway wrote
   `/run/apo/mtu`. `apo-dockerd` now uses the pod interface's MTU in that
   case, under every runtime.
+
+## Not measured: the mem-agent periods
+
+The rig's Kata configuration turns the mem-agent on with
+`memcg_period_secs = 30` and `compact_period_secs = 30`
+(`docs/kubernetes.md` copies them). They are a starting point, not a
+measurement: with `reclaim_guest_freed_memory`, the agent's reclaim and
+compaction are what hand a VM's freed memory back to the node, and a
+shorter period hands it back sooner for some guest CPU. Nothing here
+measured that trade, and no lifecycle test depends on the values. A
+deployment that measures it should change both files and this note.
+
+## The MTU fallback is for every runtime
+
+`apo-dockerd` gives the inner daemon the pod interface's MTU when no
+gateway wrote `/run/apo/mtu`, under every runtime, not Kata alone: docker's
+1500 default is wrong on any overlay network (1450 on flannel's VXLAN), and
+the guest only made it visible first. With a gateway (the default), the
+tunnel's MTU is used as before, so the pods the golden manifests describe
+behave the same.
 
 ## A finding: port-forward cannot reach a VM pod
 
@@ -75,12 +103,14 @@ costs one kubectl process, which is fine for a dev engine.
 ## Tests that hold it
 
 - Unit:
-  - `TestKataSandboxShape`, `TestCheckStorage`, the golden
+  - `TestKataSandboxShape` (on `pvc` too), `TestAVMSandboxTakesNoClaim`,
+    `TestCanStop`, `TestK8sAVMSandboxCannotSleep`, the golden
     `sized-kata-emptydir-gateway`, `TestOutOfClusterDialsAVMPodByExec`
     (workspace);
   - `TestExecConn*` (kube);
   - `TestRelayStdio` (shim);
-  - `TestKubernetesRuntimeChoice`'s kata cases (kinds).
+  - `TestKubernetesRuntimeChoice`'s kata cases and
+    `TestKubernetesSleepRefusals` (kinds).
 - Live: `task sandbox:test:kata` runs `TestLiveK8sLifecycle` under
   `APOTHECARY_LIVE_RUNTIME=kata` and `TestLiveK8sRuntimeProbe`'s Kata probe
   on the rig. Both passed (lifecycle 135 s).

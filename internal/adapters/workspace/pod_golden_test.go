@@ -38,6 +38,7 @@ func TestSandboxPodGolden(t *testing.T) {
 			c.Runtime, c.Storage = envport.RuntimeSysbox, "emptydir"
 		}, false},
 		{"sized-sysbox-pvc", func(c *KubeConfig) { c.Runtime = envport.RuntimeSysbox }, false},
+		{"capped-privileged-pvc", func(*KubeConfig) {}, false},
 		{"sized-kata-emptydir-gateway", func(c *KubeConfig) {
 			c.Runtime, c.Storage = envport.RuntimeKata, "emptydir"
 		}, true},
@@ -53,6 +54,9 @@ func TestSandboxPodGolden(t *testing.T) {
 			spec := spec
 			if strings.HasPrefix(c.name, "sized-") {
 				spec.Size = envport.SandboxSize{MilliCPU: 4000, MemoryMiB: 8192}
+			}
+			if strings.HasPrefix(c.name, "capped-") {
+				spec.SizeCap = envport.SandboxSize{MilliCPU: 16000, MemoryMiB: 65536}
 			}
 			pod, err := h.podManifest(context.Background(), "apo-x", spec, a2)
 			if err != nil {

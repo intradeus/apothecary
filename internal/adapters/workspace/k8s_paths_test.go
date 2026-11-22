@@ -254,7 +254,7 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 	for phase, replaced := range map[string]bool{"Failed": true, "Succeeded": true, "Running": false, "Pending": false} {
 		k := &kubeFake{pod: `{"status":{"phase":"` + phase + `"}}`, secrets: map[string]string{}}
 		_, h := k8sWith(t, k, false)
-		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil {
+		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, discard); err != nil {
 			t.Fatal(err)
 		}
 		if got := len(k.deleted) == 1 && k.deleted[0] == "pod/w"; got != replaced {
@@ -266,7 +266,7 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 	}
 	k := &kubeFake{pod: `{"status":{"phase":"Failed"}}`, secrets: map[string]string{}}
 	_, h := k8sWith(t, k, false, kubeRule{match: "delete pod", stderr: "boom", code: 1})
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err == nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, discard); err == nil {
 		t.Error("a dead pod could not go, but the provision went on")
 	}
 
@@ -278,7 +278,7 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 		h.cfg.Storage = storage
 		var log strings.Builder
 		plog := func(f string, args ...any) { fmt.Fprintf(&log, f, args...) }
-		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, plog); err != nil {
+		if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, plog); err != nil {
 			t.Fatal(err)
 		}
 		if !slices.Equal(k.deleted, []string{"pod/w"}) || k.obj(k.created, "Pod") == nil {
@@ -291,12 +291,12 @@ func TestK8sEndedPodIsReplacedAndALiveOneKept(t *testing.T) {
 	// Any other failure to exec proves nothing about the pod: it is reused.
 	k = &kubeFake{pod: readyPod("10.42.0.9"), secrets: map[string]string{}}
 	_, h = k8sWith(t, k, false, kubeRule{match: "exec --pod-running-timeout", stderr: "Unable to connect to the server\n", code: 1})
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil || len(k.deleted) != 0 || k.obj(k.created, "Pod") != nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, discard); err != nil || len(k.deleted) != 0 || k.obj(k.created, "Pod") != nil {
 		t.Errorf("an API blip replaced the pod: err = %v, deleted = %v", err, k.deleted)
 	}
 	k = &kubeFake{pod: readyPod("10.42.0.9"), secrets: map[string]string{}, refused: true}
 	_, h = k8sWith(t, k, false, kubeRule{match: "delete pod", stderr: "boom", code: 1})
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err == nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, discard); err == nil {
 		t.Error("a broken pod could not go, but the provision went on")
 	}
 }
@@ -306,7 +306,7 @@ func TestK8sStorageChoices(t *testing.T) {
 	k := &kubeFake{secrets: map[string]string{}}
 	_, h := k8sWith(t, k, false)
 	h.cfg.StorageClass, h.cfg.StorageSize = "fast", "5Gi"
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, discard); err != nil {
 		t.Fatal(err)
 	}
 	pvc, _ := json.Marshal(k.obj(k.created, "PersistentVolumeClaim"))
@@ -317,7 +317,7 @@ func TestK8sStorageChoices(t *testing.T) {
 	k = &kubeFake{secrets: map[string]string{}}
 	_, h = k8sWith(t, k, false)
 	h.cfg.Storage = "emptydir"
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{}, discard); err != nil {
+	if err := h.ensurePod(ctx, "w", envport.EnvSpec{}, false, egressgw.Attachment{}, discard); err != nil {
 		t.Fatal(err)
 	}
 	if k.obj(k.created, "PersistentVolumeClaim") != nil {
@@ -1158,7 +1158,7 @@ func TestK8sWaitingForThePodSaysWhatItWaitsOn(t *testing.T) {
 	var mu sync.Mutex
 	var lines []string
 	plog := func(f string, a ...any) { mu.Lock(); lines = append(lines, fmt.Sprintf(f, a...)); mu.Unlock() }
-	if err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, egressgw.Attachment{}, plog); err != nil {
+	if err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, false, egressgw.Attachment{}, plog); err != nil {
 		t.Fatal(err)
 	}
 	all := strings.Join(lines, "")
@@ -1212,7 +1212,7 @@ func TestK8sUnschedulablePodSaysWhy(t *testing.T) {
 	var mu sync.Mutex
 	var lines []string
 	plog := func(f string, a ...any) { mu.Lock(); lines = append(lines, fmt.Sprintf(f, a...)); mu.Unlock() }
-	if err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, egressgw.Attachment{}, plog); err != nil {
+	if err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, false, egressgw.Attachment{}, plog); err != nil {
 		t.Fatal(err)
 	}
 	want := "  … pod Pending; last warning: FailedScheduling: 0/1 nodes are available: 1 Insufficient memory.\n"
@@ -1222,7 +1222,7 @@ func TestK8sUnschedulablePodSaysWhy(t *testing.T) {
 
 	_, h = k8sWith(t, k, false, kubeRule{match: "get --request-timeout=30s events", out: event},
 		kubeRule{match: "wait --for=condition=Ready", stderr: "timed out", code: 1})
-	err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, egressgw.Attachment{}, func(string, ...any) {})
+	err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, false, egressgw.Attachment{}, func(string, ...any) {})
 	if err == nil || !strings.Contains(err.Error(), "never became ready") || !strings.Contains(err.Error(), "Insufficient memory") {
 		t.Errorf("err = %v", err)
 	}

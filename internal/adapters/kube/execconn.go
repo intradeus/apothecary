@@ -24,27 +24,32 @@ func (c *Client) ExecConn(ctx context.Context, pod, container string, argv []str
 	args = append(args, argv...)
 	// Not CommandContext: the connection outlives the dial's context.
 	cmd := exec.Command(c.bin(), args...)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return nil, err
-	}
-	// A pipe of our own, not StdoutPipe: Wait closes that one when kubectl
-	// exits, losing what the reader has not read yet.
+	// Pipes of our own, not StdinPipe/StdoutPipe: Wait closes those when
+	// kubectl exits, losing what the reader has not read yet, and an
+	// *os.File pipe takes deadlines (net.Conn's).
 	stdout, pw, err := os.Pipe()
 	if err != nil {
 		return nil, err
 	}
-	cmd.Stdout = pw
-	cmd.Stderr = io.Discard
-	if err := ctx.Err(); err != nil {
+	pr, stdin, err := os.Pipe()
+	if err != nil {
 		stdout.Close()
 		pw.Close()
 		return nil, err
 	}
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = pr, pw, io.Discard
+	if err := ctx.Err(); err != nil {
+		for _, f := range []*os.File{stdout, pw, pr, stdin} {
+			f.Close()
+		}
+		return nil, err
+	}
 	err = cmd.Start()
 	pw.Close() // kubectl holds the write end; EOF once it exits
+	pr.Close() // and the read end of its stdin
 	if err != nil {
 		stdout.Close()
+		stdin.Close()
 		return nil, err
 	}
 	done := make(chan struct{})
@@ -57,7 +62,7 @@ func (c *Client) ExecConn(ctx context.Context, pod, container string, argv []str
 
 type execConn struct {
 	cmd  *exec.Cmd
-	w    io.WriteCloser
+	w    *os.File
 	r    *os.File
 	done chan struct{}
 	pod  string
@@ -96,13 +101,13 @@ func (e *execConn) Close() error {
 func (e *execConn) LocalAddr() net.Addr  { return execAddr("engine") }
 func (e *execConn) RemoteAddr() net.Addr { return execAddr("pod/" + e.pod) }
 
-// Deadlines are not supported over a pipe: callers bound a dial with its
-// context and a connection by closing it.
-func (e *execConn) SetDeadline(time.Time) error      { return errNoDeadline }
-func (e *execConn) SetReadDeadline(time.Time) error  { return errNoDeadline }
-func (e *execConn) SetWriteDeadline(time.Time) error { return errNoDeadline }
-
-var errNoDeadline = errors.New("kubectl exec connection: no deadlines")
+// Deadlines are the pipes': a read or write past one fails with an error
+// that is os.ErrDeadlineExceeded (a net.Error whose Timeout is true).
+func (e *execConn) SetDeadline(t time.Time) error {
+	return errors.Join(e.r.SetReadDeadline(t), e.w.SetWriteDeadline(t))
+}
+func (e *execConn) SetReadDeadline(t time.Time) error  { return e.r.SetReadDeadline(t) }
+func (e *execConn) SetWriteDeadline(t time.Time) error { return e.w.SetWriteDeadline(t) }
 
 type execAddr string
 

@@ -201,5 +201,18 @@ func (s *Service) Forget(runID string) {
 	s.forgetObserved(runID)
 }
 
+// Slept is the engine's sleep hook (engine.EnvSleepHook): the exposures
+// stay, dormant, on their URLs — the first connection to one wakes the
+// workspace, whose wake opens them again (ReopenAfterRebuild) — while the
+// paths kept for tunnels and the discovered-port snapshot go with the
+// stopped processes.
+func (s *Service) Slept(runID string) {
+	if s.Relay != nil {
+		s.Relay.Sleep(runID)
+	}
+	s.dropConns(runID)
+	s.forgetObserved(runID)
+}
+
 // BeforeDestroy is part of the teardown hook; there is nothing to flush.
 func (s *Service) BeforeDestroy(context.Context, run.View, *resolution.Resolution) {}

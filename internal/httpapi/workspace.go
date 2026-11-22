@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -109,8 +110,17 @@ func (s *Server) deleteHold(w http.ResponseWriter, r *http.Request) {
 }
 
 // workspace resolves the run's sidecar and the checkout ?repo= names (the
-// primary when absent), answering the error itself.
+// primary when absent), answering the error itself. Reading the workspace
+// is a use of it (Files, Changes, Diff): held for the request, and woken
+// first when it was stopped when idle.
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) (*sidecar.Client, wsinfo.Checkout, bool) {
+	return s.workspaceFor(w, r, engine.WokeByFiles)
+}
+
+func (s *Server) workspaceFor(w http.ResponseWriter, r *http.Request, by string) (*sidecar.Client, wsinfo.Checkout, bool) {
+	if !s.useFor(w, r, by) {
+		return nil, wsinfo.Checkout{}, false
+	}
 	c, co, err := s.Workspaces.Workspace(r.Context(), r.PathValue("id"), r.URL.Query().Get("repo"))
 	if err != nil {
 		switch {
@@ -346,34 +356,31 @@ func (s *Server) holdsShell(r *http.Request) bool {
 // proxied to the sidecar. Not in the route table: a protocol switch is not
 // something OpenAPI describes, and the generated client would not use it.
 func (s *Server) serveTerminal(w http.ResponseWriter, r *http.Request) {
-	if !s.wakeFor(w, r, engine.WokeByTerminal) {
-		return
-	}
-	c, co, ok := s.workspace(w, r)
+	c, co, ok := s.workspaceFor(w, r, engine.WokeByTerminal)
 	if !ok {
 		return
-	}
-	if s.Runs != nil {
-		defer s.Runs.Use().Busy(r.PathValue("id"))()
 	}
 	c.TerminalProxy(co.Name).ServeHTTP(w, r)
 }
 
-// wakeFor starts the path's run's workspace if it was stopped when idle
-// (engine.WakeEnv), answering for the caller when it cannot: 503 with
-// Retry-After while another request is waking it, 502 when it would not
-// come back. by names what woke it.
-func (s *Server) wakeFor(w http.ResponseWriter, r *http.Request, by string) bool {
+// useFor holds the path's run's workspace for the rest of the request — the
+// terminal's whole session — and starts it first if it was stopped when
+// idle (engine.UseEnv), waiting out a sleep or a wake already in flight. It
+// answers for the caller when it cannot: 503 with Retry-After while another
+// workspace op (a rebuild, a destroy) holds it, 502 when it would not come
+// back. by names what woke it.
+func (s *Server) useFor(w http.ResponseWriter, r *http.Request, by string) bool {
 	if s.Runs == nil {
 		return true
 	}
-	err := s.Runs.WakeEnv(r.Context(), r.PathValue("id"), by)
+	release, err := s.Runs.UseEnv(r.Context(), r.PathValue("id"), by)
 	switch {
 	case err == nil:
+		context.AfterFunc(r.Context(), release)
 		return true
 	case errors.Is(err, envstate.ErrInFlight):
 		w.Header().Set("Retry-After", "5")
-		writeErr(w, http.StatusServiceUnavailable, "the workspace is waking up; try again in a moment")
+		writeErr(w, http.StatusServiceUnavailable, "another operation on the workspace is in progress; try again in a moment")
 	default:
 		writeErr(w, http.StatusBadGateway, err.Error())
 	}
@@ -382,7 +389,7 @@ func (s *Server) wakeFor(w http.ResponseWriter, r *http.Request, by string) bool
 
 // postWake starts a workspace stopped when idle, as opening it would.
 func (s *Server) postWake(w http.ResponseWriter, r *http.Request) {
-	if s.wakeFor(w, r, engine.WokeByPerson) {
+	if s.useFor(w, r, engine.WokeByPerson) {
 		w.WriteHeader(http.StatusNoContent)
 	}
 }

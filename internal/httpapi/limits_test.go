@@ -114,10 +114,36 @@ func TestSandboxSizesAreALimit(t *testing.T) {
 	if res.StatusCode != http.StatusOK || !strings.Contains(string(data), `"size":{"milli_cpu":4000,"memory_mib":8192}`) {
 		t.Errorf("at the ceiling: %d %s", res.StatusCode, data)
 	}
+	// The ceiling is lowered under the workshop's size: saving the workshop
+	// again with that size still works (the size is capped at provision);
+	// raising it, or another field above the new ceiling, is refused.
+	lower := map[string]any{"ceiling": map[string]any{"milli_cpu": 2000, "memory_mib": 4096}}
+	if res, body := x.do(t, "PUT", "/api/limits", map[string]any{"max_concurrent_runs": 3, "max_environments": 6, "sandbox": lower}, nil); res.StatusCode != http.StatusOK {
+		t.Fatalf("lower: %d %s", res.StatusCode, body)
+	}
+	body2.Name = "sized-renamed" // edited after the ceiling came down
+	if res, data := x.do(t, "PUT", "/api/projects/"+id, body2, nil); res.StatusCode != http.StatusOK {
+		t.Errorf("an unchanged size above a lowered ceiling: %d %s", res.StatusCode, data)
+	}
+	body2.Workspace.Size.MemoryMiB = 6144
+	if res, data := x.do(t, "PUT", "/api/projects/"+id, body2, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "4096 MiB") {
+		t.Errorf("a changed size above it: %d %s", res.StatusCode, data)
+	}
+	body2.Workspace.Size.MemoryMiB = 8192
 	body2.Name = "sized-2"
 	body2.Workspace.Size = envport.SandboxSize{MilliCPU: 9000}
 	if res, data := x.do(t, "POST", "/api/projects", body2, nil); res.StatusCode != http.StatusBadRequest {
 		t.Errorf("create over the ceiling: %d %s", res.StatusCode, data)
+	}
+	// A number past what the store holds is a 400 naming the bound, never
+	// a failed write.
+	huge := map[string]any{"ceiling": map[string]any{"memory_mib": 1 << 40}}
+	if res, body := x.do(t, "PUT", "/api/limits", map[string]any{"max_concurrent_runs": 3, "max_environments": 6, "sandbox": huge}, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), "memory must be") {
+		t.Errorf("huge ceiling: %d %s", res.StatusCode, body)
+	}
+	body2.Workspace.Size = envport.SandboxSize{MemoryMiB: 64}
+	if res, data := x.do(t, "POST", "/api/projects", body2, nil); res.StatusCode != http.StatusBadRequest || !strings.Contains(string(data), "between 512") {
+		t.Errorf("below the floor: %d %s", res.StatusCode, data)
 	}
 }
 

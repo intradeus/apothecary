@@ -270,10 +270,10 @@ export default {
 		'what each run’s sandbox may use; a workshop may set its own up to the ceiling',
 	'page.limits.sizeDefault': 'Default size',
 	'page.limits.sizeDefaultHelp':
-		'What a workshop that sets no size gets. Memory is reserved on the node at its limit; CPU is a limit, reserved at a quarter of it. Empty: no limit.',
+		'What a workshop that sets no size gets. Memory is reserved on the node at its limit; CPU is a limit, reserved at a quarter of it. Empty: no size (the ceiling, if any, still limits it).',
 	'page.limits.sizeCeiling': 'Ceiling',
 	'page.limits.sizeCeilingHelp':
-		'The most any workshop may ask for; a workshop saved above it is refused, and one saved before a lower ceiling is held to it at its next sandbox. Empty: no ceiling.',
+		'The most any workshop may ask for; a workshop saved above it is refused, and one saved before a lower ceiling is held to it at its next sandbox. A sandbox with no size (neither its workshop’s nor a default) is limited at the ceiling without reserving it. Empty: no ceiling.',
 	'page.limits.sizeNone': 'none',
 	'page.limits.idle': 'Stop when idle',
 	'page.limits.idleHelp':

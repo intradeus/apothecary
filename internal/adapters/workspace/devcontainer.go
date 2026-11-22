@@ -406,7 +406,7 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, rebuild b
 	// The host opens the run's egress as soon as it is attached to the
 	// gateway; whatever way provisioning ends, it closes here.
 	defer a.closeProvisionEgress(ctx, spec.Project, name, plog)
-	p, err := a.host.prepare(ctx, name, spec, plog, func(ctx context.Context, src string) (Definition, error) {
+	p, err := a.host.prepare(ctx, name, spec, rebuild, plog, func(ctx context.Context, src string) (Definition, error) {
 		fsys := a.host.fs(name)
 		def, err := a.detect(ctx, fsys, src)
 		if err != nil {
@@ -1149,9 +1149,10 @@ func (a *Adapter) workspaceState(ctx context.Context, name string) (envport.EnvS
 
 // --- envport.EnvSleeper ---------------------------------------------------------
 
-// CanSleep (envport.EnvSleeper): the host's answer (storage that outlives
-// the sandbox).
-func (a *Adapter) CanSleep() error { return a.host.canStop() }
+// CanSleep (envport.EnvSleeper): the host's answer for a sandbox under rt
+// (storage that outlives the sandbox, a runtime whose disks are not the
+// pod's own).
+func (a *Adapter) CanSleep(rt envport.Runtime) error { return a.host.canStop(rt) }
 
 // Sleep (envport.EnvSleeper) stops the run's sandbox and keeps the rest: its
 // storage, its relay secret, its gateway link and its run folder. The
@@ -1159,7 +1160,7 @@ func (a *Adapter) CanSleep() error { return a.host.canStop() }
 // recovery does not take the run for lost; a failed stop leaves it, and a
 // retry finishes. Provision with the run's spec wakes it.
 func (a *Adapter) Sleep(ctx context.Context, env envport.EnvID) error {
-	if err := a.host.canStop(); err != nil {
+	if err := a.host.checkStop(ctx, string(env)); err != nil {
 		return err
 	}
 	name := string(env)

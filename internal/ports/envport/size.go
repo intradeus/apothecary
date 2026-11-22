@@ -30,10 +30,25 @@ func (s SandboxSize) String() string {
 	return cpu + ", " + mem
 }
 
-// Validate refuses a negative field; what names the setting in the error.
+// Bounds of a set size field. The floor keeps a slip of the unit from
+// becoming a sandbox that cannot start its docker daemon; the top keeps a
+// field within what the store's columns and Kubernetes take (1000 cores,
+// 16 TiB), so a typo is refused, never a failed write.
+const (
+	MinMilliCPU  = 100
+	MaxMilliCPU  = 1_000_000
+	MinMemoryMiB = 512
+	MaxMemoryMiB = 16 << 20
+)
+
+// Validate refuses a field below its floor or above its top (0 is unset);
+// what names the setting in the error.
 func (s SandboxSize) Validate(what string) error {
-	if s.MilliCPU < 0 || s.MemoryMiB < 0 {
-		return fmt.Errorf("%s: CPU and memory must be positive, or 0 for unset (got %d mCPU, %d MiB)", what, s.MilliCPU, s.MemoryMiB)
+	if s.MilliCPU != 0 && (s.MilliCPU < MinMilliCPU || s.MilliCPU > MaxMilliCPU) {
+		return fmt.Errorf("%s: CPU must be 0 (unset) or between %d and %d mCPU, got %d", what, MinMilliCPU, MaxMilliCPU, s.MilliCPU)
+	}
+	if s.MemoryMiB != 0 && (s.MemoryMiB < MinMemoryMiB || s.MemoryMiB > MaxMemoryMiB) {
+		return fmt.Errorf("%s: memory must be 0 (unset) or between %d and %d MiB, got %d", what, MinMemoryMiB, MaxMemoryMiB, s.MemoryMiB)
 	}
 	return nil
 }
@@ -91,16 +106,29 @@ func (p SandboxPolicy) Validate() error {
 	return nil
 }
 
-// Check refuses a project's size above the ceiling, naming the field and the
-// ceiling; an unset field is never above it.
-func (p SandboxPolicy) Check(s SandboxSize) error {
-	if err := s.Validate("sandbox size"); err != nil {
+// Check refuses a project's size out of bounds or above the ceiling, naming
+// the field and the ceiling; an unset field is never above it.
+func (p SandboxPolicy) Check(s SandboxSize) error { return p.CheckChange(SandboxSize{}, s) }
+
+// CheckChange is Check for a project saved again with s, where prev is what
+// it had: only a field the save changes is checked. A ceiling lowered under a
+// project's size caps that size at the next provision (Effective); it does
+// not make every later save of the project fail until someone lowers it.
+func (p SandboxPolicy) CheckChange(prev, s SandboxSize) error {
+	var changed SandboxSize // the fields the save changes; 0 where it keeps one
+	if s.MilliCPU != prev.MilliCPU {
+		changed.MilliCPU = s.MilliCPU
+	}
+	if s.MemoryMiB != prev.MemoryMiB {
+		changed.MemoryMiB = s.MemoryMiB
+	}
+	if err := changed.Validate("sandbox size"); err != nil {
 		return err
 	}
-	if c := p.Ceiling.MilliCPU; c > 0 && s.MilliCPU > c {
+	if c := p.Ceiling.MilliCPU; c > 0 && changed.MilliCPU > c {
 		return fmt.Errorf("sandbox CPU %d mCPU is above this instance's ceiling of %d mCPU (System → Limits)", s.MilliCPU, c)
 	}
-	if c := p.Ceiling.MemoryMiB; c > 0 && s.MemoryMiB > c {
+	if c := p.Ceiling.MemoryMiB; c > 0 && changed.MemoryMiB > c {
 		return fmt.Errorf("sandbox memory %d MiB is above this instance's ceiling of %d MiB (System → Limits)", s.MemoryMiB, c)
 	}
 	return nil
@@ -108,14 +136,15 @@ func (p SandboxPolicy) Check(s SandboxSize) error {
 
 // Effective is the size a project's sandbox gets: each field its own, else
 // the default; never above the ceiling (one lowered after the project was
-// saved caps it).
+// saved caps it). A field neither sets stays unset: the ceiling caps a
+// size, it never becomes one (Cap).
 func (p SandboxPolicy) Effective(s SandboxSize) SandboxSize {
 	pick := func(own, def, ceil int) int {
 		v := own
 		if v <= 0 {
 			v = def
 		}
-		if ceil > 0 && (v <= 0 || v > ceil) {
+		if ceil > 0 && v > ceil {
 			v = ceil
 		}
 		return v
@@ -124,4 +153,19 @@ func (p SandboxPolicy) Effective(s SandboxSize) SandboxSize {
 		MilliCPU:  pick(s.MilliCPU, p.Default.MilliCPU, p.Ceiling.MilliCPU),
 		MemoryMiB: pick(s.MemoryMiB, p.Default.MemoryMiB, p.Ceiling.MemoryMiB),
 	}
+}
+
+// Cap is the most a sandbox of the effective size may use where that size
+// sets nothing: the ceiling's field. A provisioner limits the sandbox to it
+// without reserving it (the sandbox asks for little and may grow to the
+// cap), so a large ceiling never makes an unsized sandbox unschedulable.
+func (p SandboxPolicy) Cap(effective SandboxSize) SandboxSize {
+	var c SandboxSize
+	if effective.MilliCPU <= 0 {
+		c.MilliCPU = p.Ceiling.MilliCPU
+	}
+	if effective.MemoryMiB <= 0 {
+		c.MemoryMiB = p.Ceiling.MemoryMiB
+	}
+	return c
 }

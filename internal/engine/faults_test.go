@@ -8,6 +8,7 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -184,6 +185,28 @@ func (b blockProvision) Provision(ctx context.Context, _ envport.EnvSpec) (envpo
 	close(b.entered)
 	<-ctx.Done()
 	return b.left, ctx.Err()
+}
+
+// A workshop whose runtime is refused (withdrawn by the admin, or one its
+// Docker setting cannot have) fails its run before any sandbox is made,
+// with the refusal on the run.
+func TestARefusedRuntimeFailsTheRunBeforeAnySandbox(t *testing.T) {
+	h := newHarness(t, mustFlow(t, loopFlowDoc))
+	h.res.WorkspaceRuntimeErr = errors.New("sandbox runtime privileged is not approved on this instance")
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "loop", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if v := h.view(t, id); v.State != run.Failed || v.EnvID != "" {
+		t.Fatalf("state %s, env %q", v.State, v.EnvID)
+	}
+	if f, ok := findPayload[*event.EnvFailed](h.events(t, id)); !ok || f.Partial || !strings.Contains(f.Error, "not approved on this instance") {
+		t.Errorf("env_failed = %+v", f)
+	}
+	if len(h.envp.Execs()) != 0 {
+		t.Errorf("a sandbox was used: %v", h.envp.Execs())
+	}
 }
 
 // Bootstrap failing leaves the workspace on record, as evidence, and its
@@ -488,6 +511,25 @@ func TestRebuildFailures(t *testing.T) {
 		wantErrText(t, h.e.RebuildEnv(ctx, id, false), "load flow: db down")
 		if countType(h.events(t, id), event.TypeEnvRebuildStarted) != 0 {
 			t.Error("a refused rebuild started")
+		}
+	})
+	t.Run("the runtime is refused", func(t *testing.T) {
+		h, r, id := rebuildHarness(t)
+		h.res.WorkspaceRuntimeErr = errors.New("sandbox runtime privileged is not approved on this instance")
+		wantErrText(t, h.e.RebuildEnv(ctx, id, false), "not approved on this instance")
+		if countType(h.events(t, id), event.TypeEnvRebuildStarted) != 0 || h.view(t, id).Rebuilding || atomic.LoadInt32(&r.calls) != 0 {
+			t.Error("a refused rebuild started")
+		}
+	})
+	t.Run("the start cannot be recorded", func(t *testing.T) {
+		store := &flakyStore{typ: event.TypeEnvRebuildStarted}
+		store.left.Store(1)
+		h := newHarnessOn(t, func(m *event.MemStore) event.Store { store.Store = m; return store }, mustFlow(t, loopFlowDoc))
+		r := &rebuilderEnvp{EnvProvisioner: h.envp}
+		h.res.Envp = r
+		id := completedWithEnv(t, h)
+		if err := h.e.RebuildEnv(ctx, id, false); err == nil || atomic.LoadInt32(&r.calls) != 0 {
+			t.Errorf("rebuilt without its start on record: %v, %d calls", err, r.calls)
 		}
 	})
 	t.Run("the project will not resolve", func(t *testing.T) {

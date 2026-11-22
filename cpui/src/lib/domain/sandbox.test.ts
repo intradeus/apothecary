@@ -4,8 +4,12 @@ import {
 	idleAfter,
 	IDLE_NEVER,
 	effectiveRuntime,
+	changedFields,
 	effectiveSize,
+	outOfBounds,
 	runtimeProblem,
+	sleepRefusal,
+	sizeCap,
 	sizeFieldValid,
 	unsetSize,
 	usageSummary,
@@ -13,15 +17,38 @@ import {
 } from './sandbox';
 
 describe('sizeFieldValid', () => {
-	it('takes unset or a positive number', () => {
-		expect(sizeFieldValid(null)).toBe(true);
-		expect(sizeFieldValid(0.5)).toBe(true);
+	it('takes unset or a number within its bounds', () => {
+		expect(sizeFieldValid(null, 'cpus')).toBe(true);
+		expect(sizeFieldValid(0.1, 'cpus')).toBe(true);
+		expect(sizeFieldValid(0.5, 'memoryGiB')).toBe(true);
+		expect(sizeFieldValid(16384, 'memoryGiB')).toBe(true);
 	});
 
-	it('refuses zero, a negative and NaN', () => {
-		expect(sizeFieldValid(0)).toBe(false);
-		expect(sizeFieldValid(-1)).toBe(false);
-		expect(sizeFieldValid(Number.NaN)).toBe(false);
+	it('refuses zero, a negative, NaN, and a field past its bounds', () => {
+		expect(sizeFieldValid(0, 'cpus')).toBe(false);
+		expect(sizeFieldValid(-1, 'cpus')).toBe(false);
+		expect(sizeFieldValid(Number.NaN, 'memoryGiB')).toBe(false);
+		expect(sizeFieldValid(0.05, 'cpus')).toBe(false);
+		expect(sizeFieldValid(0.25, 'memoryGiB')).toBe(false);
+		expect(sizeFieldValid(1e9, 'memoryGiB')).toBe(false);
+	});
+
+	it('names the fields out of bounds', () => {
+		expect(outOfBounds({ cpus: 0.01, memoryGiB: 4 })).toEqual(['cpus']);
+		expect(outOfBounds(unsetSize())).toEqual([]);
+	});
+});
+
+describe('changedFields', () => {
+	it('keeps only what differs', () => {
+		expect(changedFields({ cpus: 8, memoryGiB: 16 }, { cpus: 8, memoryGiB: 4 })).toEqual({
+			cpus: null,
+			memoryGiB: 4
+		});
+		expect(changedFields(unsetSize(), { cpus: 2, memoryGiB: null })).toEqual({
+			cpus: 2,
+			memoryGiB: null
+		});
 	});
 });
 
@@ -54,14 +81,16 @@ describe('effectiveSize', () => {
 		expect(effectiveSize({ cpus: 16, memoryGiB: 32 }, policy)).toEqual({ cpus: 4, memoryGiB: 8 });
 	});
 
-	it('bounds an unset field by the ceiling when there is no default', () => {
-		expect(
-			effectiveSize(unsetSize(), {
-				default: unsetSize(),
-				ceiling: { cpus: null, memoryGiB: 8 },
-				idleMinutes: 0
-			})
-		).toEqual({ cpus: null, memoryGiB: 8 });
+	it('caps an unset field by the ceiling, never sizes it at it', () => {
+		const ceilingOnly = {
+			default: unsetSize(),
+			ceiling: { cpus: null, memoryGiB: 64 },
+			idleMinutes: 0
+		};
+		const eff = effectiveSize(unsetSize(), ceilingOnly);
+		expect(eff).toEqual(unsetSize());
+		expect(sizeCap(eff, ceilingOnly)).toEqual({ cpus: null, memoryGiB: 64 });
+		expect(sizeCap({ cpus: 2, memoryGiB: 4 }, policy)).toEqual(unsetSize());
 	});
 
 	it('leaves everything unset without a policy', () => {
@@ -119,6 +148,18 @@ describe('sandbox runtimes', () => {
 		expect(runtimeProblem(offer, 'plain', false)).toBeNull();
 		expect(runtimeProblem(offer, 'plain', true)).toBe('noDocker');
 		expect(runtimeProblem(offer, 'kata', false)).toBe('notApproved');
+	});
+
+	it("says why idle sandboxes cannot be kept: the provisioner's storage, else the pick's runtime", () => {
+		const vm = {
+			...offer,
+			approved: [...offer.approved, { name: 'kata', capabilities: caps(true), noSleep: 'a VM' }]
+		};
+		expect(sleepRefusal(vm, '')).toBeUndefined();
+		expect(sleepRefusal(vm, 'kata')).toBe('a VM');
+		expect(sleepRefusal({ ...vm, default: 'kata' }, '')).toBe('a VM');
+		expect(sleepRefusal({ ...vm, noSleep: 'emptydir' }, '')).toBe('emptydir');
+		expect(sleepRefusal(vm, 'gone')).toBeUndefined();
 	});
 });
 

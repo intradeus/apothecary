@@ -99,6 +99,9 @@ type Resolution struct {
 	// WorkspaceSize is the size the run's sandbox gets: the project's own
 	// under the instance's default and ceiling (envport.SandboxPolicy).
 	WorkspaceSize envport.SandboxSize
+	// WorkspaceSizeCap is the ceiling where WorkspaceSize sets nothing
+	// (envport.SandboxPolicy.Cap).
+	WorkspaceSizeCap envport.SandboxSize
 	// WorkspaceIdleAfter is how long the run's sandbox may sit unused before
 	// it is stopped and kept (0: never): the project's setting under the
 	// instance's default (envport.SandboxPolicy.IdleAfter).

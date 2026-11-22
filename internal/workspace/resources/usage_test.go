@@ -66,3 +66,29 @@ func TestSampleOnceRecordsUsage(t *testing.T) {
 		t.Errorf("usage = %+v", u)
 	}
 }
+
+// A project no run refers to any more (deleted, its runs reaped) leaves the
+// usage record at the next pass; one with runs keeps it.
+func TestSampleOncePrunesGoneProjects(t *testing.T) {
+	h := newFixture()
+	ctx := context.Background()
+	if err := h.s.SampleOnce(ctx); err != nil { // nothing recorded: nothing to prune
+		t.Fatal(err)
+	}
+	if _, err := h.store.Append(ctx, "r-kept", &event.RunCreated{TicketTitle: "kept", FlowName: "loop", ProjectID: fixtureProject}); err != nil {
+		t.Fatal(err)
+	}
+	h.s.mu.Lock()
+	h.s.recordUsage("gone", "r-old", envport.ResourceSample{MemUsed: 1})
+	h.s.recordUsage(fixtureProject, "r-kept", envport.ResourceSample{MemUsed: 1})
+	h.s.mu.Unlock()
+	if err := h.s.SampleOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if u := h.s.Usage("gone"); len(u) != 0 {
+		t.Errorf("a gone project's usage = %+v", u)
+	}
+	if u := h.s.Usage(fixtureProject); len(u) != 1 {
+		t.Errorf("a project with runs lost its usage: %+v", u)
+	}
+}

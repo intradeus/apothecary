@@ -41,8 +41,17 @@ type Sampler struct {
 	// only like buf, but kept past a run's end: it is the answer to "how big
 	// does this project's sandbox need to be".
 	usage map[string][]RunUsage
-	// runtime is each sampled run's runtime, for the memory gauges' label.
-	runtime map[string]envport.Runtime
+	// mem is, per run, what the memory gauges add up: the last pass's
+	// sample of every sandbox that answered it — a finished run's whose
+	// sandbox still stands among them, a sleeping one's not.
+	mem map[string]memSample
+}
+
+// memSample is one sandbox's memory at the last pass, and its runtime (the
+// gauges' label).
+type memSample struct {
+	runtime     envport.Runtime
+	used, limit int64
 }
 
 // RunUsage is what one run's sandbox reached while it was sampled: its peak
@@ -118,6 +127,7 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 		return err
 	}
 	live := map[string]bool{}
+	mem := map[string]memSample{}
 	// Resolutions are cached per project within the pass, as in the env reconciler.
 	resolved := map[string]*resolution.Resolution{}
 	defer func() {
@@ -128,11 +138,14 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 	for _, v := range views {
 		id := v.RunID
 		// Pending runs have no container yet; pre-v2 runs with no project
-		// can't be resolved to a provisioner.
-		if v.ProjectID == "" || v.State == run.Pending || v.State.Terminal() {
+		// can't be resolved to a provisioner. A finished run's sandbox, until
+		// it is reaped, is sampled for the memory gauges alone: it holds its
+		// node's memory, but its graphs are over.
+		if v.ProjectID == "" || v.State == run.Pending || (v.State.Terminal() && v.EnvID == "") {
 			continue
 		}
-		live[id] = true
+		active := !v.State.Terminal()
+		live[id] = active
 		res, ok := resolved[v.ProjectID]
 		if !ok {
 			res, err = s.Resolver.Resolve(ctx, v.ProjectID)
@@ -152,6 +165,10 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 			continue
 		}
 		sample.At = s.now()
+		mem[id] = memSample{runtime: res.WorkspaceRuntime, used: sample.MemUsed, limit: sample.MemLimit}
+		if !active {
+			continue
+		}
 		s.mu.Lock()
 		if s.buf == nil {
 			s.buf = map[string][]envport.ResourceSample{}
@@ -161,10 +178,6 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 			buf = buf[len(buf)-resourceWindow:]
 		}
 		s.buf[id] = buf
-		if s.runtime == nil {
-			s.runtime = map[string]envport.Runtime{}
-		}
-		s.runtime[id] = res.WorkspaceRuntime
 		s.recordUsage(v.ProjectID, id, sample)
 		s.mu.Unlock()
 	}
@@ -172,11 +185,30 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 	for id := range s.buf {
 		if !live[id] {
 			delete(s.buf, id)
-			delete(s.runtime, id)
 		}
 	}
+	s.pruneUsage(views)
+	s.mem = mem
 	s.mu.Unlock()
 	return nil
+}
+
+// pruneUsage drops the usage of a project no run refers to any more (it
+// was deleted, or its runs were reaped) (s.mu held): the record is bounded
+// per project, and so, with this, in projects.
+func (s *Sampler) pruneUsage(views []run.View) {
+	if len(s.usage) == 0 {
+		return
+	}
+	known := map[string]bool{}
+	for _, v := range views {
+		known[v.ProjectID] = true
+	}
+	for project := range s.usage {
+		if !known[project] {
+			delete(s.usage, project)
+		}
+	}
 }
 
 // recordUsage folds a sample into its run's usage record (s.mu held).

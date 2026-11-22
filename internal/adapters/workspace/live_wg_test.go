@@ -61,18 +61,28 @@ func TestLiveK8sWireGuardFallback(t *testing.T) {
 
 	tag := fmt.Sprint(time.Now().UnixNano() % 1000000)
 	net := "apo-live-wg-" + tag
-	run("network", "create", "--subnet", "10.231.0.0/24", net)
+	// The network's range is docker's pick from its own pools, and every
+	// address is read back from it: a fixed subnet fails the test on a
+	// docker that already holds it (another run's network, a VPN route).
+	run("network", "create", net)
 	t.Cleanup(func() { _ = exec.Command("docker", "network", "rm", net).Run() })
 	gwPriv, gwPub := key()
 	sbPriv, sbPub := key()
 
 	// The peer: kernel WireGuard, as the gateway runs it.
 	gw := "apo-live-wg-gw-" + tag
-	run("run", "-d", "--name", gw, "--privileged", "--network", net, "--ip", "10.231.0.10", "--entrypoint", "sh", img, "-c",
+	run("run", "-d", "--name", gw, "--privileged", "--network", net, "--entrypoint", "sh", img, "-c",
 		"set -e; ip link add wg0 type wireguard; mkdir -p /etc/wireguard; echo "+gwPriv+" > /etc/wireguard/gw.key; "+
 			"wg set wg0 listen-port 51820 private-key /etc/wireguard/gw.key peer "+sbPub+
 			" allowed-ips 10.99.0.2/32; ip address add 10.99.0.1/24 dev wg0; ip link set wg0 up; exec sleep infinity")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", gw).Run() })
+	gwIP := run("inspect", "-f", "{{(index .NetworkSettings.Networks \""+net+"\").IPAddress}}", gw)
+	// The engine's /32 route only needs an address on the network: its
+	// bridge's own.
+	engineIP := run("network", "inspect", "-f", "{{(index .IPAM.Config 0).Gateway}}", net)
+	if gwIP == "" || engineIP == "" {
+		t.Fatalf("network %s: gateway at %q, bridge at %q", net, gwIP, engineIP)
+	}
 
 	for _, c := range []struct {
 		name, mode string
@@ -96,7 +106,7 @@ func TestLiveK8sWireGuardFallback(t *testing.T) {
 			}
 			sb := "apo-live-wg-sb-" + c.name + "-" + tag
 			args := []string{"create", "--name", sb, "--privileged", "--network", net,
-				"-e", "GW_ENDPOINT=10.231.0.10:51820", "-e", "GW_SVC_IP=10.231.0.10", "-e", "ENGINE_IP=10.231.0.20",
+				"-e", "GW_ENDPOINT=" + gwIP + ":51820", "-e", "GW_SVC_IP=" + gwIP, "-e", "ENGINE_IP=" + engineIP,
 				"-e", "APO_WG_WATCH_EVERY=1"}
 			args = append(append(args, c.env...), "--entrypoint", "apo-wg-up", img)
 			run(args...)

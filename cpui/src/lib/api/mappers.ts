@@ -1473,7 +1473,8 @@ export function toRuntimeOffer(w: Wire.RuntimeOffer): RuntimeOffer {
 				nestedKubernetes: r.capabilities.nested_kubernetes,
 				userNamespaces: r.capabilities.user_namespaces,
 				contained: r.capabilities.contained
-			}
+			},
+			noSleep: r.noSleep || undefined
 		})),
 		error: w.error || undefined,
 		noSleep: w.noSleep || undefined
