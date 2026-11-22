@@ -155,7 +155,7 @@
 			type="button"
 			class="btn-primary btn-sm"
 			onclick={() => ask(draft)}
-			disabled={!convo.session || !draft.trim()}>{t('assistant.send')}</button
+			disabled={!convo.session || !draft.trim() || convo.switching}>{t('assistant.send')}</button
 		>
 	{/if}
 {/snippet}
@@ -208,7 +208,12 @@
 				{#if convo.page?.presets.length}
 					<div class="presets col">
 						{#each convo.page.presets as p (p)}
-							<button type="button" class="preset btn-sm" onclick={() => ask(p)}>{p}</button>
+							<button
+								type="button"
+								class="preset btn-sm"
+								onclick={() => ask(p)}
+								disabled={convo.switching}>{p}</button
+							>
 						{/each}
 					</div>
 				{/if}

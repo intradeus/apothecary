@@ -72,14 +72,29 @@ export class Conversation {
 	/** The message whose request is being decided. */
 	deciding = $state<number | null>(null);
 	/** A session is being opened (the first, a fresh one, another
-	 *  workshop's): nothing is asked or decided until it is the one shown. */
-	switching = $state(false);
+	 *  workshop's). */
+	#opening = $state(false);
+	/** The session held is being read again after a gap. */
+	#rereading = $state(false);
+	/** A session is being opened or read again: nothing is asked or
+	 *  decided until the one shown is what the record says. */
+	get switching(): boolean {
+		return this.#opening || this.#rereading;
+	}
 
 	#pageState: () => unknown;
 	#fill: FillHook | undefined;
 	#stop: (() => void) | null = null;
 	/** Bumped by every load: an older one's answer is dropped. */
 	#loads = 0;
+	/** Bumped by every reread and load: an older reread's answer is dropped. */
+	#rereads = 0;
+	/** The session's frames that came while it was read again: played over
+	 *  the record once it is in, so an older record never undoes them. */
+	#held: AssistantFrame[] = [];
+	/** The session's calls on their way (a question, a decision, a model):
+	 *  a reread waits them out, so the record it reads already holds them. */
+	#inFlight = new Set<Promise<unknown>>();
 	/** The last message held when the page's question was asked: an answer
 	 *  to it comes after. Moved past a fill recovered from the record. */
 	#after = 0;
@@ -112,9 +127,12 @@ export class Conversation {
 	 *  question, so none goes to a session about to be replaced. */
 	async load(opts: { fresh?: boolean } = {}): Promise<void> {
 		const n = ++this.#loads;
+		// A reread of the session shown so far is not this load's.
+		this.#rereads++;
+		this.#release();
 		this.loadError = '';
 		this.error = '';
-		this.switching = true;
+		this.#opening = true;
 		try {
 			const status = await api.assistant.status(this.workshop || undefined);
 			if (n !== this.#loads) return;
@@ -132,7 +150,7 @@ export class Conversation {
 		} catch (e) {
 			if (n === this.#loads) this.loadError = errorMessage(e);
 		} finally {
-			if (n === this.#loads) this.switching = false;
+			if (n === this.#loads) this.#opening = false;
 		}
 	}
 
@@ -168,6 +186,10 @@ export class Conversation {
 			return;
 		}
 		if (!this.session || f.sessionId !== this.session.id) return;
+		if (this.#rereading) {
+			this.#held.push(f);
+			return;
+		}
 		switch (f.kind) {
 			case 'message':
 				if (!this.messages.some((m) => m.seq === f.message.seq))
@@ -208,14 +230,23 @@ export class Conversation {
 	}
 
 	/** The session held, read again: never another about its subject (a
-	 *  fresh one, or one another tab opened since). */
+	 *  fresh one, or one another tab opened since). Until it is in, nothing
+	 *  is asked or decided and the session's frames are held, then played
+	 *  over it: a record read before them never replaces what they said. */
 	async reopen(): Promise<void> {
 		const s = this.session;
 		if (!s) return;
+		const n = ++this.#rereads;
+		// What came before this gap is in the record read after it; what an
+		// earlier gap's reread held may have lost its sequel.
+		this.#held = [];
+		this.#rereading = true;
 		try {
+			while (this.#inFlight.size) await Promise.allSettled(this.#inFlight);
+			if (n !== this.#rereads) return;
 			const open = await api.assistant.session(s.id);
-			// Another session came in meanwhile: this answer is not its.
-			if (this.session?.id !== s.id) return;
+			// A later gap's reread, or another session: this answer is not its.
+			if (n !== this.#rereads) return;
 			this.session = open.session;
 			this.messages = open.messages;
 			this.busy = open.busy;
@@ -223,8 +254,10 @@ export class Conversation {
 			this.#recover();
 			this.#idle();
 		} catch (e) {
-			if (this.session?.id === s.id) this.error = errorMessage(e);
+			if (n !== this.#rereads) return;
+			this.error = errorMessage(e);
 		}
+		this.#release();
 	}
 
 	/** Ask, with the page as it stands. false: nothing was asked. */
@@ -238,7 +271,7 @@ export class Conversation {
 		this.#fill?.ask();
 		this.busy = true;
 		try {
-			const m = await api.assistant.send(id, q, this.#pageState());
+			const m = await this.#track(api.assistant.send(id, q, this.#pageState()));
 			if (this.session?.id === id && !this.messages.some((x) => x.seq === m.seq))
 				this.messages = [...this.messages, m];
 			return true;
@@ -272,9 +305,9 @@ export class Conversation {
 		this.deciding = m.seq;
 		this.error = '';
 		try {
-			const out = confirm
-				? await api.assistant.confirm(id, m.seq)
-				: await api.assistant.decline(id, m.seq);
+			const out = await this.#track(
+				confirm ? api.assistant.confirm(id, m.seq) : api.assistant.decline(id, m.seq)
+			);
 			if (this.session?.id === id) this.#replace(out);
 		} catch (e) {
 			if (this.session?.id === id) this.error = errorMessage(e);
@@ -287,7 +320,7 @@ export class Conversation {
 		if (!this.session || this.switching) return;
 		const id = this.session.id;
 		try {
-			const s = await api.assistant.setModel(id, model);
+			const s = await this.#track(api.assistant.setModel(id, model));
 			if (this.session?.id === id) this.session = s;
 		} catch (e) {
 			if (this.session?.id === id) this.error = errorMessage(e);
@@ -332,6 +365,23 @@ export class Conversation {
 		this.tool = '';
 		this.note = '';
 		this.#fill?.answered();
+	}
+
+	/** No longer reading the session again: what it held is played over
+	 *  what is shown. */
+	#release() {
+		const held = this.#held;
+		this.#held = [];
+		this.#rereading = false;
+		for (const f of held) this.onFrame(f);
+	}
+
+	/** p, waited out by a reread while it is on its way. */
+	#track<T>(p: Promise<T>): Promise<T> {
+		this.#inFlight.add(p);
+		const done = () => void this.#inFlight.delete(p);
+		p.then(done, done);
+		return p;
 	}
 
 	#reset() {

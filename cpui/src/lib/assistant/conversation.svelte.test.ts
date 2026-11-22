@@ -85,6 +85,9 @@ async function loaded(
 const f = (frame: Record<string, unknown>) =>
 	({ seq: 1, sessionId: 's1', ...frame }) as AssistantFrame;
 
+type SessionView = { session: AssistantSession; messages: AssistantMessage[]; busy: boolean };
+const gap = { kind: 'gap' } as AssistantFrame;
+
 // typing's clock is module-wide: each test starts well past the last warm.
 let now = Date.UTC(2026, 0, 1);
 
@@ -320,6 +323,102 @@ describe('Conversation frames', () => {
 		vi.mocked(api.assistant.session).mockRejectedValueOnce(new Error('gone'));
 		await c.reopen();
 		expect(c.error).toBe('gone');
+	});
+
+	it('asks nothing while it reads the record again, and an older record ends no later turn', async () => {
+		const fill = hook();
+		const c = await loaded({ kind: 'ticket', subject: 'T-1', fill });
+		const reread = Promise.withResolvers<SessionView>();
+		vi.mocked(api.assistant.session).mockReturnValueOnce(reread.promise);
+		c.onFrame(gap);
+		expect(c.switching).toBe(true);
+		await vi.waitFor(() => expect(api.assistant.session).toHaveBeenCalledTimes(1));
+		expect(await c.ask('go')).toBe(false);
+		expect(api.assistant.send).not.toHaveBeenCalled();
+		expect([c.busy, fill.asking]).toEqual([false, false]);
+		reread.resolve({ session, messages: [], busy: false });
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'go'));
+		expect(await c.ask('go')).toBe(true);
+		c.onFrame(f({ kind: 'fill', fill: { title: 'new' } }));
+		expect(fill.offered).toEqual([{ title: 'new' }]);
+		c.onFrame(f({ kind: 'state', busy: false }));
+		expect([c.busy, fill.asking]).toEqual([false, false]);
+	});
+
+	it('reads the record again only once a question on its way is in', async () => {
+		const fill = hook();
+		const c = await loaded({ kind: 'ticket', subject: 'T-1', fill });
+		const sent = Promise.withResolvers<AssistantMessage>();
+		vi.mocked(api.assistant.send).mockReturnValueOnce(sent.promise);
+		const asked = c.ask('go');
+		vi.mocked(api.assistant.session).mockResolvedValue({
+			session,
+			messages: [msg(1, 'person', 'go')],
+			busy: true
+		});
+		c.onFrame(gap);
+		// A record read before the question is in could predate it, and end
+		// its turn: the reread waits for it.
+		expect(api.assistant.session).not.toHaveBeenCalled();
+		sent.resolve(msg(1, 'person', 'go'));
+		expect(await asked).toBe(true);
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		expect(api.assistant.session).toHaveBeenCalledTimes(1);
+		expect([c.busy, fill.asking]).toEqual([true, true]);
+		c.onFrame(f({ kind: 'fill', fill: { title: 'new' } }));
+		expect(fill.offered).toEqual([{ title: 'new' }]);
+	});
+
+	it('plays the frames that came while it read the record over an older record', async () => {
+		const fill = hook();
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'go'));
+		const c = await loaded({ kind: 'ticket', subject: 'T-1', fill });
+		await c.ask('go');
+		const reread = Promise.withResolvers<SessionView>();
+		vi.mocked(api.assistant.session).mockReturnValueOnce(reread.promise);
+		c.onFrame(gap);
+		await vi.waitFor(() => expect(api.assistant.session).toHaveBeenCalledTimes(1));
+		const answer = msg(2, 'assistant', 'Done.', { fill: { title: 'new' } });
+		c.onFrame(f({ kind: 'delta', text: 'Do' }));
+		c.onFrame(f({ kind: 'fill', fill: { title: 'new' } }));
+		c.onFrame(f({ kind: 'message', message: answer }));
+		c.onFrame(f({ kind: 'state', busy: false }));
+		// Held until the record is in.
+		expect([c.messages, fill.offered, c.busy]).toEqual([[msg(1, 'person', 'go')], [], true]);
+		// The record was read before the answer: still answering, no answer.
+		reread.resolve({ session, messages: [msg(1, 'person', 'go')], busy: true });
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		expect(c.messages).toEqual([msg(1, 'person', 'go'), answer]);
+		expect(fill.offered).toEqual([{ title: 'new' }]);
+		expect([c.busy, c.live, fill.asking]).toEqual([false, '', false]);
+	});
+
+	it('answers only the latest gap’s reread, and plays what it held after a failed one', async () => {
+		const c = await loaded();
+		const first = Promise.withResolvers<SessionView>();
+		const latest = msg(2, 'assistant', 'latest');
+		vi.mocked(api.assistant.session)
+			.mockReturnValueOnce(first.promise)
+			.mockResolvedValueOnce({ session, messages: [latest], busy: false });
+		c.onFrame(gap);
+		await vi.waitFor(() => expect(api.assistant.session).toHaveBeenCalledTimes(1));
+		// Its sequel may be lost in the next gap: the next record says.
+		c.onFrame(f({ kind: 'state', busy: true }));
+		c.onFrame(gap);
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		first.resolve({ session, messages: [msg(1, 'person', 'older')], busy: true });
+		// The dropped reread's own callback ran before this await's.
+		await first.promise;
+		expect([c.messages, c.busy, c.switching]).toEqual([[latest], false, false]);
+
+		const failed = Promise.withResolvers<SessionView>();
+		vi.mocked(api.assistant.session).mockReturnValueOnce(failed.promise);
+		c.onFrame(gap);
+		c.onFrame(f({ kind: 'state', busy: true }));
+		failed.reject(new Error('gone'));
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		expect([c.error, c.busy]).toEqual(['gone', true]);
 	});
 });
 

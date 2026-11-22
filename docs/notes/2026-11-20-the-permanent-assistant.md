@@ -56,9 +56,13 @@ each doing one job.
   a page holds. After a stream gap the conversation reads its own session
   again by id (`GET /api/assistant/sessions/{id}`, `Service.Reopen`), not
   through `open`. While a session opens (the first, *New conversation*,
-  another workshop's) the conversation is `switching`: it sends no
-  question, decision or model, and the panel disables them; an answer the
-  old session gives after the switch is dropped. *New conversation* waits
+  another workshop's) or is read again, the conversation is `switching`: it
+  sends no question, decision or model, and the panels disable them; an
+  answer the old session gives after the switch is dropped. A reread first
+  waits out the session's calls on their way (a question sent just before
+  the gap), then holds the session's frames that arrive while it reads and
+  plays them over the record, so a record read before them never ends a
+  newer turn or drops its message or fill. *New conversation* waits
   while an answer is written (Stop ends it first). A fill modal's
   conversation is its page's kind, subject and workshop: another page in
   the same component (Back to another skill) ends it, cancelling its answer,
@@ -114,7 +118,9 @@ each doing one job.
   `TestAssistantWarm`, `TestAssistantChoiceSkillsets`,
   `TestAssistantSessionsArePersonal` (fresh, by id, the subject route gone).
 - CPUI: `conversation.svelte.test.ts` (a gap rereads the session held, not
-  a newer one; switching sessions), `GlobalAssistant.test.ts` (no question
+  a newer one, atomically: no question during it, a question on its way
+  first, frames played over an older record; switching sessions),
+  `GlobalAssistant.test.ts` (no question
   while *New conversation* opens), `AssistantPanel.test.ts` (an older
   conversation after a harness switch), `FillAssistant.test.ts` (another
   page under the open modal), `FillButton.test.ts`, `Brewing.test.ts`, the
