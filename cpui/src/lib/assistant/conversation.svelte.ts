@@ -80,6 +80,11 @@ export class Conversation {
 	#stop: (() => void) | null = null;
 	/** Bumped by every load: an older one's answer is dropped. */
 	#loads = 0;
+	/** The last message held when the page's question was asked: an answer
+	 *  to it comes after. Moved past a fill recovered from the record. */
+	#after = 0;
+	/** The last fill offered for the page's question, as JSON. */
+	#offered: string | null = null;
 
 	constructor(opts: {
 		kind: AssistantKind;
@@ -194,7 +199,10 @@ export class Conversation {
 			case 'fill':
 				// Only an answer to this page's question fills it: not one
 				// replayed, nor one asked from another tab.
-				if (this.#fill?.asking) this.#fill.offer(f.fill);
+				if (this.#fill?.asking) {
+					this.#offered = JSON.stringify(f.fill);
+					this.#fill.offer(f.fill);
+				}
 				break;
 		}
 	}
@@ -212,6 +220,7 @@ export class Conversation {
 			this.messages = open.messages;
 			this.busy = open.busy;
 			this.liveRequest = null;
+			this.#recover();
 			this.#idle();
 		} catch (e) {
 			if (this.session?.id === s.id) this.error = errorMessage(e);
@@ -224,6 +233,8 @@ export class Conversation {
 		if (!q || !this.session || this.busy || this.switching) return false;
 		const id = this.session.id;
 		this.error = '';
+		this.#after = this.messages.reduce((n, m) => Math.max(n, m.seq), 0);
+		this.#offered = null;
 		this.#fill?.ask();
 		this.busy = true;
 		try {
@@ -295,6 +306,23 @@ export class Conversation {
 		} finally {
 			this.fetching = false;
 		}
+	}
+
+	/** The engine sends a fill's frame before it records the answer holding
+	 *  it, so a gap can lose the frame of an answer the record already has:
+	 *  the page's question still waiting takes the answer's fill from the
+	 *  record, once — not when a frame already brought it, nor again. */
+	#recover() {
+		if (!this.#fill?.asking) return;
+		const m = this.messages.findLast(
+			(x) => x.role === 'assistant' && x.seq > this.#after && x.fill !== undefined
+		);
+		if (!m) return;
+		this.#after = m.seq;
+		const fill = JSON.stringify(m.fill);
+		if (fill === this.#offered) return;
+		this.#offered = fill;
+		this.#fill.offer(m.fill);
 	}
 
 	/** Not answering: nothing is being written, no fill is this page's. */

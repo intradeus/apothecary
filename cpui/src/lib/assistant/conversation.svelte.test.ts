@@ -457,6 +457,53 @@ describe('Conversation questions', () => {
 		expect(fill.offered).toHaveLength(1);
 	});
 
+	it('takes the fill of an answer a gap lost from the record, once', async () => {
+		const before = msg(2, 'assistant', '', { fill: { title: 'an earlier answer' } });
+		vi.mocked(api.assistant.open).mockResolvedValue({ session, messages: [before], busy: false });
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(3, 'person', 'go'));
+		const fill = hook();
+		const c = await loaded({ kind: 'ticket', subject: 'T-1', fill });
+		const reread = (messages: AssistantMessage[], busy: boolean) =>
+			vi.mocked(api.assistant.session).mockResolvedValueOnce({ session, messages, busy });
+
+		// Still answering: nothing in the record is this question's yet,
+		// not the earlier answer's fill.
+		await c.ask('go');
+		reread([before, msg(3, 'person', 'go')], true);
+		await c.reopen();
+		expect(fill.offered).toEqual([]);
+		expect(fill.asking).toBe(true);
+
+		// Its fill frame lost, the answer is in the record: the page takes it,
+		// then its question has ended.
+		const answer = msg(4, 'assistant', 'Done.', { fill: { title: 'new' } });
+		reread([before, msg(3, 'person', 'go'), answer], false);
+		await c.reopen();
+		expect(fill.offered).toEqual([{ title: 'new' }]);
+		expect(fill.asking).toBe(false);
+		// A frame retained from before the gap, or another reread: not again.
+		c.onFrame(f({ kind: 'fill', fill: { title: 'new' } }));
+		reread([before, msg(3, 'person', 'go'), answer], false);
+		await c.reopen();
+		expect(fill.offered).toHaveLength(1);
+
+		// A fill its frame already brought is not offered again from the
+		// record; a later one of the same answer, whose frame was lost, is.
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(5, 'person', 'again'));
+		await c.ask('again');
+		c.onFrame(f({ kind: 'fill', fill: { title: 'first' } }));
+		reread([msg(6, 'assistant', '', { fill: { title: 'first' } })], false);
+		await c.reopen();
+		expect(fill.offered).toEqual([{ title: 'new' }, { title: 'first' }]);
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(7, 'person', 'more'));
+		await c.ask('more');
+		c.onFrame(f({ kind: 'fill', fill: { title: 'draft' } }));
+		reread([msg(8, 'assistant', '', { fill: { title: 'final' } })], false);
+		await c.reopen();
+		expect(fill.offered.at(-1)).toEqual({ title: 'final' });
+		expect(fill.offered).toHaveLength(4);
+	});
+
 	it('stops an answer, and says when it could not', async () => {
 		const c = new Conversation({ kind: 'ticket', subject: 'T-1' });
 		await c.cancel();

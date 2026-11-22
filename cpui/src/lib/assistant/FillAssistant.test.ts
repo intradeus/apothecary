@@ -19,6 +19,7 @@ vi.mock('$lib/api', () => ({
 		assistant: {
 			status: vi.fn(),
 			open: vi.fn(),
+			session: vi.fn(),
 			warm: vi.fn(),
 			send: vi.fn(),
 			cancel: vi.fn(),
@@ -210,6 +211,32 @@ describe('FillAssistant', () => {
 		await gone();
 		expect(p.form().title).toBe('Fix the login page');
 		expect(p.guard.changed).toEqual(['title']);
+	});
+
+	it('fills the page from the record when a gap lost the fill, once, with Undo', async () => {
+		const p = setup();
+		await screen.findByText('Turn my notes into a ticket.');
+		await userEvent.type(textbox(), 'the login page fails{Enter}');
+		frame({ kind: 'state', busy: true });
+		// The engine restarted: the answer is recorded, its fill frame gone.
+		vi.mocked(api.assistant.session).mockResolvedValue({
+			session: session(),
+			messages: [
+				msg(1, 'person', 'the login page fails'),
+				msg(2, 'assistant', 'Done.', { fill: { title: 'Fix the login page' } })
+			],
+			busy: false
+		});
+		push({ kind: 'gap' } as AssistantFrame);
+		await gone();
+		expect(api.assistant.session).toHaveBeenCalledWith('s1');
+		expect(p.form().title).toBe('Fix the login page');
+		expect(p.guard.changed).toEqual(['title']);
+		// A frame of the same answer arriving late fills nothing again.
+		p.guard.revert();
+		frame({ kind: 'fill', page: 'ticket', subject: 'draft-1', fill: { title: 'Fix it again' } });
+		expect(p.form()).toEqual({ title: '', goal: 'notes', changeType: 'feat', typeId: '' });
+		expect(p.guard.changed).toEqual([]);
 	});
 
 	it('shows an answer that filled nothing, and keeps the input for a reply', async () => {
