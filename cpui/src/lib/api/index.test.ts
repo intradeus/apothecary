@@ -2375,11 +2375,15 @@ describe('the assistant stream', () => {
 
 	it('maps every frame, and resumes after the last one seen', () => {
 		const got: unknown[] = [];
-		const stop = assistant.stream((f) => got.push(f));
+		const ready = vi.fn();
+		const stop = assistant.stream((f) => got.push(f), ready);
 		const es = FakeES.last;
 		// From now: nothing kept is replayed to a panel just opened.
 		expect(es.url).toBe('/api/assistant/stream');
+		// Ready once the engine says where the stream starts: it follows.
+		expect(ready).not.toHaveBeenCalled();
 		es.send('head', { seq: 2 });
+		expect(ready).toHaveBeenCalledTimes(1);
 		es.send('delta', { seq: 3, session: 's1', text: 'hel', tool: 'Read' });
 		es.send('state', { seq: 4, session: 's1', busy: true });
 		es.send('status', { seq: 5, session: 's1', text: 'starting' });
@@ -2426,6 +2430,7 @@ describe('the assistant stream', () => {
 		// The engine restarted: its head is behind where the stream was, so
 		// the next reconnect resumes from the new head.
 		FakeES.last.send('head', { seq: 1 });
+		expect(ready).toHaveBeenCalledTimes(2);
 		FakeES.last.readyState = FakeES.CLOSED;
 		FakeES.last.onerror?.();
 		vi.advanceTimersByTime(3000);

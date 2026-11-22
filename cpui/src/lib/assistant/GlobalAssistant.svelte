@@ -27,8 +27,9 @@
 	const off = $derived(!!convo.status && !convo.status.enabled);
 
 	onMount(() => {
-		void convo.load();
+		// The stream first: the session opens once it follows.
 		convo.connect();
+		void convo.load();
 	});
 	onDestroy(() => convo.disconnect());
 

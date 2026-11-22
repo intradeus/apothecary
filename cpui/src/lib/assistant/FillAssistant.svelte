@@ -110,8 +110,8 @@
 			landed = false;
 			return { c, hook };
 		});
-		void c.load({ fresh: true });
 		c.connect();
+		void c.load({ fresh: true });
 		return () => {
 			if (c.busy) void c.cancel();
 			c.disconnect();

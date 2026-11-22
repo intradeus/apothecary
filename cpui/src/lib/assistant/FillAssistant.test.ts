@@ -108,8 +108,9 @@ beforeEach(() => {
 	vi.mocked(api.assistant.warm).mockResolvedValue(undefined as never);
 	vi.mocked(api.assistant.cancel).mockResolvedValue(undefined as never);
 	vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'q'));
-	vi.mocked(api.assistant.stream).mockImplementation((fn) => {
+	vi.mocked(api.assistant.stream).mockImplementation((fn, ready) => {
 		push = fn;
+		ready?.();
 		return () => {};
 	});
 });

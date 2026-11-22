@@ -68,7 +68,10 @@ beforeEach(() => {
 		costUsd: 0,
 		at: 'T'
 	}));
-	vi.mocked(api.assistant.stream).mockReturnValue(() => {});
+	vi.mocked(api.assistant.stream).mockImplementation((_fn, ready) => {
+		ready?.();
+		return () => {};
+	});
 });
 
 describe('the skill page’s fill modal', () => {

@@ -570,8 +570,11 @@ export const assistant = {
 		),
 	/** Follow one's assistant from now: every session's answers as they
 	 *  are written, messages, state, fills, fetches. A reconnect resumes
-	 *  from the last frame seen; a gap frame says some were lost (reload). */
-	stream(onFrame: (f: AssistantFrame) => void): () => void {
+	 *  from the last frame seen; a gap frame says some were lost (reload).
+	 *  onReady fires each time it connects, once the engine follows it:
+	 *  every frame from then on reaches onFrame, so a record read after it
+	 *  misses none. */
+	stream(onFrame: (f: AssistantFrame) => void, onReady?: () => void): () => void {
 		// -1: not connected yet, so from now (nothing kept is replayed).
 		let after = -1;
 		let es: EventSource;
@@ -639,6 +642,7 @@ export const assistant = {
 			on('head', (w) => {
 				const head = typeof w.seq === 'number' ? w.seq : 0;
 				if (after < 0 || after > head) after = head;
+				onReady?.();
 			});
 			on('request', (w, seq) => {
 				if (!w.message) return;

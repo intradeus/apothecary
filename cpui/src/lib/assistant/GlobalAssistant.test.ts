@@ -78,8 +78,9 @@ beforeEach(() => {
 		messages: [message(1, 'Hello there.')],
 		busy: false
 	});
-	vi.mocked(api.assistant.stream).mockImplementation((fn) => {
+	vi.mocked(api.assistant.stream).mockImplementation((fn, ready) => {
 		push = fn;
+		ready?.();
 		return stop;
 	});
 });
@@ -211,6 +212,37 @@ describe('GlobalAssistant', () => {
 			expect(screen.getByRole('button', { name: 'New conversation' })).toBeDisabled()
 		);
 		push({ kind: 'state', seq: 2, sessionId: 's1', busy: false });
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'New conversation' })).toBeEnabled()
+		);
+	});
+
+	it('opens once the stream follows, losing nothing of an answer ending meanwhile', async () => {
+		let ready = () => {};
+		vi.mocked(api.assistant.stream).mockImplementation((fn, r) => {
+			push = fn;
+			ready = r ?? ready;
+			return stop;
+		});
+		const opening = Promise.withResolvers<{
+			session: AssistantSession;
+			messages: AssistantMessage[];
+			busy: boolean;
+		}>();
+		vi.mocked(api.assistant.open).mockReturnValueOnce(opening.promise);
+		render(GlobalAssistant);
+		// The status is in, and the load past it, waiting on the stream.
+		await vi.mocked(api.assistant.status).mock.results[0].value;
+		// Not before: a frame between the record and the stream would be lost.
+		expect(api.assistant.open).not.toHaveBeenCalled();
+		ready();
+		await waitFor(() => expect(api.assistant.open).toHaveBeenCalled());
+		// The record says answering; the answer ends before the drawer holds it.
+		push({ kind: 'message', seq: 2, sessionId: 's1', message: message(2, 'All done.') });
+		push({ kind: 'state', seq: 3, sessionId: 's1', busy: false });
+		opening.resolve({ session: session(), messages: [message(1, 'Hello there.')], busy: true });
+		await userEvent.click(button());
+		expect(await screen.findByText('All done.')).toBeInTheDocument();
 		await waitFor(() =>
 			expect(screen.getByRole('button', { name: 'New conversation' })).toBeEnabled()
 		);

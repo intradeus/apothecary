@@ -147,6 +147,84 @@ describe('Conversation.load', () => {
 		const c = await loaded();
 		expect(c.busy).toBe(true);
 	});
+
+	it('opens the session only once the stream follows, or is let go', async () => {
+		let ready = () => {};
+		vi.mocked(api.assistant.stream).mockImplementation((_fn, r) => {
+			ready = r ?? ready;
+			return () => {};
+		});
+		const c = new Conversation({ kind: 'ticket', subject: 'T-1', workshop: 'w1' });
+		c.connect();
+		const p = c.load();
+		// The status is in, and the load past it, waiting on the stream.
+		await vi.mocked(api.assistant.status).mock.results[0].value;
+		expect(api.assistant.open).not.toHaveBeenCalled();
+		ready();
+		await p;
+		expect(api.assistant.open).toHaveBeenCalledTimes(1);
+		// Let go before it follows: the load opens without it.
+		c.disconnect();
+		c.connect();
+		const q = c.load();
+		await vi.mocked(api.assistant.status).mock.results[1].value;
+		expect(api.assistant.open).toHaveBeenCalledTimes(1);
+		c.disconnect();
+		await q;
+		expect(api.assistant.open).toHaveBeenCalledTimes(2);
+	});
+
+	it('loses nothing of an answer that ends while its session opens', async () => {
+		let push: (f: AssistantFrame) => void = () => {};
+		vi.mocked(api.assistant.stream).mockImplementation((fn, ready) => {
+			push = fn;
+			ready?.();
+			return () => {};
+		});
+		const opening = Promise.withResolvers<SessionView>();
+		vi.mocked(api.assistant.open).mockReturnValueOnce(opening.promise);
+		const c = new Conversation({ kind: 'ticket', subject: 'T-1', workshop: 'w1' });
+		c.connect();
+		const p = c.load();
+		await vi.waitFor(() => expect(api.assistant.open).toHaveBeenCalled());
+		// The record was read while the answer was written; it ends before
+		// the session is held.
+		push(f({ kind: 'delta', text: 'Almost' }));
+		push(f({ kind: 'message', seq: 2, message: msg(2, 'assistant', 'Done.') }));
+		push(f({ kind: 'message', sessionId: 's9', message: msg(3, 'assistant', 'theirs') }));
+		push(f({ kind: 'state', seq: 3, busy: false }));
+		opening.resolve({ session, messages: [msg(1, 'person', 'go')], busy: true });
+		await p;
+		expect(c.messages.map((m) => m.text)).toEqual(['go', 'Done.']);
+		expect([c.busy, c.live, c.switching]).toEqual([false, '', false]);
+	});
+
+	it('reads the session again when frames were lost while it opened', async () => {
+		let push: (f: AssistantFrame) => void = () => {};
+		vi.mocked(api.assistant.stream).mockImplementation((fn, ready) => {
+			push = fn;
+			ready?.();
+			return () => {};
+		});
+		const opening = Promise.withResolvers<SessionView>();
+		vi.mocked(api.assistant.open).mockReturnValueOnce(opening.promise);
+		vi.mocked(api.assistant.session).mockResolvedValue({
+			session,
+			messages: [msg(1, 'person', 'go'), msg(2, 'assistant', 'from the record')],
+			busy: false
+		});
+		const c = new Conversation({ kind: 'ticket', subject: 'T-1', workshop: 'w1' });
+		c.connect();
+		const p = c.load();
+		await vi.waitFor(() => expect(api.assistant.open).toHaveBeenCalled());
+		push(gap);
+		opening.resolve({ session, messages: [msg(1, 'person', 'go')], busy: true });
+		await p;
+		await vi.waitFor(() => expect(c.switching).toBe(false));
+		expect(api.assistant.session).toHaveBeenCalledWith('s1');
+		expect(c.messages.map((m) => m.text)).toEqual(['go', 'from the record']);
+		expect(c.busy).toBe(false);
+	});
 });
 
 describe('Conversation.retarget', () => {

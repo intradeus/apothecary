@@ -85,13 +85,22 @@ export class Conversation {
 	#pageState: () => unknown;
 	#fill: FillHook | undefined;
 	#stop: (() => void) | null = null;
+	/** Settles once the stream follows (or is let go): a session is opened
+	 *  only after, so no frame falls between the record and the stream.
+	 *  null: not following, nothing to wait for. */
+	#following: Promise<void> | null = null;
+	#followed: (() => void) | null = null;
 	/** Bumped by every load: an older one's answer is dropped. */
 	#loads = 0;
 	/** Bumped by every reread and load: an older reread's answer is dropped. */
 	#rereads = 0;
-	/** The session's frames that came while it was read again: played over
-	 *  the record once it is in, so an older record never undoes them. */
+	/** The frames that came while a session was opened or read again:
+	 *  played over the record once it is in (those of the session it is),
+	 *  so a record read before them never undoes them. */
 	#held: AssistantFrame[] = [];
+	/** Frames were lost while a session was opened: the record it read
+	 *  may be older than them, so it is read again once in. */
+	#lost = false;
 	/** The session's calls on their way (a question, a decision, a model):
 	 *  a reread waits them out, so the record it reads already holds them. */
 	#inFlight = new Set<Promise<unknown>>();
@@ -122,14 +131,18 @@ export class Conversation {
 		return this.status?.pages[this.kind];
 	}
 
-	/** The status, then the session (a new one when fresh). Until it is in,
-	 *  the conversation is switching: the session shown so far takes no
-	 *  question, so none goes to a session about to be replaced. */
+	/** The status, then the session (a new one when fresh), opened once the
+	 *  stream follows. Until it is in, the conversation is switching: the
+	 *  session shown so far takes no question, so none goes to a session
+	 *  about to be replaced, and the frames that come are held, then played
+	 *  over the record. */
 	async load(opts: { fresh?: boolean } = {}): Promise<void> {
 		const n = ++this.#loads;
-		// A reread of the session shown so far is not this load's.
+		// A reread of the session shown so far is not this load's; what it
+		// held is played over what this one opens.
 		this.#rereads++;
-		this.#release();
+		this.#rereading = false;
+		this.#lost = false;
 		this.loadError = '';
 		this.error = '';
 		this.#opening = true;
@@ -138,6 +151,8 @@ export class Conversation {
 			if (n !== this.#loads) return;
 			this.status = status;
 			if (!status.enabled) return;
+			await this.#following;
+			if (n !== this.#loads) return;
 			const open = await api.assistant.open(this.kind, this.subject, this.workshop || undefined, {
 				fresh: opts.fresh
 			});
@@ -150,7 +165,7 @@ export class Conversation {
 		} catch (e) {
 			if (n === this.#loads) this.loadError = errorMessage(e);
 		} finally {
-			if (n === this.#loads) this.#opening = false;
+			if (n === this.#loads) this.#opened();
 		}
 	}
 
@@ -164,19 +179,30 @@ export class Conversation {
 
 	/** Follow the person's stream; stop with disconnect. */
 	connect(): void {
-		this.#stop ??= api.assistant.stream((f) => this.onFrame(f));
+		if (this.#stop) return;
+		const { promise, resolve } = Promise.withResolvers<void>();
+		this.#following = promise;
+		this.#followed = resolve;
+		this.#stop = api.assistant.stream(
+			(f) => this.onFrame(f),
+			() => resolve()
+		);
 	}
 
 	disconnect(): void {
 		this.#stop?.();
 		this.#stop = null;
+		// A load waiting for the stream opens without it.
+		this.#followed?.();
+		this.#following = null;
+		this.#followed = null;
 	}
 
 	onFrame(f: AssistantFrame): void {
 		if (f.kind === 'gap') {
 			// Frames were lost (or the engine restarted): the record says
 			// where the session is.
-			if (this.session) void this.reopen();
+			void this.reopen();
 			return;
 		}
 		if (f.kind === 'repos') {
@@ -185,11 +211,12 @@ export class Conversation {
 			if (f.repos) this.status = { ...this.status, repos: f.repos };
 			return;
 		}
-		if (!this.session || f.sessionId !== this.session.id) return;
-		if (this.#rereading) {
+		// Which session they are for is known once it is in.
+		if (this.switching) {
 			this.#held.push(f);
 			return;
 		}
+		if (!this.session || f.sessionId !== this.session.id) return;
 		switch (f.kind) {
 			case 'message':
 				if (!this.messages.some((m) => m.seq === f.message.seq))
@@ -234,6 +261,11 @@ export class Conversation {
 	 *  is asked or decided and the session's frames are held, then played
 	 *  over it: a record read before them never replaces what they said. */
 	async reopen(): Promise<void> {
+		if (this.#opening) {
+			// The session being opened is read again once it is in.
+			this.#lost = true;
+			return;
+		}
 		const s = this.session;
 		if (!s) return;
 		const n = ++this.#rereads;
@@ -365,6 +397,17 @@ export class Conversation {
 		this.tool = '';
 		this.note = '';
 		this.#fill?.answered();
+	}
+
+	/** The load is over: what was held is played over the session it
+	 *  opened, or, when frames were lost meanwhile, that session is read
+	 *  again (its reread holds what comes until then). */
+	#opened() {
+		this.#opening = false;
+		const lost = this.#lost;
+		this.#lost = false;
+		if (lost && this.session) void this.reopen();
+		else this.#release();
 	}
 
 	/** No longer reading the session again: what it held is played over
