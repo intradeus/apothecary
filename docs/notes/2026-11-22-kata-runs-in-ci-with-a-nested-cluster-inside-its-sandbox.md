@@ -53,8 +53,11 @@ on a real box was a page of manual steps.
   - GitHub's Linux runners are VMs that expose `/dev/kvm`, so the Kata VMs
     run nested. Without it, the job fails with an error naming it; it never
     skips.
-  - The test sizes its sandbox at 4 CPUs and 8 GiB, plus the RuntimeClass
-    overhead. That fits a 16 GB runner, not a 7 GB one.
+  - The test sizes its sandbox at 4 CPUs and 8 GiB, and the second run of
+    the cross-run check at 1 CPU and 2 GiB: it only listens and answers.
+    Each VM adds the RuntimeClass overhead. Two 8 GiB VMs did not fit the
+    runner's node ("Insufficient memory" on the first CI run). Both together
+    fit a 16 GB runner, not a 7 GB one.
 - **EKS** (`docs/kubernetes.md`): Kata needs KVM on the sandbox nodes:
   `*.metal`, or C8i, M8i or R8i with nested virtualization on. amd64 only.
   Not tried.
@@ -72,5 +75,9 @@ on a real box was a page of manual steps.
 - `install.sh` and the rig: shellcheck (`task repo:lint`). The smoke pods
   were rendered and read. Running the installer needs a fresh KVM box.
 
-Not run here: the Kata suite itself. The first CI run is its check, the
-runner's `/dev/kvm` included.
+The first CI run answered the open questions. The runner exposes
+`/dev/kvm`. The Kata sandbox provisioned in 59 s, and exec, files, the tools
+bundle, an exposed port, the WebSocket tunnels and the resource sample all
+passed. `TestLiveK8sRuntimeProbe` passed. The cross-run check then failed
+on memory, as above, so the rest of the lifecycle (egress, reattach, the
+nested cluster) is still to come from the next run.

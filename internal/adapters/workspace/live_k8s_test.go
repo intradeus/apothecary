@@ -603,6 +603,12 @@ func liveNoCrossRun(ctx context.Context, t *testing.T, a *Adapter, h *k8sHost, n
 	t.Helper()
 	peer := name + "-b"
 	spec.RunID, spec.Name = "01LIVE"+peer, peer
+	if !spec.Size.IsZero() {
+		// The peer only listens and answers: a VM of the first run's size
+		// beside it would not fit the runner (two 8 GiB Kata VMs and their
+		// overhead are more than a 16 GB CI runner's node holds).
+		spec.Size = envport.SandboxSize{MilliCPU: 1000, MemoryMiB: 2048}
+	}
 	env, err := a.Provision(ctx, spec)
 	if err != nil {
 		t.Fatalf("provision the second run: %v", err)
