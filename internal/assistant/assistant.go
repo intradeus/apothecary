@@ -1,14 +1,16 @@
-// Package assistant is the conversation beside a page (docs/assistant-plan.md,
-// phase 3): a person asks, an agent in their own assistant pod answers, and
-// its one way to act is to fill the page's inputs. The engine checks a fill
-// and the page writes it into its form or editor; nothing is saved until the
-// person saves.
+// Package assistant is a person's assistant (docs/assistant-plan.md): a
+// person asks, an agent in their own assistant pod answers. A session on
+// a page (a flow, a ticket, a skill, a run, a dashboard) fills the page's
+// inputs: the engine checks a fill and the page writes it into its form or
+// editor; nothing is saved until the person saves. The general session,
+// the assistant button's on every page, fills nothing and acts instead,
+// by requests the person confirms.
 //
-// A session belongs to what it fills: a kind (flow, ticket, skill) and a
-// subject (that flow, ticket or skill, or a draft id before the first save).
-// It reaches the pod through assistantport, the person's harness and their
-// workshops through the interfaces below; archtest holds it off the engine,
-// the API and the adapters.
+// A session belongs to a kind and a subject (that flow, ticket or skill,
+// or a draft id before the first save). It reaches the pod through
+// assistantport, the person's harness, their workshops and their skills
+// through the interfaces below; archtest holds it off the engine, the API
+// and the adapters.
 package assistant
 
 import (
@@ -20,6 +22,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"apothecary/internal/run/event"
+	"apothecary/internal/skills"
 )
 
 // Kind is what a session fills.
@@ -31,7 +36,8 @@ const (
 	KindSkill     Kind = "skill"
 	KindRun       Kind = "run"
 	KindDashboard Kind = "dashboard"
-	// KindGeneral is no page: the command palette's, which fills nothing.
+	// KindGeneral is no page: the assistant button's, which acts and
+	// fills nothing.
 	KindGeneral Kind = "general"
 )
 
@@ -59,9 +65,12 @@ type Session struct {
 	Model          string `json:"model,omitempty"`
 	// TokenID is the session's token on the engine's MCP face: the one
 	// principal that may fill this session.
-	TokenID   string    `json:"-"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	TokenID string `json:"-"`
+	// Skillsets are the skillset versions the session's turns install,
+	// fixed when it opened from the person's choice.
+	Skillsets []event.SkillsetPin `json:"skillsets,omitempty"`
+	CreatedAt time.Time           `json:"created_at"`
+	UpdatedAt time.Time           `json:"updated_at"`
 }
 
 // Roles of a message.
@@ -125,12 +134,28 @@ type Act struct {
 }
 
 // Choice is a person's standing choice: the harness integration their
-// sessions run on, and the model a new session starts with.
+// sessions run on, the model a new session starts with, and the skillsets
+// (theirs; no seq is the latest) a new session installs.
 type Choice struct {
-	UserID      string `json:"-"`
-	Integration string `json:"integration"`
-	Model       string `json:"model"`
+	UserID      string       `json:"-"`
+	Integration string       `json:"integration"`
+	Model       string       `json:"model"`
+	Skillsets   []skills.Ref `json:"skillsets,omitempty"`
 }
+
+// Skills is the person's skill library, as a session installs it.
+type Skills interface {
+	// ResolveSkillsets pins refs to versions: each skillset must be
+	// person's own. A ref that does not resolve (the set deleted or
+	// another's, the version gone) is an error wrapping ErrSkillsetGone;
+	// any other error is the library failing to answer.
+	ResolveSkillsets(ctx context.Context, person string, refs []skills.Ref) ([]event.SkillsetPin, error)
+	// SkillTrees are the pins' skills, each once, with their files.
+	SkillTrees(ctx context.Context, pins []event.SkillsetPin) ([]skills.Tree, error)
+}
+
+// ErrSkillsetGone is a skillset ref the library no longer resolves.
+var ErrSkillsetGone = errors.New("assistant: no such skillset")
 
 // Store keeps sessions, their messages and persons' choices.
 type Store interface {
@@ -220,6 +245,7 @@ func (s *MemStore) SaveAssistantSession(_ context.Context, v Session) error {
 		v.CreatedAt = now
 	}
 	v.UpdatedAt = now
+	v.Skillsets = slices.Clone(v.Skillsets)
 	s.sessions[v.ID] = v
 	return nil
 }
@@ -301,6 +327,7 @@ func (s *MemStore) SaveAssistantChoice(_ context.Context, c Choice) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	c.Skillsets = slices.Clone(c.Skillsets)
 	s.choices[c.UserID] = c
 	return nil
 }

@@ -1,31 +1,23 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
 import { aProject, aRun } from '$test/fixtures';
-import {
-	ticketFill,
-	type AssistantFrame,
-	type AssistantMessage,
-	type AssistantStatus,
-	type TicketFields
-} from '$lib/domain';
+import type { AssistantFrame, AssistantMessage, AssistantStatus } from '$lib/domain';
 import AssistantPanel from './AssistantPanel.svelte';
-import { FillGuard } from './fillGuard.svelte';
+import { Conversation, WARM_EVERY_MS } from './conversation.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
 		assistant: {
 			status: vi.fn(),
 			open: vi.fn(),
+			warm: vi.fn(),
 			send: vi.fn(),
 			cancel: vi.fn(),
 			setModel: vi.fn(),
-			setSubject: vi.fn(),
-			setChoice: vi.fn(),
 			refresh: vi.fn(),
-			messages: vi.fn(),
 			stream: vi.fn(),
 			confirm: vi.fn(),
 			decline: vi.fn()
@@ -35,20 +27,21 @@ vi.mock('$lib/api', () => ({
 
 const status = (over: Partial<AssistantStatus> = {}): AssistantStatus => ({
 	enabled: true,
-	choice: { integration: 'int-1', model: '' },
+	choice: { integration: 'int-1', model: '', skillsets: [] },
 	integrations: [{ id: 'int-1', name: 'mine', kind: 'claude-code' }],
-	models: ['acme/one', 'acme/two'],
+	models: ['model-a', 'model-b'],
 	pod: { state: 'running' },
 	repos: [{ workshop: 'w1', name: 'api', ok: true, head: 'abc', at: 'T' }],
-	pages: { ticket: { presets: ['Turn my notes into a ticket.'], repos: true } },
+	pages: { general: { presets: ['Retry the failed run.'], repos: true } },
 	...over
 });
 const session = {
 	id: 's1',
-	kind: 'ticket' as const,
+	kind: 'general' as const,
 	workshop: 'w1',
-	subject: 'draft-1',
-	model: 'acme/one',
+	subject: 'palette',
+	integration: 'int-1',
+	model: 'model-a',
 	createdAt: 'T',
 	updatedAt: 'T'
 };
@@ -57,323 +50,84 @@ const msg = (
 	role: 'person' | 'assistant',
 	text: string,
 	over: Partial<AssistantMessage> = {}
-): AssistantMessage => ({
-	sessionId: 's1',
-	seq,
-	role,
-	text,
-	costUsd: 0,
-	at: 'T',
-	...over
-});
+): AssistantMessage => ({ sessionId: 's1', seq, role, text, costUsd: 0, at: 'T', ...over });
+const f = (frame: Record<string, unknown>) =>
+	({ seq: 1, sessionId: 's1', ...frame }) as AssistantFrame;
+const request = {
+	why: 'Start a run on T-1.',
+	state: 'pending' as const,
+	acts: [{ tool: 'start_run', title: 'Start one attempt', arguments: { key: 'T-1' } }]
+};
 
-let push: (f: AssistantFrame) => void = () => {};
-
-function setup(
-	init: TicketFields = { title: '', goal: 'notes', changeType: 'feat', typeId: '' },
-	subject = 'draft-1'
-) {
-	let form = { ...init };
-	const guard = new FillGuard<TicketFields>(
-		() => ({ ...form }),
-		(v) => (form = { ...v }),
-		ticketFill
-	);
-	const context = vi.fn(() => ({ ...form }));
-	const onsession = vi.fn();
-	const r = render(AssistantPanel, {
-		kind: 'ticket',
-		subject,
-		workshop: 'w1',
-		guard,
-		pageState: context,
-		onsession
-	});
-	return {
-		guard,
-		context,
-		onsession,
-		form: () => form,
-		edit: (f: Partial<TicketFields>) => (form = { ...form, ...f }),
-		...r
-	};
+async function setup(messages: AssistantMessage[] = []) {
+	vi.mocked(api.assistant.open).mockResolvedValue({ session, messages, busy: false });
+	const convo = new Conversation({ kind: 'general', subject: 'palette', workshop: 'w1' });
+	await convo.load();
+	render(AssistantPanel, { convo });
+	return convo;
 }
-
-beforeEach(() => {
-	vi.resetAllMocks();
-	vi.mocked(api.assistant.status).mockResolvedValue(status());
-	vi.mocked(api.assistant.open).mockResolvedValue({ session, messages: [], busy: false });
-	vi.mocked(api.assistant.stream).mockImplementation((fn) => {
-		push = fn;
-		return () => {};
-	});
-});
 
 const textbox = () => screen.getByRole('textbox', { name: 'Ask the assistant…' });
 
+// typing's warm clock is module-wide: each test starts well past the last.
+let now = Date.UTC(2026, 0, 1);
+
+beforeEach(() => {
+	vi.resetAllMocks();
+	now += 10 * WARM_EVERY_MS;
+	vi.setSystemTime(now);
+	vi.mocked(api.assistant.status).mockResolvedValue(status());
+	vi.mocked(api.assistant.warm).mockResolvedValue(undefined as never);
+});
+
 describe('AssistantPanel', () => {
-	it('opens the session about its subject, and offers the page’s presets', async () => {
-		const p = setup();
-		expect(await screen.findByText('Turn my notes into a ticket.')).toBeInTheDocument();
-		expect(api.assistant.status).toHaveBeenCalledWith('w1');
-		expect(api.assistant.open).toHaveBeenCalledWith('ticket', 'draft-1', 'w1');
-		expect(screen.getByText('api')).toHaveAttribute('title', 'abc');
-		expect(p.onsession).toHaveBeenCalledWith('s1');
+	it('offers the presets, and asks one', async () => {
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'Retry the failed run.'));
+		await setup();
+		expect(screen.getByText(/Ask about anything here/)).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Retry the failed run.' }));
+		expect(api.assistant.send).toHaveBeenCalledWith('s1', 'Retry the failed run.', undefined);
+		expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
 	});
 
-	it('asks with the page as it stands, streams the answer, and fills the page once', async () => {
-		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'the login page fails'));
-		const p = setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await userEvent.type(textbox(), 'the login page fails{Enter}');
-		expect(api.assistant.send).toHaveBeenCalledWith('s1', 'the login page fails', {
-			title: '',
-			goal: 'notes',
-			changeType: 'feat',
-			typeId: ''
-		});
-		expect(await screen.findByText('the login page fails')).toBeInTheDocument();
-		push({ kind: 'state', seq: 1, sessionId: 's1', busy: true });
-		push({ kind: 'delta', seq: 2, sessionId: 's1', text: 'Reading', tool: 'Read README' });
-		expect(await screen.findByText('Read README')).toBeInTheDocument();
-		expect(screen.getByRole('button', { name: 'Stop' })).toBeInTheDocument();
-		push({
-			kind: 'fill',
-			seq: 3,
-			sessionId: 's1',
-			page: 'ticket',
-			subject: 'draft-1',
-			fill: { title: 'Fix the login page' }
-		});
-		// Another session's frames are not this panel's.
-		push({
-			kind: 'fill',
-			seq: 4,
-			sessionId: 's9',
-			page: 'ticket',
-			subject: 'x',
-			fill: { title: 'theirs' }
-		});
-		push({
-			kind: 'message',
-			seq: 5,
-			sessionId: 's1',
-			message: msg(2, 'assistant', 'Filled the title.', { fill: { title: 'Fix the login page' } })
-		});
-		push({ kind: 'state', seq: 6, sessionId: 's1', busy: false });
-		expect(await screen.findByText('Filled the title.')).toBeInTheDocument();
-		expect(p.form().title).toBe('Fix the login page');
-		expect(screen.getByRole('status')).toHaveTextContent('Filled: title');
-		await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-		expect(p.form().title).toBe('');
-		expect(screen.queryByRole('status')).not.toBeInTheDocument();
-	});
-
-	it('holds a fill when the page changed since the question', async () => {
-		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'go'));
-		const p = setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await userEvent.click(screen.getByRole('button', { name: 'Turn my notes into a ticket.' }));
-		p.edit({ goal: 'newer notes' });
-		push({
-			kind: 'fill',
-			seq: 3,
-			sessionId: 's1',
-			page: 'ticket',
-			subject: 'draft-1',
-			fill: { title: 'T', goal: 'G' }
-		});
-		expect(await screen.findByText(/You changed the page since you asked/)).toBeInTheDocument();
-		expect(p.form().goal).toBe('newer notes');
-		await userEvent.click(screen.getByRole('button', { name: 'Keep mine' }));
-		expect(p.form().goal).toBe('newer notes');
-		push({
-			kind: 'fill',
-			seq: 4,
-			sessionId: 's1',
-			page: 'ticket',
-			subject: 'draft-1',
-			fill: { title: 'T' }
-		});
-		await userEvent.click(await screen.findByRole('button', { name: 'Fill it anyway' }));
-		expect(p.form()).toMatchObject({ title: 'T', goal: 'newer notes' });
+	it('starts the pod as the person types, and asks on Enter', async () => {
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'hello'));
+		await setup();
+		await userEvent.type(textbox(), 'hello');
+		expect(api.assistant.warm).toHaveBeenCalledTimes(1);
+		await userEvent.keyboard('{Enter}');
+		expect(api.assistant.send).toHaveBeenCalledWith('s1', 'hello', undefined);
+		expect(await screen.findByText('hello')).toBeInTheDocument();
 	});
 
 	it('gives a refused question back, and stops an answer', async () => {
 		vi.mocked(api.assistant.send).mockRejectedValue(new Error('the session is answering'));
-		setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await userEvent.type(textbox(), 'again{Enter}');
+		const c = await setup();
+		await userEvent.type(textbox(), 'again');
+		await userEvent.click(screen.getByRole('button', { name: 'Ask' }));
 		expect(await screen.findByText('the session is answering')).toBeInTheDocument();
 		expect(textbox()).toHaveValue('again');
-		push({ kind: 'state', seq: 1, sessionId: 's1', busy: true });
-		await userEvent.click(await screen.findByRole('button', { name: 'Stop' }));
+		c.onFrame(f({ kind: 'state', busy: true }));
+		c.onFrame(f({ kind: 'delta', text: 'Reading', tool: 'Read README' }));
+		expect(await screen.findByText('Read README')).toBeInTheDocument();
+		expect(screen.getByText('Reading')).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
 		expect(api.assistant.cancel).toHaveBeenCalledWith('s1');
 	});
 
-	it('picks a model, refreshes the repositories, reloads after a gap', async () => {
-		vi.mocked(api.assistant.setModel).mockResolvedValue({ ...session, model: 'acme/two' });
-		vi.mocked(api.assistant.refresh).mockResolvedValue([
-			{ workshop: 'w1', name: 'web', ok: false, error: '404', at: 'T' }
-		]);
-		setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
-		await userEvent.click(screen.getByRole('option', { name: 'acme/two' }));
-		expect(api.assistant.setModel).toHaveBeenCalledWith('s1', 'acme/two');
-		await userEvent.click(screen.getByRole('button', { name: /Refresh/ }));
-		expect(await screen.findByText('web')).toHaveAttribute('title', 'web: 404');
-		push({ kind: 'repos', seq: 2, workshop: 'w1', text: 'fetching' });
-		expect(await screen.findByText('fetching…')).toBeInTheDocument();
-		push({ kind: 'repos', seq: 3, workshop: 'other', repos: [] });
-		// Frames lost: the record says where the session is.
-		vi.mocked(api.assistant.open).mockResolvedValue({
-			session,
-			messages: [msg(1, 'assistant', 'from the record')],
-			busy: false
-		});
-		push({ kind: 'gap' });
-		expect(await screen.findByText('from the record')).toBeInTheDocument();
-		push({ kind: 'status', seq: 4, sessionId: 's1', text: 'starting your assistant' });
-		push({ kind: 'state', seq: 5, sessionId: 's1', busy: true });
-		expect(await screen.findByText('starting your assistant')).toBeInTheDocument();
-	});
-
-	it('fills only for a question it asked; an earlier fill on a click', async () => {
-		vi.mocked(api.assistant.open).mockResolvedValue({
-			session,
-			messages: [msg(2, 'assistant', 'Filled the title.', { fill: { title: 'From before' } })],
-			busy: false
-		});
-		const p = setup();
-		await screen.findByText('Filled the title.');
-		// A fill this panel did not ask for (replayed, another tab's): ignored.
-		push({
-			kind: 'fill',
-			seq: 9,
-			sessionId: 's1',
-			page: 'ticket',
-			subject: 'draft-1',
-			fill: { title: 'x' }
-		});
-		expect(p.form().title).toBe('');
-		await userEvent.click(screen.getByRole('button', { name: 'Fill the page with this' }));
-		expect(p.form().title).toBe('From before');
-		await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
-		expect(p.form().title).toBe('');
-	});
-
-	it('knows a session answering when it opens, and that it ended after a gap', async () => {
-		vi.mocked(api.assistant.open).mockResolvedValue({ session, messages: [], busy: true });
-		setup();
-		expect(await screen.findByRole('button', { name: 'Stop' })).toBeInTheDocument();
-		vi.mocked(api.assistant.open).mockResolvedValue({ session, messages: [], busy: false });
-		push({ kind: 'gap' });
-		expect(await screen.findByRole('button', { name: 'Ask' })).toBeInTheDocument();
-	});
-
-	it('opens the conversation of another subject rather than moving this one', async () => {
-		const p = setup(undefined, 'APO-3');
-		vi.mocked(api.assistant.open).mockResolvedValue({
-			session: { ...session, subject: 'APO-3' },
-			messages: [],
-			busy: false
-		});
-		await screen.findByText('Turn my notes into a ticket.');
-		await waitFor(() => expect(api.assistant.open).toHaveBeenCalledTimes(1));
-		vi.mocked(api.assistant.open).mockResolvedValue({
-			session: { ...session, id: 's2', subject: 'APO-4' },
-			messages: [],
-			busy: false
-		});
-		await p.rerender({
-			kind: 'ticket',
-			subject: 'APO-4',
-			workshop: 'w1',
-			guard: p.guard,
-			pageState: p.context
-		});
-		await waitFor(() =>
-			expect(api.assistant.open).toHaveBeenLastCalledWith('ticket', 'APO-4', 'w1')
-		);
-		expect(api.assistant.setSubject).not.toHaveBeenCalled();
-	});
-
-	it('moves a draft’s session to what it was saved as', async () => {
-		vi.mocked(api.assistant.setSubject).mockResolvedValue({ ...session, subject: 'APO-12' });
-		const p = setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await p.rerender({
-			kind: 'ticket',
-			subject: 'APO-12',
-			workshop: 'w1',
-			guard: p.guard,
-			pageState: p.context
-		});
-		await waitFor(() => expect(api.assistant.setSubject).toHaveBeenCalledWith('s1', 'APO-12'));
-	});
-
-	it('says why it is off, and takes a harness choice', async () => {
-		vi.mocked(api.assistant.status)
-			.mockResolvedValueOnce(
-				status({
-					enabled: false,
-					reason: 'choose the harness',
-					choice: { integration: '', model: '' }
-				})
-			)
-			.mockResolvedValueOnce(status());
-		setup();
-		expect(await screen.findByText('choose the harness')).toBeInTheDocument();
-		expect(api.assistant.open).not.toHaveBeenCalled();
-		await userEvent.click(screen.getByRole('button', { name: 'Use this harness' }));
-		expect(api.assistant.setChoice).toHaveBeenCalledWith('int-1');
-		expect(await screen.findByText('Turn my notes into a ticket.')).toBeInTheDocument();
-	});
-
-	it('says when there is no harness to run on, and when it cannot load', async () => {
-		vi.mocked(api.assistant.status).mockResolvedValueOnce(
-			status({ enabled: false, reason: 'no harness', integrations: [], pod: { state: 'absent' } })
-		);
-		setup();
-		expect(await screen.findByText(/Add a Claude Code or opencode harness/)).toBeInTheDocument();
-		vi.mocked(api.assistant.status).mockRejectedValueOnce(new Error('engine down'));
-		setup();
-		expect(await screen.findByText('engine down')).toBeInTheDocument();
-	});
-
-	it('shows a request as it is proposed, then asks to confirm it, and shows what came of it', async () => {
-		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'start a run on this'));
-		const request = {
-			why: 'Start a run on T-1.',
-			state: 'pending' as const,
-			acts: [{ tool: 'start_run', title: 'Start one attempt', arguments: { id: 'w1', key: 'T-1' } }]
-		};
-		setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await userEvent.type(textbox(), 'start a run on this{Enter}');
-		push({ kind: 'state', seq: 1, sessionId: 's1', busy: true });
-		push({
-			kind: 'request',
-			seq: 2,
-			sessionId: 's1',
-			message: msg(0, 'assistant', '', { request })
-		});
+	it('shows a request as it is proposed, then confirms it and shows what came of it', async () => {
+		const c = await setup();
+		c.onFrame(f({ kind: 'state', busy: true }));
+		c.onFrame(f({ kind: 'request', message: msg(0, 'assistant', '', { request }) }));
 		expect(await screen.findByText('Start a run on T-1.')).toBeInTheDocument();
 		expect(screen.getByText('Confirm once the answer is in.')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
-		push({
-			kind: 'message',
-			seq: 3,
-			sessionId: 's1',
-			message: msg(2, 'assistant', 'Shall I?', { request })
-		});
-		push({ kind: 'state', seq: 4, sessionId: 's1', busy: false });
+		c.onFrame(f({ kind: 'message', message: msg(2, 'assistant', 'Shall I?', { request }) }));
+		c.onFrame(f({ kind: 'state', busy: false }));
 		expect(await screen.findByText('Shall I?')).toBeInTheDocument();
 		expect(screen.getAllByText('Start a run on T-1.')).toHaveLength(1);
-		expect(screen.getByText('start_run')).toBeInTheDocument();
+		expect(screen.getByText('Start one attempt')).toBeInTheDocument();
 		expect(screen.getByText(/"key": "T-1"/)).toBeInTheDocument();
-
 		vi.mocked(api.assistant.confirm).mockResolvedValue(
 			msg(2, 'assistant', 'Shall I?', {
 				request: {
@@ -385,93 +139,148 @@ describe('AssistantPanel', () => {
 		);
 		await userEvent.click(screen.getByRole('button', { name: 'Do it' }));
 		expect(api.assistant.confirm).toHaveBeenCalledWith('s1', 2);
-		expect(await screen.findByText('201')).toBeInTheDocument();
+		expect(await screen.findByText('201')).not.toHaveClass('tint-danger');
+		expect(screen.getByText('{"run_id":"r1"}')).toBeInTheDocument();
 		expect(screen.getByText('Done')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
 	});
 
-	it('declines a request, shows one decided elsewhere, and a refused decision', async () => {
-		const request = {
-			why: 'File it.',
-			state: 'pending' as const,
+	it('declines a request, and shows one refused and one decided elsewhere', async () => {
+		const two = {
+			...request,
 			acts: [
 				{ tool: 'create_ticket', arguments: {} },
 				{ tool: 'start_run', arguments: {} }
 			]
 		};
-		vi.mocked(api.assistant.open).mockResolvedValue({
-			session,
-			messages: [msg(2, 'assistant', 'Shall I?', { request })],
-			busy: false
-		});
-		vi.mocked(api.assistant.decline).mockRejectedValueOnce(new Error('decided already'));
-		setup();
-		await userEvent.click(await screen.findByRole('button', { name: 'Decline' }));
+		const c = await setup([msg(2, 'assistant', 'Shall I?', { request: two })]);
+		vi.mocked(api.assistant.decline)
+			.mockRejectedValueOnce(new Error('decided already'))
+			.mockResolvedValueOnce(
+				msg(2, 'assistant', 'Shall I?', { request: { ...two, state: 'declined' } })
+			);
+		await userEvent.click(screen.getByRole('button', { name: 'Decline' }));
 		expect(await screen.findByText('decided already')).toBeInTheDocument();
-		// Decided in another tab: the stream replaces it.
-		push({
-			kind: 'request',
-			seq: 5,
-			sessionId: 's1',
-			message: msg(2, 'assistant', 'Shall I?', {
-				request: {
-					...request,
-					state: 'done',
-					acts: [
-						{ ...request.acts[0], status: 403, result: 'this needs ticket:write' },
-						request.acts[1]
-					]
-				}
+		await userEvent.click(screen.getByRole('button', { name: 'Decline' }));
+		expect(await screen.findByText('Declined')).toBeInTheDocument();
+		c.onFrame(
+			f({
+				kind: 'request',
+				message: msg(2, 'assistant', 'Shall I?', {
+					request: {
+						...two,
+						state: 'done',
+						acts: [{ ...two.acts[0], status: 403, result: 'this needs ticket:write' }, two.acts[1]]
+					}
+				})
 			})
-		});
+		);
 		expect(await screen.findByText('403')).toHaveClass('tint-danger');
 		expect(screen.getByText('not run')).toBeInTheDocument();
-		expect(screen.getByText('this needs ticket:write')).toBeInTheDocument();
 	});
 
-	it('names what an act’s ids are, and shows a request running or interrupted', async () => {
+	it('names what an act’s ids are, and shows a request interrupted', async () => {
 		fleet.projects = [aProject({ id: 'p1', name: 'billing' })];
 		fleet.runs = [aRun({ id: 'r1', title: 'Add caching' })];
-		const request = {
-			why: 'Stop it.',
-			state: 'running' as const,
-			acts: [{ tool: 'abort_run', arguments: { id: 'r1', workshop: 'p1', other: 'x' } }]
-		};
-		vi.mocked(api.assistant.open).mockResolvedValue({
-			session,
-			messages: [msg(2, 'assistant', 'Stopping.', { request })],
-			busy: false
-		});
-		setup();
-		expect(await screen.findByText('id: the run “Add caching”')).toBeInTheDocument();
+		await setup([
+			msg(2, 'assistant', 'Stopping.', {
+				request: {
+					why: 'Stop it.',
+					state: 'running',
+					acts: [{ tool: 'abort_run', arguments: { id: 'r1', workshop: 'p1', other: 'x', n: 1 } }]
+				}
+			}),
+			msg(3, 'assistant', '', { request: { ...request, acts: [{ tool: 't', arguments: null }] } })
+		]);
+		expect(screen.getByText('id: the run “Add caching”')).toBeInTheDocument();
 		expect(screen.getByText('workshop: the workshop billing')).toBeInTheDocument();
 		expect(screen.getByText(/Interrupted: check what it did/)).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
 		fleet.projects = [];
 		fleet.runs = [];
 	});
 
-	it('drops a proposed request when the record is read again', async () => {
-		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'go'));
-		setup();
-		await screen.findByText('Turn my notes into a ticket.');
-		await userEvent.type(textbox(), 'go{Enter}');
-		push({ kind: 'state', seq: 1, sessionId: 's1', busy: true });
-		push({
-			kind: 'request',
-			seq: 2,
-			sessionId: 's1',
-			message: msg(0, 'assistant', '', {
-				request: {
-					why: 'Proposed.',
-					state: 'pending',
-					acts: [{ tool: 'start_run', arguments: {} }]
-				}
+	it('shows an answer that failed', async () => {
+		await setup([msg(2, 'assistant', '', { error: 'the pod stopped' })]);
+		expect(screen.getByText('the pod stopped')).toBeInTheDocument();
+	});
+
+	it('picks the conversation’s model', async () => {
+		vi.mocked(api.assistant.setModel).mockResolvedValue({ ...session, model: 'model-b' });
+		await setup();
+		await userEvent.click(screen.getByRole('combobox', { name: 'Model' }));
+		await userEvent.click(screen.getByRole('option', { name: 'model-b' }));
+		expect(api.assistant.setModel).toHaveBeenCalledWith('s1', 'model-b');
+	});
+
+	it('offers an older conversation only its own harness’s models once the harness changed', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({
+				choice: { integration: 'int-2', model: '', skillsets: [] },
+				integrations: [
+					{ id: 'int-1', name: 'mine', kind: 'claude-code' },
+					{ id: 'int-2', name: 'other', kind: 'opencode' }
+				],
+				models: ['other-x', 'other-y']
 			})
-		});
-		expect(await screen.findByText('Proposed.')).toBeInTheDocument();
-		vi.mocked(api.assistant.open).mockResolvedValue({ session, messages: [], busy: false });
-		push({ kind: 'gap' });
-		await waitFor(() => expect(screen.queryByText('Proposed.')).not.toBeInTheDocument());
+		);
+		await setup();
+		const pick = screen.getByRole('combobox', { name: 'Model' });
+		expect(pick).toHaveAttribute('title', expect.stringMatching(/keeps the harness it started on/));
+		await userEvent.click(pick);
+		expect(screen.getAllByRole('option')).toHaveLength(2);
+		expect(screen.getByRole('option', { name: /model-a/ })).toBeInTheDocument();
+		expect(screen.queryByRole('option', { name: /other-x/ })).not.toBeInTheDocument();
+	});
+
+	it('shows the workshop’s repositories, and refreshes them', async () => {
+		vi.mocked(api.assistant.refresh).mockResolvedValue([
+			{ workshop: 'w1', name: 'web', ok: false, error: '404', at: 'T' }
+		]);
+		const c = await setup();
+		expect(screen.getByText('api')).toHaveAttribute('title', 'abc');
+		await userEvent.click(screen.getByRole('button', { name: /Refresh/ }));
+		expect(api.assistant.refresh).toHaveBeenCalledWith('w1');
+		expect(await screen.findByText('web')).toHaveAttribute('title', 'web: 404');
+		c.onFrame({ kind: 'repos', seq: 2, workshop: 'w1', text: 'fetching' } as AssistantFrame);
+		expect(await screen.findByText('fetching…')).toBeInTheDocument();
+	});
+
+	it('says why it is off, and points at the settings', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({
+				enabled: false,
+				reason: 'choose the harness',
+				choice: { integration: '', model: '', skillsets: [] }
+			})
+		);
+		await setup();
+		expect(screen.getByText('choose the harness')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Choose its harness' })).toHaveAttribute(
+			'href',
+			'/system/assistant'
+		);
+		expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+	});
+
+	it('says when there is no harness to run on', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({
+				enabled: false,
+				reason: 'no harness',
+				integrations: [],
+				choice: { integration: 'gone', model: '', skillsets: [] }
+			})
+		);
+		await setup();
+		expect(screen.getByText(/Add a Claude Code or opencode harness/)).toBeInTheDocument();
+		expect(screen.queryByRole('link')).not.toBeInTheDocument();
+	});
+
+	it('says when it cannot load, and tries again', async () => {
+		vi.mocked(api.assistant.status).mockRejectedValueOnce(new Error('engine down'));
+		await setup();
+		expect(screen.getByText('engine down')).toBeInTheDocument();
+		await userEvent.click(screen.getByRole('button', { name: /Retry|Try again/ }));
+		expect(await screen.findByText(/Ask about anything here/)).toBeInTheDocument();
 	});
 });

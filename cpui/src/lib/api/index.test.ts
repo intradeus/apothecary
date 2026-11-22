@@ -2260,18 +2260,28 @@ describe('the assistant', () => {
 		at: 'T2'
 	};
 
-	it('reads the status, a workshop asked for', async () => {
+	it('reads the status, a workshop asked for, every page’s presets and the chosen skillsets', async () => {
 		const fn = reply(
 			'getAssistant',
 			answer({
 				enabled: false,
 				reason: 'choose a harness',
-				choice: { integration: '', model: '' },
+				choice: {
+					integration: '',
+					model: '',
+					skillsets: [{ id: 'set-1' }, { id: 'set-2', seq: 3 }]
+				},
 				integrations: null,
 				models: null,
 				pod: { state: 'absent' },
 				repos: [{ workshop: 'w1', name: 'api', ok: true, at: 'T' }],
-				pages: { flow: { presets: null, repos: true }, odd: { presets: [], repos: false } }
+				pages: {
+					flow: { presets: null, repos: true },
+					general: { presets: ['Start a run on this ticket.'], repos: true },
+					run: { presets: ['Why did this run fail?'], repos: true },
+					dashboard: { presets: ['Explain it.'], repos: false },
+					odd: { presets: [], repos: false }
+				}
 			})
 		);
 		const st = await assistant.status('w1');
@@ -2279,14 +2289,28 @@ describe('the assistant', () => {
 		expect(st).toMatchObject({
 			enabled: false,
 			reason: 'choose a harness',
+			choice: { integration: '', model: '', skillsets: [{ id: 'set-1' }, { id: 'set-2', seq: 3 }] },
 			integrations: [],
 			models: [],
 			pod: { state: 'absent', error: undefined },
-			repos: [{ workshop: 'w1', name: 'api', ok: true, at: 'T', head: undefined }],
-			pages: { flow: { presets: [], repos: true } }
+			repos: [{ workshop: 'w1', name: 'api', ok: true, at: 'T', head: undefined }]
+		});
+		expect(st.pages).toEqual({
+			flow: { presets: [], repos: true },
+			general: { presets: ['Start a run on this ticket.'], repos: true },
+			run: { presets: ['Why did this run fail?'], repos: true },
+			dashboard: { presets: ['Explain it.'], repos: false }
 		});
 		await assistant.status();
 		expect(fn).toHaveBeenLastCalledWith({ query: undefined });
+	});
+
+	it.each(['general', 'run', 'dashboard', 'skill'])('keeps a %s session’s kind', async (kind) => {
+		reply(
+			'openAssistantSession',
+			answer({ session: { ...session, kind }, messages: [], busy: false })
+		);
+		expect((await assistant.open('general', 'palette')).session.kind).toBe(kind);
 	});
 
 	it('opens a session and maps its messages', async () => {
@@ -2318,11 +2342,24 @@ describe('the assistant', () => {
 		});
 		await assistant.open('skill', 'k');
 		expect(fn).toHaveBeenLastCalledWith({
-			body: { kind: 'skill', subject: 'k', workshop_id: undefined }
+			body: { kind: 'skill', subject: 'k', workshop_id: undefined, fresh: undefined }
+		});
+		await assistant.open('ticket', 'draft-2', 'w1', { fresh: true });
+		expect(fn).toHaveBeenLastCalledWith({
+			body: { kind: 'ticket', subject: 'draft-2', workshop_id: 'w1', fresh: true }
 		});
 	});
 
-	it('sends, picks, moves and stops', async () => {
+	it('reads a session by its id, a null thread as none', async () => {
+		const fn = reply('getAssistantSession', answer({ session, messages: null, busy: true }));
+		const out = await assistant.session('s1');
+		expect(fn).toHaveBeenCalledWith({ path: { id: 's1' } });
+		expect(out.session.id).toBe('s1');
+		expect(out.messages).toEqual([]);
+		expect(out.busy).toBe(true);
+	});
+
+	it('sends, picks, warms and stops', async () => {
 		const send = reply('sendAssistantMessage', answer({ ...message, role: 'person', fill: null }));
 		const m = await assistant.send('s1', 'hi', { title: '' });
 		expect(send).toHaveBeenCalledWith({
@@ -2331,18 +2368,28 @@ describe('the assistant', () => {
 		});
 		expect(m.role).toBe('person');
 		expect(m.fill).toBeUndefined();
-		const model = reply('setAssistantModel', answer({ ...session, kind: 'flow' }));
-		expect((await assistant.setModel('s1', 'acme/two')).kind).toBe('flow');
+		const model = reply('setAssistantModel', answer({ ...session, kind: 'odd' }));
+		expect((await assistant.setModel('s1', 'acme/two')).kind).toBe('general');
 		expect(model).toHaveBeenCalledWith({ path: { id: 's1' }, body: { model: 'acme/two' } });
-		const subject = reply('setAssistantSubject', answer({ ...session, kind: 'odd' }));
-		expect((await assistant.setSubject('s1', 'APO-1')).kind).toBe('flow');
-		expect(subject).toHaveBeenCalledWith({ path: { id: 's1' }, body: { subject: 'APO-1' } });
 		const cancel = reply('cancelAssistantTurn');
 		await assistant.cancel('s1');
 		expect(cancel).toHaveBeenCalledWith({ path: { id: 's1' } });
+		const warm = reply('warmAssistant');
+		await assistant.warm();
+		expect(warm).toHaveBeenCalledWith();
 		const choice = reply('setAssistantChoice', answer({}));
-		await assistant.setChoice('int-1');
-		expect(choice).toHaveBeenCalledWith({ body: { integration: 'int-1', model: '' } });
+		await assistant.setChoice({ integration: 'int-1' });
+		expect(choice).toHaveBeenCalledWith({
+			body: { integration: 'int-1', model: '', skillsets: undefined }
+		});
+		await assistant.setChoice({
+			integration: 'int-1',
+			model: 'acme/one',
+			skillsets: [{ id: 'set-1' }]
+		});
+		expect(choice).toHaveBeenLastCalledWith({
+			body: { integration: 'int-1', model: 'acme/one', skillsets: [{ id: 'set-1' }] }
+		});
 		const msgs = reply('listAssistantMessages', answer([message]));
 		await assistant.messages('s1', 4);
 		expect(msgs).toHaveBeenCalledWith({ path: { id: 's1' }, query: { after: 4 } });
@@ -2384,11 +2431,15 @@ describe('the assistant stream', () => {
 
 	it('maps every frame, and resumes after the last one seen', () => {
 		const got: unknown[] = [];
-		const stop = assistant.stream((f) => got.push(f));
+		const ready = vi.fn();
+		const stop = assistant.stream((f) => got.push(f), ready);
 		const es = FakeES.last;
 		// From now: nothing kept is replayed to a panel just opened.
 		expect(es.url).toBe('/api/assistant/stream');
+		// Ready once the engine says where the stream starts: it follows.
+		expect(ready).not.toHaveBeenCalled();
 		es.send('head', { seq: 2 });
+		expect(ready).toHaveBeenCalledTimes(1);
 		es.send('delta', { seq: 3, session: 's1', text: 'hel', tool: 'Read' });
 		es.send('state', { seq: 4, session: 's1', busy: true });
 		es.send('status', { seq: 5, session: 's1', text: 'starting' });
@@ -2412,7 +2463,7 @@ describe('the assistant stream', () => {
 			{ kind: 'state', seq: 4, sessionId: 's1', busy: true },
 			{ kind: 'status', seq: 5, sessionId: 's1', text: 'starting' },
 			{ kind: 'fill', seq: 6, sessionId: 's1', page: 'ticket', subject: 'd', fill: { title: 't' } },
-			{ kind: 'fill', seq: 7, sessionId: 's1', page: 'flow', subject: '', fill: null },
+			{ kind: 'fill', seq: 7, sessionId: 's1', page: 'general', subject: '', fill: null },
 			{
 				kind: 'repos',
 				seq: 8,
@@ -2435,6 +2486,7 @@ describe('the assistant stream', () => {
 		// The engine restarted: its head is behind where the stream was, so
 		// the next reconnect resumes from the new head.
 		FakeES.last.send('head', { seq: 1 });
+		expect(ready).toHaveBeenCalledTimes(2);
 		FakeES.last.readyState = FakeES.CLOSED;
 		FakeES.last.onerror?.();
 		vi.advanceTimersByTime(3000);

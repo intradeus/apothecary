@@ -13,11 +13,14 @@
 		open = $bindable(false),
 		side = 'left',
 		label,
+		quick = false,
 		children
 	}: {
 		open: boolean;
 		side?: 'left' | 'right' | 'bottom';
 		label: string;
+		/** A short slide instead of the spring: an overlay opened often. */
+		quick?: boolean;
 		children: Snippet;
 	} = $props();
 
@@ -39,7 +42,7 @@
 		aria-modal="true"
 		aria-label={label}
 		use:portal
-		transition:slide={{ from: side }}
+		transition:slide={{ from: side, quick }}
 		use:trap={{ onescape: close }}
 		use:dragDismiss={{ direction: dir, ondismiss: close }}
 	>

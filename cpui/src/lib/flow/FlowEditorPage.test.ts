@@ -24,8 +24,8 @@ import FlowEditorPage from './FlowEditorPage.svelte';
 vi.mock('@xyflow/svelte', () => import('$test/fixtures/xyflow.svelte'));
 vi.mock('$lib/flow/YamlEditor.svelte', () => import('$test/fixtures/YamlEditorStub.svelte'));
 vi.mock(
-	'$lib/assistant/AssistantPanel.svelte',
-	() => import('$test/fixtures/AssistantPanelStub.svelte')
+	'$lib/assistant/FillAssistant.svelte',
+	() => import('$test/fixtures/FillAssistantStub.svelte')
 );
 vi.mock('$lib/api', () => ({
 	api: {
@@ -436,7 +436,21 @@ describe('FlowEditorPage', () => {
 	});
 
 	describe('the assistant', () => {
-		it('opens beside the flow, reads it as it stands, fills its text and undoes', async () => {
+		const fillButton = () => screen.getByRole('button', { name: 'Fill with the assistant' });
+		const modal = () => screen.queryByRole('region', { name: 'Fill assistant' });
+		const offer = async (yaml: string) => {
+			const fill = screen.getByRole('textbox', { name: 'fill' });
+			await userEvent.clear(fill);
+			fill.focus();
+			await userEvent.paste(JSON.stringify({ yaml }));
+			await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
+		};
+		const readPage = async () => {
+			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
+			return JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
+		};
+
+		it('opens on the flow, reads it as it stands, fills its text unsaved and undoes', async () => {
 			await setup();
 			vi.mocked(api.flows.binding).mockResolvedValue({
 				projectId: 'p1',
@@ -444,89 +458,103 @@ describe('FlowEditorPage', () => {
 				params: { model: 'acme/one' },
 				updatedAt: 'T'
 			});
-			expect(screen.queryByRole('region', { name: 'Assistant' })).not.toBeInTheDocument();
-			await userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
-			const panel = screen.getByRole('region', { name: 'Assistant' });
-			expect(panel.dataset).toMatchObject({ kind: 'flow', subject: 'builder', workshop: 'p1' });
+			expect(modal()).not.toBeInTheDocument();
+			expect(api.flows.binding).not.toHaveBeenCalled();
+			await userEvent.click(fillButton());
+			expect(modal()!.dataset).toMatchObject({ kind: 'flow', subject: 'builder', workshop: 'p1' });
+			await waitFor(() => expect(api.flows.binding).toHaveBeenCalledWith('p1', 'builder'));
 
-			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
-			const read = JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
+			const read = await readPage();
 			expect(read.yaml).toContain('name: builder');
 			expect(read.errors).toEqual([]);
-			expect(api.flows.binding).toHaveBeenCalledWith('p1', 'builder');
 			expect(read.params).toEqual({ model: 'acme/one' });
 
-			const fill = screen.getByRole('textbox', { name: 'fill' });
-			await userEvent.clear(fill);
-			fill.focus();
-			await userEvent.paste(JSON.stringify({ yaml: 'name: builder\nstages: {}\n' }));
-			await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
+			await offer('name: builder\nstages: {}\n');
 			expect(await screen.findByRole('textbox', { name: 'Flow YAML' })).toHaveValue(
 				'name: builder\nstages: {}\n'
 			);
-			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('yaml');
+			expect(screen.getByText('Filled: yaml')).toBeInTheDocument();
+			expect(screen.getByText('Unsaved changes')).toBeInTheDocument();
+			expect(api.flows.save).not.toHaveBeenCalled();
 
-			await userEvent.click(screen.getByRole('button', { name: 'undo the fill' }));
+			await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
 			expect(screen.getByRole('textbox', { name: 'Flow YAML' })).toHaveValue(read.yaml);
+			expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument();
+		});
+
+		it('reads the parser’s errors with the text', async () => {
+			await setup();
+			vi.mocked(api.flows.binding).mockResolvedValue(null);
+			vi.mocked(api.flows.validate).mockResolvedValue(
+				validated(undefined, { ok: false, errors: ['no stages'] })
+			);
+			await userEvent.click(screen.getByRole('button', { name: /^Validate/ }));
+			await userEvent.click(fillButton());
+			const read = await readPage();
+			expect(read.errors).toEqual(['no stages']);
+			expect(read.params).toEqual({});
 		});
 
 		it('has nothing to undo once the flow is saved', async () => {
 			await setup();
-			await userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
-			const fill = screen.getByRole('textbox', { name: 'fill' });
-			await userEvent.clear(fill);
-			fill.focus();
-			await userEvent.paste(JSON.stringify({ yaml: 'name: builder\nstages: {}\n' }));
-			await userEvent.click(screen.getByRole('button', { name: 'offer the fill' }));
-			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('yaml');
+			vi.mocked(api.flows.binding).mockResolvedValue(null);
+			await userEvent.click(fillButton());
+			await offer('name: builder\nstages: {}\n');
+			expect(screen.getByText('Filled: yaml')).toBeInTheDocument();
 			vi.mocked(api.flows.save).mockResolvedValue(aFlow({ hash: 'ffff0000' }));
 			await fireEvent.keyDown(window, { key: 's', ctrlKey: true });
 			await waitFor(() => expect(api.flows.save).toHaveBeenCalledOnce());
-			await waitFor(() =>
-				expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('')
-			);
+			await waitFor(() => expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument());
 		});
 
 		it('reads no parameters when the binding cannot be read', async () => {
 			await setup();
 			vi.mocked(api.flows.binding).mockRejectedValue(new Error('down'));
-			await userEvent.click(screen.getByRole('button', { name: 'Assistant' }));
+			await userEvent.click(fillButton());
 			await waitFor(() => expect(api.flows.binding).toHaveBeenCalled());
-			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
-			const read = JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
-			expect(read.params).toEqual({});
+			expect((await readPage()).params).toEqual({});
 		});
 
-		it('opens with a change the assistant proposed from a run, once, with its undo', async () => {
+		it('takes a change the assistant proposed from a run, once, with its undo', async () => {
 			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\nstages: {}\n');
 			vi.mocked(api.flows.get).mockResolvedValue(aFlow());
 			vi.mocked(api.flows.validate).mockImplementation(async () => validated(plainDoc()));
 			vi.mocked(api.flows.binding).mockResolvedValue(null);
 			render(FlowEditorPage, { projectId: 'p1', name: 'builder' });
-			// Taken once the flow has loaded whole: the YAML tab, the assistant
-			// open, the change marked, the editor holding it.
-			expect(await screen.findByRole('region', { name: 'Assistant' })).toBeInTheDocument();
+			// Taken once the flow has loaded whole: the YAML tab holding it,
+			// marked with its Undo, and nothing opened.
+			expect(await screen.findByText('Filled: yaml')).toBeInTheDocument();
 			expect(screen.getByRole('radio', { name: 'YAML' })).toHaveAttribute('aria-checked', 'true');
-			expect(screen.getByRole('status', { name: 'changed' })).toHaveTextContent('yaml');
-			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
-			const read = JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!);
-			expect(read.yaml).toBe('name: builder\nstages: {}\n');
+			expect(modal()).not.toBeInTheDocument();
 			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull();
-			await userEvent.click(screen.getByRole('button', { name: 'undo the fill' }));
-			await userEvent.click(screen.getByRole('button', { name: 'read the page' }));
-			expect(
-				JSON.parse(screen.getByRole('status', { name: 'page state' }).textContent!).yaml
-			).not.toBe('name: builder\nstages: {}\n');
+			await userEvent.click(fillButton());
+			expect((await readPage()).yaml).toBe('name: builder\nstages: {}\n');
+			await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+			expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument();
+			expect((await readPage()).yaml).not.toBe('name: builder\nstages: {}\n');
 		});
 
-		it('drops a handed-off change when the flow does not load', async () => {
-			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\n');
-			vi.mocked(api.flows.get).mockRejectedValue(new Error('gone'));
+		it('keeps a handed-off change through a failed load, and fills it once Retry loads', async () => {
+			sessionStorage.setItem('apothecary.flowFill.p1.builder', 'name: builder\nstages: {}\n');
+			vi.mocked(api.flows.get).mockRejectedValueOnce(new Error('engine down'));
+			vi.mocked(api.flows.validate).mockImplementation(async () => validated(plainDoc()));
+			vi.mocked(api.flows.binding).mockResolvedValue(null);
 			render(FlowEditorPage, { projectId: 'p1', name: 'builder' });
 			expect(await screen.findByRole('alert')).toBeInTheDocument();
-			await waitFor(() =>
-				expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull()
+			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBe(
+				'name: builder\nstages: {}\n'
 			);
+			expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument();
+
+			vi.mocked(api.flows.get).mockResolvedValue(aFlow());
+			await userEvent.click(screen.getByRole('button', { name: /Retry/ }));
+			expect(await screen.findByText('Filled: yaml')).toBeInTheDocument();
+			expect(sessionStorage.getItem('apothecary.flowFill.p1.builder')).toBeNull();
+			expect(api.flows.save).not.toHaveBeenCalled();
+			await userEvent.click(fillButton());
+			expect((await readPage()).yaml).toBe('name: builder\nstages: {}\n');
+			await userEvent.click(screen.getByRole('button', { name: 'Undo' }));
+			expect(screen.queryByText('Filled: yaml')).not.toBeInTheDocument();
 		});
 	});
 });

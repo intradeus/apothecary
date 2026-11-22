@@ -103,14 +103,37 @@ func TestPageContext(t *testing.T) {
 		t.Errorf("a large page is %d bytes", len(big))
 	}
 	for _, k := range Kinds {
-		p, ok := PageOf(k)
-		// The general page (the command palette's) fills nothing.
-		fills := k != KindGeneral
-		if !ok || len(p.Presets) == 0 || (p.FillSchema["type"] == "object") != fills || !strings.Contains(p.Instructions, "request") {
+		if p, ok := PageOf(k); !ok || len(p.Presets) == 0 {
 			t.Errorf("page %s = %+v", k, p)
 		}
 	}
 	if !Runs("claude-code") || !Runs("opencode") || Runs("omp") || Runs("codex") {
 		t.Error("the harnesses the assistant runs on")
+	}
+}
+
+// A page's session fills and requests nothing; the general session, the
+// assistant button's, acts and fills nothing.
+func TestOnlyTheGeneralPageActs(t *testing.T) {
+	for _, k := range Kinds {
+		p := pages[k]
+		if p.Acts != (k == KindGeneral) {
+			t.Errorf("%s acts = %v", k, p.Acts)
+		}
+		if (p.FillSchema != nil) == (k == KindGeneral) {
+			t.Errorf("%s fill schema = %v", k, p.FillSchema)
+		}
+		if strings.Contains(p.Instructions, "command palette") {
+			t.Errorf("%s's instructions name the command palette", k)
+		}
+		if strings.Contains(p.Instructions, "request") != p.Acts {
+			t.Errorf("%s's instructions on request: %q", k, p.Instructions)
+		}
+	}
+	presets := strings.Join(pages[KindGeneral].Presets, "\n")
+	for _, want := range []string{"Start a run", "Retry"} {
+		if !strings.Contains(presets, want) {
+			t.Errorf("the general presets lack %q: %v", want, presets)
+		}
 	}
 }

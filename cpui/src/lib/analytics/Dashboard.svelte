@@ -22,7 +22,8 @@
 	import Panel from './Panel.svelte';
 	import PanelEditor from './PanelEditor.svelte';
 	import { DEFAULT_RANGE, RANGES, rangeFrom, scoped, type Picks, type Range } from './scope';
-	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
+	import FillButton from '$lib/assistant/FillButton.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { dashboardFill } from '$lib/domain';
 	import DashboardHistory from './DashboardHistory.svelte';
@@ -42,9 +43,9 @@
 	let editorOpen = $state(false);
 	let editorAt = $state(-1);
 
-	// The assistant beside one's own dashboard: its fill replaces the panels
-	// in the edit mode (entered for it), with Undo; Save keeps them.
-	let showAssistant = $state(false);
+	// The local assistant on one's own dashboard: its fill replaces the
+	// panels in the edit mode (entered for it), with Undo; Save keeps them.
+	let fillOpen = $state(false);
 	const guard = new FillGuard<{ panels: PanelT[] }>(
 		() => ({ panels: $state.snapshot(editing ? draft : (dash?.panels ?? [])) as PanelT[] }),
 		(v) => {
@@ -124,8 +125,8 @@
 		editing = true;
 	}
 
-	// Discards the draft, and with it any assistant fill it held: a later manual
-	// save is the person's own.
+	/** Cancel drops the draft, and with it any fill's Undo: undoing a fill
+	 *  on a discarded draft would bring the discarded edits back. */
 	function cancel() {
 		editing = false;
 		guard.settle();
@@ -203,12 +204,6 @@
 		{#if dash && !dash.builtin}
 			<button
 				class="btn-lg"
-				class:btn-sel={showAssistant}
-				aria-pressed={showAssistant}
-				onclick={() => (showAssistant = !showAssistant)}>{t('assistant.open')}</button
-			>
-			<button
-				class="btn-lg"
 				class:btn-sel={showHistory && !editing}
 				aria-pressed={showHistory && !editing}
 				disabled={editing}
@@ -226,6 +221,9 @@
 		<Skeleton pane lines={8} />
 	{:else}
 		<div class="filters">
+			{#if !dash.builtin}
+				<FillButton {guard} onclick={() => (fillOpen = true)} />
+			{/if}
 			<Segmented
 				label={t('analytics.dashboard.range')}
 				bind:value={range}
@@ -242,10 +240,8 @@
 			{/each}
 		</div>
 
-		{#if showAssistant && !dash.builtin}
-			<div class="assist">
-				<AssistantPanel kind="dashboard" subject={dash.id} {guard} {pageState} />
-			</div>
+		{#if !dash.builtin}
+			<FillAssistant bind:open={fillOpen} kind="dashboard" subject={dash.id} {guard} {pageState} />
 		{/if}
 
 		{#if showHistory && !editing && !dash.builtin}
@@ -321,9 +317,6 @@
 />
 
 <style>
-	.assist {
-		max-width: 720px;
-	}
 	.grid {
 		display: grid;
 		grid-template-columns: repeat(12, minmax(0, 1fr));

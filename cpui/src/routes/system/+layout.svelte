@@ -39,6 +39,7 @@
 		section('integrations', I.integrations),
 		section('channels', I.channels),
 		section('account', I.members),
+		section('assistant', I.sparkle),
 		...(session.admin ? [section('users', I.members), section('observability', I.info)] : []),
 		section('provisioner', I.provisioner)
 	]);

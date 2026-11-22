@@ -169,9 +169,17 @@ describe('slide', () => {
 		);
 	});
 
-	it('is a plain fade under reduced motion', () => {
+	it('is quick when told: a short ease-out, still from the edge to its place', () => {
+		const quick = slide(sized(), { from: 'right', quick: true });
+		expect(quick.duration).toBe(200);
+		expect(quick.duration).toBeLessThan(slide(sized(), { from: 'right' }).duration!);
+		expect(quick.css!(0, 1)).toBe('transform:translateX(316px);opacity:0');
+		expect(quick.css!(1, 0)).toBe('transform:translateX(0px);opacity:1');
+	});
+
+	it.each([false, true])('is a plain fade under reduced motion (quick: %s)', (quick) => {
 		reducedMotion();
-		const { duration, css } = slide(sized(), { from: 'left' });
+		const { duration, css } = slide(sized(), { from: 'left', quick });
 		expect(duration).toBe(160);
 		expect(css!(0, 1)).toBe('opacity:0');
 		expect(css!(1, 0)).toBe('opacity:1');

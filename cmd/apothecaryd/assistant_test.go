@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"slices"
@@ -21,6 +22,8 @@ import (
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/tickets"
+	"apothecary/internal/skills"
+	"apothecary/internal/skills/skillstore"
 )
 
 // The assistant on: the boot wires its pods on Kubernetes, and refuses an
@@ -203,5 +206,30 @@ func TestAssistantAdapters(t *testing.T) {
 	}
 	if _, err := types.TicketTypes(ctx, owner.ID, "nope"); err == nil {
 		t.Error("an unknown workshop's ticket types: no error")
+	}
+
+	// The skill library: a ref that does not resolve is a skillset gone,
+	// the store failing to answer is not.
+	lib := skillLibrary{skillstore.New(a.store, a.blobs)}
+	set, err := lib.CreateSkillset(ctx, owner.ID, skillstore.SkillsetInput{Name: "tickets"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pins, err := lib.ResolveSkillsets(ctx, owner.ID, []skills.Ref{{ID: set.ID}}); err != nil || len(pins) != 1 {
+		t.Fatalf("my skillset = %+v, %v", pins, err)
+	}
+	for name, ref := range map[string]skills.Ref{"another's": {ID: set.ID}, "deleted": {ID: "nope"}, "no such version": {ID: set.ID, Seq: 9}} {
+		who := stranger.ID
+		if name != "another's" {
+			who = owner.ID
+		}
+		if _, err := lib.ResolveSkillsets(ctx, who, []skills.Ref{ref}); !errors.Is(err, assistant.ErrSkillsetGone) {
+			t.Errorf("%s = %v", name, err)
+		}
+	}
+	gone, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := lib.ResolveSkillsets(gone, owner.ID, []skills.Ref{{ID: set.ID}}); err == nil || errors.Is(err, assistant.ErrSkillsetGone) {
+		t.Errorf("the store failing = %v", err)
 	}
 }

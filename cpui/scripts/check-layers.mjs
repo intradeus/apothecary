@@ -25,7 +25,8 @@ const LAYERS = [
 	// The design system, then what every page shares.
 	['ui'],
 	['app'],
-	// The assistant's panel and fill guard, which feature pages host.
+	// The assistant: the global drawer the shell mounts, and the fill modal
+	// and guard feature pages host.
 	['assistant'],
 	// Features, in dependency order.
 	['artifacts', 'desk', 'flow', 'skills', 'system', 'analytics', 'notices'],

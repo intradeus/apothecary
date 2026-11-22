@@ -36,6 +36,7 @@ describe('to', () => {
 		[to.flow('p1', 'builder'), '/w/p1/flows/builder'],
 		[to.system(), '/system/integrations'],
 		[to.system('provisioner'), '/system/provisioner'],
+		[to.system('assistant'), '/system/assistant'],
 		[to.limits(), '/system/provisioner#limits'],
 		[to.integrations('harness'), '/system/integrations/harness'],
 		[to.account(), '/system/account'],

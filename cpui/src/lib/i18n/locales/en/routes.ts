@@ -154,6 +154,11 @@ export default {
 	'page.system.users.accent': 'of this apothecary',
 	'page.system.users.sub':
 		'Every account on this instance. Each person’s workshops, runs and credentials are their own; an admin manages accounts and nothing more.',
+	'page.system.assistant.label': 'Assistant',
+	'page.system.assistant.title': 'Your assistant',
+	'page.system.assistant.accent': '& what it runs on',
+	'page.system.assistant.sub':
+		'The harness, model and skillsets your assistant starts new conversations with.',
 	'page.system.provisioner.label': 'Provisioner',
 	'page.system.provisioner.title': 'The provisioner',
 	'page.system.provisioner.accent': 'tends the bench',

@@ -25,6 +25,8 @@ import (
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/confstore/conftest"
+	"apothecary/internal/skills"
+	"apothecary/internal/skills/skillstore"
 )
 
 type apiHarnesses struct{}
@@ -132,6 +134,17 @@ func TestAssistantSessionsArePersonal(t *testing.T) {
 	if again.Session.ID != view.Session.ID {
 		t.Error("the same subject opened two sessions")
 	}
+	fresh := decode[AssistantSessionView](t, x.expect(t, "open fresh", nil, "POST", "/api/assistant/sessions",
+		AssistantOpenRequest{Kind: "flow", Workshop: testProject, Subject: "builder", Fresh: true}, 200))
+	if fresh.Session.ID == view.Session.ID || len(fresh.Messages) != 0 {
+		t.Errorf("a fresh open = %+v", fresh.Session)
+	}
+	// By its id: the session held, not the subject's latest.
+	byID := decode[AssistantSessionView](t, x.expect(t, "the first session by its id", nil, "GET", "/api/assistant/sessions/"+view.Session.ID, nil, 200))
+	if byID.Session.ID != view.Session.ID || byID.Messages == nil || byID.Busy {
+		t.Errorf("the session by its id = %+v", byID)
+	}
+	x.expect(t, "a session not there", nil, "GET", "/api/assistant/sessions/nope", nil, 404)
 	// Another's workshop is not there; a bad kind is refused.
 	x.expect(t, "another's workshop", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "flow", Workshop: "prj-bob", Subject: "x"}, 404)
 	x.expect(t, "a bad kind", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "widget", Workshop: testProject, Subject: "x"}, 400)
@@ -140,13 +153,14 @@ func TestAssistantSessionsArePersonal(t *testing.T) {
 	x.expect(t, "messages", nil, "GET", "/api/assistant/sessions/"+id+"/messages", nil, 200)
 	x.expect(t, "a question with no pod", nil, "POST", "/api/assistant/sessions/"+id+"/messages", AssistantMessageRequest{Text: "hi"}, 503)
 	x.expect(t, "the model", nil, "PUT", "/api/assistant/sessions/"+id+"/model", AssistantModelRequest{Model: "acme/two"}, 200)
-	x.expect(t, "the subject", nil, "PUT", "/api/assistant/sessions/"+id+"/subject", AssistantSubjectRequest{Subject: "reviewer"}, 200)
+	x.expect(t, "the subject route is gone", nil, "PUT", "/api/assistant/sessions/"+id+"/subject", map[string]string{"subject": "reviewer"}, 404)
 	x.expect(t, "cancel", nil, "POST", "/api/assistant/sessions/"+id+"/cancel", nil, 204)
 	x.expect(t, "a refresh with no pod", nil, "POST", "/api/assistant/repos/refresh", AssistantRefreshRequest{Workshop: testProject}, 503)
 	x.expect(t, "a refresh of another's", nil, "POST", "/api/assistant/repos/refresh", AssistantRefreshRequest{Workshop: "prj-bob"}, 404)
 
 	// Bob reaches none of my session: not there at all.
 	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/assistant/sessions/" + id},
 		{"GET", "/api/assistant/sessions/" + id + "/messages"},
 		{"POST", "/api/assistant/sessions/" + id + "/messages"},
 		{"PUT", "/api/assistant/sessions/" + id + "/model"},
@@ -315,8 +329,10 @@ func TestAssistantStatusCodes(t *testing.T) {
 	}
 }
 
-// A session's token lists request beside fill (none on the palette's page),
-// with its session bound; each act must be a write tool fitting its input.
+// A page's session token lists fill and no request; the general session's
+// (the assistant button's) lists request and no fill, with its session
+// bound; each act must be a write tool fitting its input, and every write
+// tool the face serves may be one.
 func TestAssistantRequestTool(t *testing.T) {
 	x := newAssistantEnv(t)
 	ctx := context.Background()
@@ -345,19 +361,19 @@ func TestAssistantRequestTool(t *testing.T) {
 		}
 		return out, hdr
 	}
-	ticket := open("ticket", testProject, "T-1")
-	got, hdr := tools(ticket)
-	if got["fill"] == "" || got["request"] == "" || strings.Contains(got["request"], `"id"`) {
+	got, _ := tools(open("ticket", testProject, "T-1"))
+	if got["fill"] == "" || got["request"] != "" {
 		t.Errorf("a ticket session's bound tools: fill %q, request %q", got["fill"], got["request"])
 	}
-	for name := range got {
+	general := open("general", testProject, "palette")
+	palette, hdr := tools(general)
+	if palette["fill"] != "" || palette["request"] == "" || strings.Contains(palette["request"], `"id"`) {
+		t.Errorf("the general session's bound tools: %v", slices.Sorted(maps.Keys(palette)))
+	}
+	for name := range palette {
 		if strings.HasPrefix(name, "create_") || strings.HasPrefix(name, "start_") || strings.HasPrefix(name, "update_") {
 			t.Errorf("the session's token lists a write: %s", name)
 		}
-	}
-	palette, _ := tools(open("general", "", "palette"))
-	if palette["fill"] != "" || palette["request"] == "" {
-		t.Errorf("the palette's bound tools: %v", slices.Sorted(maps.Keys(palette)))
 	}
 
 	call := func(acts []map[string]any) string {
@@ -379,32 +395,62 @@ func TestAssistantRequestTool(t *testing.T) {
 			t.Errorf("%s = %s", name, out)
 		}
 	}
+	// Every write tool the face serves may be an act: the never-a-tool list
+	// (no route of it is a tool) is the only bound, beside the arguments.
+	all, err := mcpCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var writes []string
+	for _, tl := range all {
+		if boundRoute(tl.route.ID) || readRoute(tl.route) || (tl.route.Enabled != nil && !tl.route.Enabled(x.srv)) {
+			continue
+		}
+		writes = append(writes, tl.def.Name)
+		_, errs := x.srv.checkActs(AssistantActsRequest{Why: "x", Acts: []AssistantActIn{{Tool: tl.def.Name}}})
+		for _, e := range errs {
+			if !strings.Contains(e, tl.def.Name+"'s arguments") {
+				t.Errorf("%s is refused as an act: %s", tl.def.Name, e)
+			}
+		}
+	}
+	for _, want := range []string{"create_ticket", "start_run", "pause_run", "resume_run", "retry_run", "abort_run", "create_flow"} {
+		if !slices.Contains(writes, want) {
+			t.Errorf("%s is not among the write tools served: %v", want, writes)
+		}
+	}
 	// The agent never confirms its own request: its token cannot reach the
 	// person's decision.
-	m, err := svc.Store.AppendAssistantMessage(ctx, assistant.Message{SessionID: ticket.ID, Role: assistant.RoleAssistant,
+	m, err := svc.Store.AppendAssistantMessage(ctx, assistant.Message{SessionID: general.ID, Role: assistant.RoleAssistant,
 		Request: &assistant.Request{Why: "x", State: assistant.RequestPending, Acts: []assistant.Act{{Tool: "start_run", Arguments: json.RawMessage(`{}`)}}}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, verb := range []string{"confirm", "decline"} {
-		x.expect(t, "the session's own "+verb, hdr, "POST", fmt.Sprintf("/api/assistant/sessions/%s/messages/%d/%s", ticket.ID, m.Seq, verb), nil, 403)
+		x.expect(t, "the session's own "+verb, hdr, "POST", fmt.Sprintf("/api/assistant/sessions/%s/messages/%d/%s", general.ID, m.Seq, verb), nil, 403)
 	}
 	// The route itself: only the session's own token.
-	x.expect(t, "my token", nil, "POST", "/api/assistant/sessions/"+ticket.ID+"/request",
+	x.expect(t, "my token", nil, "POST", "/api/assistant/sessions/"+general.ID+"/request",
 		AssistantActsRequest{Why: "x", Acts: []AssistantActIn{{Tool: "start_run", Arguments: map[string]any{"id": testProject, "key": "T-1"}}}}, 403)
 }
 
 // The person's click runs each act through its route as the person: here,
-// from a ticket's page, "start a run on this" starts it with one
-// confirmation. A token without the act's action gets the refusal as the
-// outcome; a declined request runs nothing.
+// from the assistant button on a workshop's page, "start a run on this
+// ticket" starts it with one confirmation. A token without the act's
+// action gets the refusal as the outcome; a declined request runs nothing.
 func TestAssistantRequestConfirmed(t *testing.T) {
 	x := newAssistantEnv(t)
 	ctx := context.Background()
 	svc := x.srv.Assistant
 	key := x.newTicket(t, "Add a health endpoint", "")
 	s := decode[AssistantSessionView](t, x.expect(t, "open", nil, "POST", "/api/assistant/sessions",
-		AssistantOpenRequest{Kind: "ticket", Workshop: testProject, Subject: key}, 200)).Session
+		AssistantOpenRequest{Kind: "general", Workshop: testProject, Subject: "palette"}, 200)).Session
+	// The act passes the request tool's checks: only no question in flight
+	// stops it here (the service's tests hold a request made mid-answer).
+	if _, errs := x.srv.checkActs(AssistantActsRequest{Why: "Start a run on it.", Acts: []AssistantActIn{{Tool: "start_run",
+		Arguments: map[string]any{"id": testProject, "key": key}}}}); len(errs) > 0 {
+		t.Fatalf("start_run as an act: %v", errs)
+	}
 	ask := func(acts ...assistant.Act) assistant.Message {
 		m, err := svc.Store.AppendAssistantMessage(ctx, assistant.Message{SessionID: s.ID, Role: assistant.RoleAssistant, Text: "Shall I?",
 			Request: &assistant.Request{Why: "Start a run on it.", State: assistant.RequestPending, Acts: acts}})
@@ -444,6 +490,9 @@ func TestAssistantRequestConfirmed(t *testing.T) {
 	if declined.Request.State != assistant.RequestDeclined || declined.Request.Acts[0].Status != 0 {
 		t.Errorf("declined = %+v", declined.Request)
 	}
+	if runs := decode[[]map[string]any](t, x.expect(t, "runs", nil, "GET", "/api/runs?project="+testProject, nil, 200)); len(runs) != 1 {
+		t.Errorf("runs after the decline = %d", len(runs))
+	}
 	x.expect(t, "a bad seq", nil, "POST", "/api/assistant/sessions/"+s.ID+"/messages/x/confirm", nil, 400)
 	x.expect(t, "no request there", nil, "POST", "/api/assistant/sessions/"+s.ID+"/messages/999/confirm", nil, 404)
 }
@@ -459,12 +508,9 @@ func TestAssistantSessionRoutes(t *testing.T) {
 	if got := decode[assistant.Session](t, x.expect(t, "model", nil, "PUT", base+"/model", AssistantModelRequest{Model: "acme/two"}, 200)); got.Model != "acme/two" {
 		t.Errorf("model = %+v", got)
 	}
-	if got := decode[assistant.Session](t, x.expect(t, "subject", nil, "PUT", base+"/subject", AssistantSubjectRequest{Subject: "T-9"}, 200)); got.Subject != "T-9" {
-		t.Errorf("subject = %+v", got)
-	}
-	x.expect(t, "no subject", nil, "PUT", base+"/subject", AssistantSubjectRequest{Subject: " "}, 400)
 	for _, c := range []struct{ method, path string }{
-		{"PUT", base + "/model"}, {"PUT", base + "/subject"}, {"POST", base + "/request"}, {"POST", "/api/assistant/repos/refresh"},
+		{"PUT", base + "/model"}, {"POST", base + "/request"}, {"POST", "/api/assistant/repos/refresh"},
+		{"PUT", "/api/assistant/choice"}, {"POST", "/api/assistant/sessions"}, {"POST", base + "/messages"},
 	} {
 		res, _ := x.do(t, c.method, c.path, "not an object", nil)
 		if res.StatusCode != http.StatusBadRequest {
@@ -474,4 +520,85 @@ func TestAssistantSessionRoutes(t *testing.T) {
 	// No pods on this server: a refresh says so.
 	x.expect(t, "refresh", nil, "POST", "/api/assistant/repos/refresh", AssistantRefreshRequest{Workshop: testProject}, 503)
 	x.expect(t, "refresh elsewhere", nil, "POST", "/api/assistant/repos/refresh", AssistantRefreshRequest{Workshop: "nope"}, 404)
+}
+
+// apiPods is a pod that only starts: what a warm reaches.
+type apiPods struct {
+	assistantport.Pods
+	ensured chan []string
+}
+
+func (apiPods) Status(context.Context, string) (assistantport.Status, error) {
+	return assistantport.Status{State: assistantport.PodRunning}, nil
+}
+
+func (p apiPods) Ensure(_ context.Context, _ string, hosts []string) error {
+	p.ensured <- hosts
+	return nil
+}
+
+// apiWarmHarnesses open a harness that only names its hosts.
+type apiWarmHarnesses struct{ apiHarnesses }
+
+type apiHarness struct{ assistant.Harness }
+
+func (apiHarness) EgressDomains() []string { return []string{"api.anthropic.com"} }
+
+func (apiWarmHarnesses) Open(context.Context, string, string, envport.EnvProvisioner) (assistant.Harness, error) {
+	return apiHarness{}, nil
+}
+
+// A warm starts one's pod with the harness's hosts and answers at once;
+// it is no route on a server with no assistant.
+func TestAssistantWarm(t *testing.T) {
+	x := newAssistantEnv(t)
+	x.expect(t, "no pods", nil, "POST", "/api/assistant/warm", nil, 503)
+	pods := apiPods{ensured: make(chan []string, 1)}
+	x.srv.Assistant.Pods = pods
+	x.srv.Assistant.Harnesses = apiWarmHarnesses{}
+	x.expect(t, "no harness chosen", nil, "POST", "/api/assistant/warm", nil, 409)
+	x.expect(t, "choose", nil, "PUT", "/api/assistant/choice", AssistantChoiceRequest{Integration: "int-1"}, 200)
+	x.expect(t, "warm", nil, "POST", "/api/assistant/warm", nil, 202)
+	select {
+	case hosts := <-pods.ensured:
+		if !slices.Equal(hosts, []string{"api.anthropic.com"}) {
+			t.Errorf("ensured with %v", hosts)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the pod was not started")
+	}
+	plain := newEnv(t, engine.Config{})
+	plain.expect(t, "no assistant", nil, "POST", "/api/assistant/warm", nil, 404)
+}
+
+// apiNoHarness opens no harness, at once: a status lists no models.
+type apiNoHarness struct{ apiHarnesses }
+
+func (apiNoHarness) Open(context.Context, string, string, envport.EnvProvisioner) (assistant.Harness, error) {
+	return nil, errors.New("no harness in these tests")
+}
+
+// A choice names one's own skillsets: they are saved and the status shows
+// them; another's is refused.
+func TestAssistantChoiceSkillsets(t *testing.T) {
+	x := newAssistantEnv(t)
+	skl := newTestSkills(t, nil)
+	skl.serve(t, x)
+	x.srv.Assistant.Skills = skl.lib
+	x.srv.Assistant.Pods = apiPods{}
+	x.srv.Assistant.Harnesses = apiNoHarness{}
+	bob := x.addUser(t, "bob", false)
+	setOf := func(who string, hdr map[string]string) string {
+		t.Helper()
+		skill := decode[skillstore.Skill](t, x.expect(t, who, hdr, "POST", "/api/skills", skillBody(who, "d"), http.StatusCreated)).ID
+		data := x.expect(t, who, hdr, "POST", "/api/skillsets", SkillsetRequest{Name: who, SkillIDs: []string{skill}}, http.StatusCreated)
+		return decode[skillstore.Skillset](t, data).ID
+	}
+	mine, bobs := setOf("tickets", nil), setOf("bobs", bob)
+	x.expect(t, "mine", nil, "PUT", "/api/assistant/choice", AssistantChoiceRequest{Integration: "int-1", Skillsets: []skills.Ref{{ID: mine}}}, 200)
+	st := decode[assistant.Status](t, x.expect(t, "status", nil, "GET", "/api/assistant", nil, 200))
+	if !slices.Equal(st.Choice.Skillsets, []skills.Ref{{ID: mine}}) {
+		t.Errorf("the status's skillsets = %+v", st.Choice.Skillsets)
+	}
+	x.expect(t, "bob's", nil, "PUT", "/api/assistant/choice", AssistantChoiceRequest{Integration: "int-1", Skillsets: []skills.Ref{{ID: bobs}}}, 400)
 }

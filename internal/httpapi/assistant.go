@@ -1,8 +1,9 @@
 package httpapi
 
-// The assistant's routes (docs/assistant-plan.md, phase 3): a person's
-// sessions beside the flow, ticket and skill pages, their stream, and the
-// fill a session's agent calls through the MCP face.
+// The assistant's routes (docs/assistant-plan.md): a person's sessions (a
+// page's, which fills it, and the general one, which acts by requests),
+// their stream, the pod warmed ahead of a question, and the fill and
+// request a session's agent calls through the MCP face.
 
 import (
 	"bytes"
@@ -22,14 +23,17 @@ import (
 	"apothecary/internal/account/authz"
 	"apothecary/internal/assistant"
 	"apothecary/internal/project/confstore"
+	"apothecary/internal/skills"
 )
 
 func haveAssistant(s *Server) bool { return s.Assistant != nil }
 
-// AssistantChoiceRequest is a person's harness integration and model.
+// AssistantChoiceRequest is a person's harness integration, model and
+// skillsets.
 type AssistantChoiceRequest struct {
-	Integration string `json:"integration"`
-	Model       string `json:"model"`
+	Integration string       `json:"integration"`
+	Model       string       `json:"model"`
+	Skillsets   []skills.Ref `json:"skillsets,omitempty" doc:"Skillsets (one's own) a new session installs; no seq is the latest version."`
 }
 
 // AssistantOpenRequest opens (or finds) the session about a subject.
@@ -37,6 +41,7 @@ type AssistantOpenRequest struct {
 	Kind     string `json:"kind"`
 	Workshop string `json:"workshop_id,omitempty"`
 	Subject  string `json:"subject"`
+	Fresh    bool   `json:"fresh,omitempty" doc:"Open a new session, even when one about the subject exists."`
 }
 
 // AssistantSessionView is a session and its messages.
@@ -56,11 +61,6 @@ type AssistantMessageRequest struct {
 // AssistantModelRequest picks a session's model.
 type AssistantModelRequest struct {
 	Model string `json:"model"`
-}
-
-// AssistantSubjectRequest moves a draft's session to what it was saved as.
-type AssistantSubjectRequest struct {
-	Subject string `json:"subject"`
 }
 
 // AssistantRefreshRequest fetches a workshop's repositories now.
@@ -111,7 +111,7 @@ func (s *Server) putAssistantChoice(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
-	c := assistant.Choice{Integration: body.Integration, Model: body.Model}
+	c := assistant.Choice{Integration: body.Integration, Model: body.Model, Skillsets: body.Skillsets}
 	if err := s.Assistant.SetChoice(r.Context(), auth.UserID(r.Context()), c); err != nil {
 		writeErr(w, assistantStatus(err), err.Error())
 		return
@@ -128,7 +128,19 @@ func (s *Server) openAssistantSession(w http.ResponseWriter, r *http.Request) {
 	if body.Workshop != "" && !s.projectIn(w, r, authz.ProjectRead, body.Workshop) {
 		return
 	}
-	sess, msgs, err := s.Assistant.Open(r.Context(), auth.UserID(r.Context()), assistant.Kind(body.Kind), body.Workshop, body.Subject)
+	sess, msgs, err := s.Assistant.Open(r.Context(), auth.UserID(r.Context()), assistant.Kind(body.Kind), body.Workshop, body.Subject, body.Fresh)
+	if err != nil {
+		writeErr(w, assistantStatus(err), err.Error())
+		return
+	}
+	if msgs == nil {
+		msgs = []assistant.Message{}
+	}
+	writeJSON(w, http.StatusOK, AssistantSessionView{Session: sess, Messages: msgs, Busy: s.Assistant.Busy(sess.ID)})
+}
+
+func (s *Server) getAssistantSession(w http.ResponseWriter, r *http.Request) {
+	sess, msgs, err := s.Assistant.Reopen(r.Context(), auth.UserID(r.Context()), r.PathValue("id"))
 	if err != nil {
 		writeErr(w, assistantStatus(err), err.Error())
 		return
@@ -194,19 +206,6 @@ func (s *Server) putAssistantModel(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, sess)
 }
 
-func (s *Server) putAssistantSubject(w http.ResponseWriter, r *http.Request) {
-	var body AssistantSubjectRequest
-	if !readJSON(w, r, &body) {
-		return
-	}
-	sess, err := s.Assistant.Rebind(r.Context(), auth.UserID(r.Context()), r.PathValue("id"), body.Subject)
-	if err != nil {
-		writeErr(w, assistantStatus(err), err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, sess)
-}
-
 func (s *Server) refreshAssistantRepos(w http.ResponseWriter, r *http.Request) {
 	var body AssistantRefreshRequest
 	if !readJSON(w, r, &body) {
@@ -224,6 +223,14 @@ func (s *Server) refreshAssistantRepos(w http.ResponseWriter, r *http.Request) {
 		views = []assistant.RepoView{}
 	}
 	writeJSON(w, http.StatusOK, views)
+}
+
+func (s *Server) warmAssistant(w http.ResponseWriter, r *http.Request) {
+	if err := s.Assistant.Warm(r.Context(), auth.UserID(r.Context())); err != nil {
+		writeErr(w, assistantStatus(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
 }
 
 // fillAssistantSession is the fill tool: only the session's own token,
@@ -477,12 +484,17 @@ func (s *Server) assistantRoutes() []Route {
 			Query:   []Param{{Name: "workshop", Doc: "the workshop whose repositories to report"}},
 			Handler: s.getAssistant, Returns: assistant.Status{}, Enabled: haveAssistant, Action: authz.AssistantRead},
 		{Method: "PUT", Path: "/api/assistant/choice", ID: "setAssistantChoice", Tag: tagAssistant,
-			Summary: "Pick the harness integration (one's own) the assistant runs on, and the model it starts with",
+			Summary: "Pick the harness integration (one's own) the assistant runs on, the model it starts with and the skillsets it installs",
+			Doc:     "Applies to sessions opened from now on: an open one keeps what it started with.",
 			Handler: s.putAssistantChoice, Body: AssistantChoiceRequest{}, Returns: assistant.Choice{}, Enabled: haveAssistant, Action: authz.AssistantWrite},
 		{Method: "POST", Path: "/api/assistant/sessions", ID: "openAssistantSession", Tag: tagAssistant,
 			Summary: "Open the session about a subject: one's latest about it, or a new one",
-			Doc:     "kind is flow, ticket or skill; subject the flow's name, the ticket's key, the skill's id, or a draft id before the first save. A flow's or a ticket's session names its workshop.",
+			Doc:     "kind is flow, ticket, skill, run, dashboard (a page's session, which fills it) or general (the assistant button's, which acts by requests); subject the flow's name, the ticket's key, the skill's id, the run's id, the dashboard's id, or a draft id before the first save. A flow's, a ticket's or a run's session names its workshop. fresh opens a new session even when one exists.",
 			Handler: s.openAssistantSession, Body: AssistantOpenRequest{}, Returns: AssistantSessionView{}, Enabled: haveAssistant, Action: authz.AssistantWrite},
+		{Method: "GET", Path: "/api/assistant/sessions/{id}", ID: "getAssistantSession", Tag: tagAssistant,
+			Summary: "One of one's sessions by its id: the session, its messages, and whether it is answering now",
+			Doc:     "What a page holding the session reads it again by when frames were lost: never another session about the same subject.",
+			Handler: s.getAssistantSession, Returns: AssistantSessionView{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantRead},
 		{Method: "GET", Path: "/api/assistant/sessions/{id}/messages", ID: "listAssistantMessages", Tag: tagAssistant,
 			Summary: "A session's messages, after a sequence",
 			Query:   []Param{{Name: "after", Doc: "the last sequence already held", Type: "integer"}},
@@ -497,12 +509,13 @@ func (s *Server) assistantRoutes() []Route {
 		{Method: "PUT", Path: "/api/assistant/sessions/{id}/model", ID: "setAssistantModel", Tag: tagAssistant,
 			Summary: "Pick the model the session answers with from its next question",
 			Handler: s.putAssistantModel, Body: AssistantModelRequest{}, Returns: assistant.Session{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantWrite},
-		{Method: "PUT", Path: "/api/assistant/sessions/{id}/subject", ID: "setAssistantSubject", Tag: tagAssistant,
-			Summary: "Move a draft's session to what it was saved as",
-			Handler: s.putAssistantSubject, Body: AssistantSubjectRequest{}, Returns: assistant.Session{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantWrite},
 		{Method: "POST", Path: "/api/assistant/repos/refresh", ID: "refreshAssistantRepos", Tag: tagAssistant,
 			Summary: "Fetch a workshop's repositories into one's assistant pod now",
 			Handler: s.refreshAssistantRepos, Body: AssistantRefreshRequest{}, Returns: []assistant.RepoView{}, Enabled: haveAssistant, Action: authz.AssistantWrite},
+		{Method: "POST", Path: "/api/assistant/warm", ID: "warmAssistant", Tag: tagAssistant,
+			Summary: "Start one's assistant pod ahead of a question",
+			Doc:     "Called as the person starts typing a question, so its answer does not wait for the pod. Returns at once; one warm runs at a time. 409 when no harness is chosen.",
+			Handler: s.warmAssistant, Status: http.StatusAccepted, Enabled: haveAssistant, Action: authz.AssistantWrite},
 		{Method: "GET", Path: "/api/assistant/stream", ID: "streamAssistant", Tag: tagAssistant,
 			Summary: "Server-sent event stream of one's assistant",
 			Doc:     "Every session's answers as they are written (delta), messages as they land, a session's state, fills for the page, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.",

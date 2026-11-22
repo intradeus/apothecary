@@ -89,22 +89,25 @@ export function scrim(_node: Element): TransitionConfig {
 }
 
 /** A sheet travelling in from an edge and back out the same edge (drawers,
- *  toasts). `distance` defaults to the node's own size along the axis. */
+ *  toasts). `distance` defaults to the node's own size along the axis.
+ *  `quick` is a short ease-out (about 200ms) instead of the spring: for an
+ *  overlay opened often, which should be there at once. */
 export function slide(
 	node: Element,
-	p: { from: 'left' | 'right' | 'top' | 'bottom'; distance?: number }
+	p: { from: 'left' | 'right' | 'top' | 'bottom'; distance?: number; quick?: boolean }
 ): TransitionConfig {
 	const el = node as HTMLElement;
 	const horizontal = p.from === 'left' || p.from === 'right';
 	const dist = p.distance ?? (horizontal ? el.offsetWidth : el.offsetHeight) + 16;
 	const sign = p.from === 'left' || p.from === 'top' ? -1 : 1;
-	const move = ms('--dur-spring', 450);
 	const fade = ms('--dur-fade', 160);
 	if (reduced()) return { duration: fade, css: (t) => `opacity:${easeOut(t)}` };
+	const move = p.quick ? fade * 1.25 : ms('--dur-spring', 450);
+	const curve = p.quick ? easeOut : spring;
 	return {
 		duration: move,
 		css: (t) => {
-			const d = sign * dist * (1 - spring(t));
+			const d = sign * dist * (1 - curve(t));
 			return `transform:${horizontal ? `translateX(${d}px)` : `translateY(${d}px)`};opacity:${Math.min(1, t * 3)}`;
 		}
 	};

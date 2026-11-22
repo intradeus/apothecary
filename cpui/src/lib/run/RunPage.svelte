@@ -24,7 +24,6 @@
 	import FlowView from './views/FlowView.svelte';
 	import SessionView from './views/SessionView.svelte';
 	import AskView from './views/AskView.svelte';
-	import AssistantView from './views/AssistantView.svelte';
 	import PingsView from './views/PingsView.svelte';
 	import PhasesView from './views/PhasesView.svelte';
 	import TimelineView from './views/TimelineView.svelte';
@@ -97,8 +96,6 @@
 				return { hint: t(rs.terminal ? 'run.page.closed' : 'run.page.following') };
 			case 'ask':
 				return { hint: t('run.page.askHint') };
-			case 'assistant':
-				return { hint: t('run.page.assistantHint') };
 			case 'pings':
 				return rs.pendingPings.length
 					? { count: rs.pendingPings.length, alert: 'attention', hint: t('run.page.waitingOnYou') }
@@ -292,8 +289,6 @@
 					/>
 				{:else if v === 'ask'}
 					<AskView {rs} visible={p.visible} onpath={openPath} />
-				{:else if v === 'assistant'}
-					<AssistantView {rs} />
 				{:else if v === 'pings'}
 					<PingsView {rs} />
 				{:else if v === 'phases'}

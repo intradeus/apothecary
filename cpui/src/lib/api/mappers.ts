@@ -31,7 +31,7 @@ import type {
 	UserRole
 } from '$lib/domain';
 import type { Credential, Notice, ProviderInfo, SignInPending } from '$lib/domain';
-import { asChangeType, MEMBER_ROLES, VERSION_AUTHOR_KINDS } from '$lib/domain';
+import { ASSISTANT_KINDS, asChangeType, MEMBER_ROLES, VERSION_AUTHOR_KINDS } from '$lib/domain';
 import type {
 	Skill,
 	SkillDetail,
@@ -1972,7 +1972,9 @@ export function toSwarm(w: Wire.Swarm): Swarm {
 
 // --- the assistant -------------------------------------------------------------
 
-const assistantKind = (k: string): AssistantKind => (k === 'ticket' || k === 'skill' ? k : 'flow');
+/** A session's or a fill's page; one this UI does not know is no page. */
+export const toAssistantKind = (k: string): AssistantKind =>
+	(ASSISTANT_KINDS as readonly string[]).includes(k) ? (k as AssistantKind) : 'general';
 
 export function toAssistantRepo(w: Wire.AssistantRepo): AssistantRepo {
 	return {
@@ -1988,13 +1990,19 @@ export function toAssistantRepo(w: Wire.AssistantRepo): AssistantRepo {
 export function toAssistantStatus(w: Wire.AssistantStatus): AssistantStatus {
 	const pages: AssistantStatus['pages'] = {};
 	for (const [k, v] of Object.entries(w.pages ?? {})) {
-		if (k === 'flow' || k === 'ticket' || k === 'skill')
-			pages[k] = { presets: v.presets ?? [], repos: v.repos };
+		if ((ASSISTANT_KINDS as readonly string[]).includes(k))
+			pages[k as AssistantKind] = { presets: v.presets ?? [], repos: v.repos };
 	}
 	return {
 		enabled: w.enabled,
 		reason: w.reason || undefined,
-		choice: { integration: w.choice.integration, model: w.choice.model },
+		choice: {
+			integration: w.choice.integration,
+			model: w.choice.model,
+			skillsets: (w.choice.skillsets ?? []).map((r) =>
+				r.seq ? { id: r.id, seq: r.seq } : { id: r.id }
+			)
+		},
 		integrations: (w.integrations ?? []).map((i) => ({ id: i.id, name: i.name, kind: i.kind })),
 		models: w.models ?? [],
 		pod: { state: w.pod.state, error: w.pod.error || undefined },
@@ -2006,7 +2014,7 @@ export function toAssistantStatus(w: Wire.AssistantStatus): AssistantStatus {
 export function toAssistantSession(w: Wire.AssistantSession): AssistantSession {
 	return {
 		id: w.id,
-		kind: assistantKind(w.kind),
+		kind: toAssistantKind(w.kind),
 		workshop: w.workshop || undefined,
 		subject: w.subject,
 		integration: w.integration || undefined,

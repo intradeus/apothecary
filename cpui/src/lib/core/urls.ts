@@ -27,7 +27,14 @@ export type WorkshopTab =
 export const INTEGRATION_PORTS = ['repository', 'ticketsource', 'harness'] as const;
 export type IntegrationPort = (typeof INTEGRATION_PORTS)[number];
 export type SystemSection =
-	'integrations' | 'providers' | 'channels' | 'account' | 'users' | 'provisioner' | 'observability';
+	| 'integrations'
+	| 'providers'
+	| 'channels'
+	| 'account'
+	| 'users'
+	| 'provisioner'
+	| 'observability'
+	| 'assistant';
 
 /** Route builders. */
 export const to = {

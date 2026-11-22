@@ -16,7 +16,7 @@ The import graph is the architecture. Each folder of `src/lib` has a rank, and a
 | 3 | `api` | The anti-corruption layer around the generated client (see its README). |
 | 4 | `ui` | The design system: generic components. May not know what a run is called on the wire. |
 | 5 | `app` | What every page shares: `session`, `fleet`, `prefs`, `nav`. |
-| 6 | `assistant` | The assistant's panel and the fill guard, which the flow, ticket and skill pages host. |
+| 6 | `assistant` | The assistant: the global drawer (`GlobalAssistant`, behind the button on every page, which acts by requests the person confirms), a page's local fill modal (`FillAssistant`, opened by `FillButton`) and the fill guard behind it, and the `Conversation` both hold. |
 | 7+ | features | `artifacts`, `desk`, `flow`, `skills`, `system`, `analytics`, then `pings`, `review`, `curation`, `tickets`, `run`, `mrs`, `workshop`, and finally `desk-home`, `inbox`, `shell`. |
 | top | `src/routes` | Load and compose. |
 

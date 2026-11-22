@@ -24,6 +24,7 @@ export default {
 	'ui.logo.title': 'Apothecary',
 	'ui.meter.title': '{label}: {value} of {max}',
 	'ui.loading': 'Loading…',
+	'ui.brewing': 'Brewing…',
 	'ui.loading.aria': 'Loading',
 	'ui.kv.key': 'Key',
 	'ui.kv.valueFor': 'Value for {key}',

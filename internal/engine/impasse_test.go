@@ -119,6 +119,25 @@ func TestImpasseKeepGoing(t *testing.T) {
 		!strings.Contains(p.Context, "round 3: rename the cart service") || p.Phase != flow.MainPhase || p.EndsPhase {
 		t.Fatalf("ping = %+v", p)
 	}
+	// Read from the log, as PendingPings serves a ping its registry does not
+	// hold (a parked run's loop gone, or one logged after the registry was
+	// read), the impasse keeps its choices.
+	h.e.mu.Lock()
+	live := h.e.pings[p.ID]
+	delete(h.e.pings, p.ID)
+	h.e.mu.Unlock()
+	logged := ""
+	for _, pp := range h.e.PendingPings() {
+		if pp.ID == p.ID {
+			logged = strings.Join(event.ChoiceIDs(pp.Choices), ",")
+		}
+	}
+	h.e.mu.Lock()
+	h.e.pings[p.ID] = live
+	h.e.mu.Unlock()
+	if logged != "keep_going,skip,give_up" {
+		t.Errorf("the impasse's choices read from the log = %q", logged)
+	}
 	if err := h.e.AnswerPing(p.ID, PingAnswer{Answer: "approve"}); err == nil || !strings.Contains(err.Error(), "keep_going|skip|give_up") {
 		t.Errorf("a yes/no answer to a choice: %v", err)
 	}

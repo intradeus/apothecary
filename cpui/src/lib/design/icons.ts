@@ -80,6 +80,8 @@ export const I = {
 	channels: '✉' + T,
 	members: '☺' + T,
 	provisioner: '⛁',
+	// the assistant
+	sparkle: '✦',
 	// files
 	file: '▤',
 	image: '◩',
@@ -88,3 +90,11 @@ export const I = {
 } as const;
 
 export type IconName = keyof typeof I;
+
+/** The assistant's mark: a four-point sparkle and a small one beside it,
+ *  the glyph AI wears, as SVG path data on a 24×24 box. Drawn with
+ *  `fill="currentColor"`, so it takes its colour from the role tokens of
+ *  whatever holds it. */
+export const SPARKLE_PATH =
+	'M10 5C10 9.4 13.6 13 18 13C13.6 13 10 16.6 10 21C10 16.6 6.4 13 2 13C6.4 13 10 9.4 10 5Z' +
+	'M19 2C19 3.7 20.3 5 22 5C20.3 5 19 6.3 19 8C19 6.3 17.7 5 16 5C17.7 5 19 3.7 19 2Z';

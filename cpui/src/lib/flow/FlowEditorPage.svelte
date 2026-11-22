@@ -7,7 +7,8 @@
 	import { api } from '$lib/api';
 	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
-	import AssistantPanel from '$lib/assistant/AssistantPanel.svelte';
+	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
+	import FillButton from '$lib/assistant/FillButton.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { takeFlowFill } from '$lib/assistant/handoff';
 	import { flowFill } from '$lib/domain';
@@ -41,25 +42,25 @@
 		untrack(() => flowGuard.settle());
 	});
 	// Once loaded whole, a change the assistant proposed from a run (handed
-	// off) fills the editor, with its Undo. A flow that does not load drops
-	// it: it must not wait in the tab for a later opening.
+	// off) fills the editor; the fill button's mark offers its Undo. A load
+	// that fails leaves it held: Retry loads the flow and then fills it.
 	let handoffTaken = false;
 	$effect(() => {
-		const done = ed.loaded > 0;
-		const failed = !!ed.error && !ed.flow;
+		if (ed.loaded === 0) return;
 		untrack(() => {
-			if (handoffTaken || (!done && !failed)) return;
+			if (handoffTaken) return;
 			handoffTaken = true;
 			const yaml = takeFlowFill(projectId, name);
-			if (done && yaml !== null && flowGuard.applyNow({ yaml })) ed.showAssistant = true;
+			if (yaml !== null) flowGuard.applyNow({ yaml });
 		});
 	});
-	// The workshop's values for this flow's parameters, read when the
-	// assistant opens: what the agent reads beside the YAML.
+	let assistOpen = $state(false);
+	// The workshop's values for this flow's parameters, read when the fill
+	// modal opens: what the agent reads beside the YAML.
 	let boundParams = $state<Record<string, string>>({});
 	$effect(() => {
 		const name = ed.flow?.name;
-		if (!ed.showAssistant || !name) return;
+		if (!assistOpen || !name) return;
 		untrack(() => {
 			api.flows.binding(projectId, name).then(
 				(b) => (boundParams = b?.params ?? {}),
@@ -221,23 +222,25 @@
 					<ErrorCard cause={t('page.flow.editorFailed')} detail={errorMessage(e)} />
 				{/await}
 			{/if}
+			<!-- The local assistant floats bottom-left, beside the graph's
+			     controls: the top right is the global assistant's. -->
+			<div class="fill-at island" class:graph={ed.tab === 'graph'}>
+				<FillButton guard={flowGuard} onclick={() => (assistOpen = true)} />
+			</div>
 		</div>
 
-		{#if ed.showAssistant}
-			<aside class="side assist" in:slide={{ from: 'right', distance: 24 }}>
-				<AssistantPanel
-					kind="flow"
-					subject={ed.flow.name}
-					workshop={projectId}
-					guard={flowGuard}
-					pageState={() => ({
-						yaml: ed.currentYAML(),
-						errors: ed.validation?.ok === false ? (ed.validation.errors ?? []) : [],
-						params: boundParams
-					})}
-				/>
-			</aside>
-		{/if}
+		<FillAssistant
+			bind:open={assistOpen}
+			kind="flow"
+			subject={ed.flow.name}
+			workshop={projectId}
+			guard={flowGuard}
+			pageState={() => ({
+				yaml: ed.currentYAML(),
+				errors: ed.validation?.ok === false ? (ed.validation.errors ?? []) : [],
+				params: boundParams
+			})}
+		/>
 		{#if ed.showVersions}
 			<aside class="side glass" in:slide={{ from: 'right', distance: 24 }}>
 				<FlowVersions
@@ -336,12 +339,19 @@
 		font-size: var(--fs-meta);
 		pointer-events: none;
 	}
-	.assist {
-		flex: none;
-		width: 380px;
-		display: flex;
-		flex-direction: column;
-		min-height: 0;
+	.fill-at {
+		position: absolute;
+		left: 14px;
+		bottom: 14px;
+		z-index: var(--z-float);
+		max-width: calc(100% - 28px);
+		padding: 4px;
+		border-radius: var(--r-btn);
+	}
+	/* Beside the graph's controls, which stack at its bottom-left. */
+	.fill-at.graph {
+		left: 56px;
+		max-width: calc(100% - 70px);
 	}
 	/* Wider than a form's side column: the inspector edits whole agents —
 	 * prompts included — and sequences. */
@@ -358,8 +368,7 @@
 		.canvas {
 			min-height: 420px;
 		}
-		.side,
-		.assist {
+		.side {
 			width: 100%;
 		}
 		.split {

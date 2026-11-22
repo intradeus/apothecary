@@ -173,11 +173,13 @@ export type AssistantActsRequest = {
 export type AssistantChoice = {
 	integration: string;
 	model: string;
+	skillsets?: Array<Ref>;
 };
 
 export type AssistantChoiceRequest = {
 	integration: string;
 	model: string;
+	skillsets?: Array<Ref>;
 };
 
 export type AssistantFillRequest = {
@@ -217,6 +219,7 @@ export type AssistantModelRequest = {
 };
 
 export type AssistantOpenRequest = {
+	fresh?: boolean;
 	kind: string;
 	subject: string;
 	workshop_id?: string;
@@ -258,6 +261,7 @@ export type AssistantSession = {
 	integration?: string;
 	kind: string;
 	model?: string;
+	skillsets?: Array<SkillsetPin>;
 	subject: string;
 	updated_at: string;
 	user_id: string;
@@ -281,10 +285,6 @@ export type AssistantStatus = {
 	pod: AssistantPodStatus;
 	reason?: string;
 	repos: Array<AssistantRepo> | null;
-};
-
-export type AssistantSubjectRequest = {
-	subject: string;
 };
 
 export type Attachment = {
@@ -3592,6 +3592,48 @@ export type OpenAssistantSessionResponses = {
 export type OpenAssistantSessionResponse =
 	OpenAssistantSessionResponses[keyof OpenAssistantSessionResponses];
 
+export type GetAssistantSessionData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}';
+};
+
+export type GetAssistantSessionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetAssistantSessionResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantSessionView;
+};
+
+export type GetAssistantSessionResponse =
+	GetAssistantSessionResponses[keyof GetAssistantSessionResponses];
+
 export type CancelAssistantTurnData = {
 	body?: never;
 	path: {
@@ -3963,52 +4005,6 @@ export type RequestAssistantActsResponses = {
 export type RequestAssistantActsResponse =
 	RequestAssistantActsResponses[keyof RequestAssistantActsResponses];
 
-export type SetAssistantSubjectData = {
-	body: AssistantSubjectRequest;
-	path: {
-		id: string;
-	};
-	query?: never;
-	url: '/api/assistant/sessions/{id}/subject';
-};
-
-export type SetAssistantSubjectErrors = {
-	/**
-	 * error
-	 */
-	400: unknown;
-	/**
-	 * error
-	 */
-	401: unknown;
-	/**
-	 * error
-	 */
-	403: unknown;
-	/**
-	 * error
-	 */
-	404: unknown;
-	/**
-	 * error
-	 */
-	409: unknown;
-	/**
-	 * error
-	 */
-	503: unknown;
-};
-
-export type SetAssistantSubjectResponses = {
-	/**
-	 * OK
-	 */
-	200: AssistantSession;
-};
-
-export type SetAssistantSubjectResponse =
-	SetAssistantSubjectResponses[keyof SetAssistantSubjectResponses];
-
 export type StreamAssistantData = {
 	body?: never;
 	path?: never;
@@ -4048,6 +4044,43 @@ export type StreamAssistantResponses = {
 };
 
 export type StreamAssistantResponse = StreamAssistantResponses[keyof StreamAssistantResponses];
+
+export type WarmAssistantData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/assistant/warm';
+};
+
+export type WarmAssistantErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type WarmAssistantResponses = {
+	/**
+	 * Accepted
+	 */
+	202: unknown;
+};
 
 export type UploadAttachmentsData = {
 	body: {

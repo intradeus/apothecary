@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"apothecary/internal/assistant"
+	"apothecary/internal/run/event"
+	"apothecary/internal/skills"
 )
 
 // RunContract runs the suite against stores open makes, one per test.
@@ -24,12 +27,14 @@ func RunContract(t *testing.T, open func(t *testing.T) assistant.Store) {
 		s := open(t)
 		a := sess("s1", "u1", assistant.KindFlow, "w1", "builder")
 		a.HarnessSession, a.Integration, a.Model, a.TokenID = "h-1", "int-1", "acme/one", "tok-1"
+		a.Skillsets = []event.SkillsetPin{{ID: "set-1", Name: "tickets", Seq: 2, Hash: "abc"}}
 		if err := s.SaveAssistantSession(ctx, a); err != nil {
 			t.Fatal(err)
 		}
 		got, ok, err := s.AssistantSession(ctx, "s1")
 		if err != nil || !ok || got.HarnessSession != "h-1" || got.Integration != "int-1" || got.Model != "acme/one" ||
-			got.TokenID != "tok-1" || got.Workshop != "w1" || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() {
+			got.TokenID != "tok-1" || got.Workshop != "w1" || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() ||
+			!slices.Equal(got.Skillsets, a.Skillsets) {
 			t.Fatalf("session = %+v, %v, %v", got, ok, err)
 		}
 		if _, ok, err := s.AssistantSession(ctx, "nope"); ok || err != nil {
@@ -49,6 +54,10 @@ func RunContract(t *testing.T, open func(t *testing.T) assistant.Store) {
 		found, ok, err := s.FindAssistantSession(ctx, "u1", assistant.KindFlow, "w1", "builder")
 		if err != nil || !ok || found.ID != "s1" {
 			t.Errorf("find = %+v, %v, %v", found, ok, err)
+		}
+		// A session with no skillsets has none.
+		if other, _, _ := s.AssistantSession(ctx, "s2"); other.Skillsets != nil {
+			t.Errorf("no skillsets = %v", other.Skillsets)
 		}
 		// A later session about the same subject is the one found.
 		time.Sleep(2 * time.Millisecond)
@@ -222,11 +231,18 @@ func RunContract(t *testing.T, open func(t *testing.T) assistant.Store) {
 		if err := s.SaveAssistantChoice(ctx, assistant.Choice{UserID: "u1", Integration: "int-2", Model: "acme/two"}); err != nil {
 			t.Fatal(err)
 		}
-		if c, _ := s.AssistantChoice(ctx, "u1"); c.Integration != "int-2" || c.Model != "acme/two" {
+		if c, _ := s.AssistantChoice(ctx, "u1"); c.Integration != "int-2" || c.Model != "acme/two" || c.Skillsets != nil {
 			t.Errorf("choice = %+v", c)
 		}
 		if c, _ := s.AssistantChoice(ctx, "u2"); c.Integration != "" {
 			t.Errorf("another's choice = %+v", c)
+		}
+		sets := []skills.Ref{{ID: "set-1"}, {ID: "set-2", Seq: 3}}
+		if err := s.SaveAssistantChoice(ctx, assistant.Choice{UserID: "u1", Integration: "int-2", Skillsets: sets}); err != nil {
+			t.Fatal(err)
+		}
+		if c, _ := s.AssistantChoice(ctx, "u1"); !slices.Equal(c.Skillsets, sets) {
+			t.Errorf("choice's skillsets = %+v", c.Skillsets)
 		}
 	})
 }

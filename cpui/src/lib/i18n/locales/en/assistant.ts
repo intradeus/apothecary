@@ -1,32 +1,28 @@
-// The assistant beside the flow, ticket and skill pages.
+// The assistant: the global drawer behind the button on every page, and the
+// fill modal on the flow, ticket, skill, run and dashboard pages.
 export default {
 	'assistant.title': 'Assistant',
-	'assistant.open': 'Assistant',
-	'assistant.close': 'Close the assistant',
 	'assistant.loading': 'Waking your assistant…',
 	'assistant.off': 'The assistant is off',
-	'assistant.chooseHarness': 'Choose the harness it runs on, one of your own:',
 	'assistant.noHarness':
 		'Add a Claude Code or opencode harness integration (Settings → Integrations): the assistant runs on your own.',
-	'assistant.useHarness': 'Use this harness',
+	'assistant.toSettings': 'Choose its harness',
 	'assistant.model': 'Model',
 	'assistant.modelDefault': 'the harness’s default',
+	'assistant.modelOldHarness':
+		'This conversation keeps the harness it started on. Start a new conversation for your new harness’s models.',
 	'assistant.repos': 'Repositories',
 	'assistant.skillWorkshop': 'Read a workshop’s repositories',
 	'assistant.noWorkshop': 'None',
 	'assistant.refresh': 'Refresh',
-	'assistant.refreshed': 'Repositories fetched',
 	'assistant.fetching': 'fetching…',
 	'assistant.repoFailed': '{name}: {error}',
-	'assistant.empty':
-		'Ask about this page. Its answer fills the page for you to read, change and save.',
 	'assistant.placeholder': 'Ask the assistant…',
 	'assistant.send': 'Ask',
 	'assistant.stop': 'Stop',
 	'assistant.you': 'You',
 	'assistant.it': 'Assistant',
 	'assistant.thinking': 'Thinking…',
-	'assistant.fillAgain': 'Fill the page with this',
 	'assistant.request': 'Asked of you',
 	'assistant.requestWaits': 'Confirm once the answer is in.',
 	'assistant.confirm': 'Do it',
@@ -40,14 +36,41 @@ export default {
 	'assistant.namesRun': '{arg}: the run “{name}”',
 	'assistant.handoff': 'The assistant proposes a change to the flow {flow}.',
 	'assistant.openInEditor': 'Open in the flow editor',
+	'assistant.handoffUnheld':
+		'This browser would not hold the change for the flow editor (its session storage is off). Copy the YAML and paste it into the editor’s YAML tab.',
+	'assistant.copyYaml': 'Copy the YAML',
+	'assistant.yamlCopied': 'Copied the YAML',
 	'assistant.dismiss': 'Dismiss',
-	'assistant.palette': 'Ask the assistant',
-	'assistant.filledNote': 'Filled the page',
 	'assistant.changed': 'Filled: {fields}',
 	'assistant.undo': 'Undo',
 	'assistant.stale': 'You changed the page since you asked. Fill it anyway?',
 	'assistant.applyAnyway': 'Fill it anyway',
 	'assistant.keepMine': 'Keep mine',
 	'assistant.failed': 'The assistant could not answer',
-	'assistant.cost': '${cost}'
+	// The global assistant: the button on every page and its drawer.
+	'assistant.button': 'Ask the assistant',
+	'assistant.buttonTip': 'Ask the assistant: it reads everything, and acts once you confirm',
+	'assistant.buttonOff': 'The assistant is off: open it to see why',
+	'assistant.newConversation': 'New conversation',
+	'assistant.settings': 'Assistant settings',
+	'assistant.close': 'Close the assistant',
+	'assistant.drawerEmpty':
+		'Ask about anything here, or have me act: starting runs, filing tickets, saving flows. I ask you before I change anything.',
+	// The local assistant: a page's fill button and its modal.
+	'assistant.fillButton': 'Fill with the assistant',
+	'assistant.fillTitle': 'Fill with the assistant · {page}',
+	'assistant.page.flow': 'Flow',
+	'assistant.page.ticket': 'Ticket',
+	'assistant.page.skill': 'Skill',
+	'assistant.page.dashboard': 'Dashboard',
+	'assistant.page.run': 'Run',
+	'assistant.page.general': 'Assistant',
+	'assistant.fillEmpty':
+		'Say what this page should hold, or how to change it. What the page holds now goes with your words; the fill lands in the page unsaved, with Undo.',
+	'assistant.fillPlaceholder': 'What should this page hold?',
+	'assistant.brewing': 'Brewing your {page}…',
+	// The settings page (System → Assistant).
+	'assistant.settingsApply':
+		'Changes apply to new conversations: an open one keeps its harness and skills until you start a new one.',
+	'assistant.harness': 'Harness'
 } as const;

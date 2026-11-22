@@ -20,7 +20,7 @@
 	import type { TicketRow } from '$lib/domain';
 	import { isInternal } from '$lib/tickets/tracker';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
-	import PaletteAssistant from '$lib/assistant/PaletteAssistant.svelte';
+	import { drawer } from '$lib/assistant/drawer.svelte';
 	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
 	import { I } from '$lib/design/icons';
@@ -70,8 +70,6 @@
 	let mrsRead = false;
 	/** The New run dialog, opened from "New run". */
 	let newRun = $state(false);
-	/** The assistant with no page, opened from "Ask the assistant". */
-	let assistant = $state(false);
 
 	$effect(() => {
 		if (!open) return;
@@ -166,9 +164,9 @@
 			},
 			{
 				group: 'do' as const,
-				label: t('assistant.palette'),
-				glyph: I.info,
-				run: act(() => (assistant = true))
+				label: t('assistant.button'),
+				glyph: I.sparkle,
+				run: act(() => (drawer.open = true))
 			},
 			...(writesHere
 				? [
@@ -293,7 +291,6 @@
 </script>
 
 <NewRunDialog bind:open={newRun} />
-<PaletteAssistant bind:open={assistant} />
 
 {#if open}
 	<!-- svelte-ignore a11y_no_static_element_interactions -->

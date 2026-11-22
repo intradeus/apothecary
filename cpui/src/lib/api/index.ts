@@ -21,6 +21,7 @@ import type {
 	AssistantMessage,
 	AssistantRepo,
 	AssistantSession,
+	AssistantSkillsetRef,
 	AssistantStatus,
 	AskFrame,
 	AskMessage,
@@ -463,7 +464,19 @@ export const runs = {
 	release: (id: string) => unwrapVoid(gen.releaseRun({ path: { id } }))
 };
 
-// --- the assistant (beside the flow, ticket and skill pages) ------------------
+// --- the assistant (the global drawer, and the fill modal on a page) ------------
+
+/** A session, its messages, and whether it is answering now. */
+type AssistantSessionView = {
+	session: AssistantSession;
+	messages: AssistantMessage[];
+	busy: boolean;
+};
+const toSessionView = (w: Wire.AssistantSessionView): AssistantSessionView => ({
+	session: map.toAssistantSession(w.session),
+	messages: many(w.messages, map.toAssistantMessage),
+	busy: w.busy
+});
 
 export const assistant = {
 	/** Whether it can run (and why not), on what, the pod, and a workshop's
@@ -472,25 +485,49 @@ export const assistant = {
 		map.toAssistantStatus(
 			await unwrap(gen.getAssistant({ query: workshop ? { workshop } : undefined }))
 		),
-	/** Pick the harness integration (one's own) and the model to start with. */
-	setChoice: (integration: string, model = '') =>
-		unwrapVoid(gen.setAssistantChoice({ body: { integration, model } })),
-	/** The session about a subject (one's latest, or a new one), its
-	 *  messages, and whether it is answering now. */
+	/** Pick the harness integration (one's own), the model to start with and
+	 *  the skillsets (one's own) to install: for conversations opened from
+	 *  now on. */
+	setChoice: (choice: {
+		integration: string;
+		model?: string;
+		skillsets?: AssistantSkillsetRef[];
+	}) =>
+		unwrapVoid(
+			gen.setAssistantChoice({
+				body: {
+					integration: choice.integration,
+					model: choice.model ?? '',
+					skillsets: choice.skillsets?.length ? choice.skillsets : undefined
+				}
+			})
+		),
+	/** The session about a subject (one's latest, or a new one when fresh),
+	 *  its messages, and whether it is answering now. */
 	open: async (
 		kind: AssistantKind,
 		subject: string,
-		workshop?: string
-	): Promise<{ session: AssistantSession; messages: AssistantMessage[]; busy: boolean }> => {
-		const w = await unwrap(
-			gen.openAssistantSession({ body: { kind, subject, workshop_id: workshop || undefined } })
-		);
-		return {
-			session: map.toAssistantSession(w.session),
-			messages: many(w.messages, map.toAssistantMessage),
-			busy: w.busy
-		};
-	},
+		workshop?: string,
+		opts: { fresh?: boolean } = {}
+	): Promise<AssistantSessionView> =>
+		toSessionView(
+			await unwrap(
+				gen.openAssistantSession({
+					body: {
+						kind,
+						subject,
+						workshop_id: workshop || undefined,
+						fresh: opts.fresh || undefined
+					}
+				})
+			)
+		),
+	/** One's session by its id, as open answers it: the one held, never
+	 *  another about the same subject. */
+	session: async (id: string): Promise<AssistantSessionView> =>
+		toSessionView(await unwrap(gen.getAssistantSession({ path: { id } }))),
+	/** Start one's pod ahead of a question being typed: answers at once. */
+	warm: () => unwrapVoid(gen.warmAssistant()),
 	messages: async (id: string, after = 0): Promise<AssistantMessage[]> =>
 		many(
 			await unwrap(gen.listAssistantMessages({ path: { id }, query: { after } })),
@@ -531,11 +568,6 @@ export const assistant = {
 		),
 	setModel: async (id: string, model: string): Promise<AssistantSession> =>
 		map.toAssistantSession(await unwrap(gen.setAssistantModel({ path: { id }, body: { model } }))),
-	/** A draft's session follows what it was saved as. */
-	setSubject: async (id: string, subject: string): Promise<AssistantSession> =>
-		map.toAssistantSession(
-			await unwrap(gen.setAssistantSubject({ path: { id }, body: { subject } }))
-		),
 	refresh: async (workshop: string): Promise<AssistantRepo[]> =>
 		many(
 			await unwrap(gen.refreshAssistantRepos({ body: { workshop_id: workshop } })),
@@ -543,8 +575,11 @@ export const assistant = {
 		),
 	/** Follow one's assistant from now: every session's answers as they
 	 *  are written, messages, state, fills, fetches. A reconnect resumes
-	 *  from the last frame seen; a gap frame says some were lost (reload). */
-	stream(onFrame: (f: AssistantFrame) => void): () => void {
+	 *  from the last frame seen; a gap frame says some were lost (reload).
+	 *  onReady fires each time it connects, once the engine follows it:
+	 *  every frame from then on reaches onFrame, so a record read after it
+	 *  misses none. */
+	stream(onFrame: (f: AssistantFrame) => void, onReady?: () => void): () => void {
 		// -1: not connected yet, so from now (nothing kept is replayed).
 		let after = -1;
 		let es: EventSource;
@@ -591,7 +626,7 @@ export const assistant = {
 					kind: 'fill',
 					seq,
 					sessionId: str(w.session),
-					page: w.page === 'ticket' || w.page === 'skill' ? w.page : 'flow',
+					page: map.toAssistantKind(str(w.page)),
 					subject: str(w.subject),
 					fill: w.fill
 				})
@@ -612,6 +647,7 @@ export const assistant = {
 			on('head', (w) => {
 				const head = typeof w.seq === 'number' ? w.seq : 0;
 				if (after < 0 || after > head) after = head;
+				onReady?.();
 			});
 			on('request', (w, seq) => {
 				if (!w.message) return;

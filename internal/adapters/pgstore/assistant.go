@@ -12,19 +12,44 @@ import (
 	"apothecary/internal/assistant"
 )
 
-// The assistant's rows (migration 0013): sessions, their messages, persons'
-// choices. A session's turns are serialized by the service, so the next seq
-// is read in the statement that takes it, as the Ask pane's are.
+// The assistant's rows (migrations 0013, 0016, 0018): sessions, their
+// messages, persons' choices. A session's turns are serialized by the
+// service, so the next seq is read in the statement that takes it, as the
+// Ask pane's are.
 
-const assistantSessionCols = `id, user_id, kind, workshop_id, subject, harness_session, integration_id, model, token_id, created_at, updated_at`
+const assistantSessionCols = `id, user_id, kind, workshop_id, subject, harness_session, integration_id, model, token_id, skillsets, created_at, updated_at`
 
 func scanAssistantSession(row pgx.Row) (assistant.Session, error) {
 	var v assistant.Session
 	var kind string
-	err := row.Scan(&v.ID, &v.UserID, &kind, &v.Workshop, &v.Subject, &v.HarnessSession, &v.Integration, &v.Model, &v.TokenID, &v.CreatedAt, &v.UpdatedAt)
+	var sets []byte
+	err := row.Scan(&v.ID, &v.UserID, &kind, &v.Workshop, &v.Subject, &v.HarnessSession, &v.Integration, &v.Model, &v.TokenID, &sets, &v.CreatedAt, &v.UpdatedAt)
+	if err != nil {
+		return v, err
+	}
 	v.Kind = assistant.Kind(kind)
 	v.CreatedAt, v.UpdatedAt = v.CreatedAt.UTC(), v.UpdatedAt.UTC()
-	return v, err
+	return v, readSkillsets(sets, &v.Skillsets)
+}
+
+// readSkillsets reads a skillsets column into out: none (the default) is nil.
+func readSkillsets[T any](raw []byte, out *[]T) error {
+	if err := json.Unmarshal(raw, out); err != nil {
+		return fmt.Errorf("skillsets: %w", err)
+	}
+	if len(*out) == 0 {
+		*out = nil
+	}
+	return nil
+}
+
+// skillsetsJSON is a skillsets column's value: none is the empty list.
+func skillsetsJSON[T any](v []T) (string, error) {
+	if v == nil {
+		v = []T{}
+	}
+	data, err := json.Marshal(v)
+	return string(data), err
 }
 
 func (s *Store) AssistantSession(ctx context.Context, id string) (assistant.Session, bool, error) {
@@ -67,14 +92,18 @@ func (s *Store) SaveAssistantSession(ctx context.Context, v assistant.Session) e
 	if err := assistant.CheckSession(v); err != nil {
 		return err
 	}
+	sets, err := skillsetsJSON(v.Skillsets)
+	if err != nil {
+		return err
+	}
 	tag, err := s.pool.Exec(ctx, `
-		INSERT INTO assistant_sessions (id, user_id, kind, workshop_id, subject, harness_session, integration_id, model, token_id, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp(), clock_timestamp())
+		INSERT INTO assistant_sessions (id, user_id, kind, workshop_id, subject, harness_session, integration_id, model, token_id, skillsets, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, clock_timestamp(), clock_timestamp())
 		ON CONFLICT (id) DO UPDATE SET
 		  subject = EXCLUDED.subject, harness_session = EXCLUDED.harness_session, integration_id = EXCLUDED.integration_id,
-		  model = EXCLUDED.model, token_id = EXCLUDED.token_id, updated_at = clock_timestamp()
+		  model = EXCLUDED.model, token_id = EXCLUDED.token_id, skillsets = EXCLUDED.skillsets, updated_at = clock_timestamp()
 		WHERE assistant_sessions.user_id = EXCLUDED.user_id`,
-		v.ID, v.UserID, string(v.Kind), v.Workshop, v.Subject, v.HarnessSession, v.Integration, v.Model, v.TokenID)
+		v.ID, v.UserID, string(v.Kind), v.Workshop, v.Subject, v.HarnessSession, v.Integration, v.Model, v.TokenID, sets)
 	if err != nil {
 		return err
 	}
@@ -176,21 +205,30 @@ func (s *Store) SetAssistantRequest(ctx context.Context, sessionID string, seq i
 
 func (s *Store) AssistantChoice(ctx context.Context, userID string) (assistant.Choice, error) {
 	c := assistant.Choice{UserID: userID}
-	err := s.pool.QueryRow(ctx, `SELECT integration_id, model FROM assistant_choices WHERE user_id = $1`, userID).Scan(&c.Integration, &c.Model)
+	var sets []byte
+	err := s.pool.QueryRow(ctx, `SELECT integration_id, model, skillsets FROM assistant_choices WHERE user_id = $1`, userID).Scan(&c.Integration, &c.Model, &sets)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return c, nil
 	}
-	return c, err
+	if err != nil {
+		return c, err
+	}
+	return c, readSkillsets(sets, &c.Skillsets)
 }
 
 func (s *Store) SaveAssistantChoice(ctx context.Context, c assistant.Choice) error {
 	if c.UserID == "" {
 		return errors.Join(assistant.ErrInvalid, errors.New("a choice needs its person"))
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO assistant_choices (user_id, integration_id, model, updated_at) VALUES ($1, $2, $3, now())
-		ON CONFLICT (user_id) DO UPDATE SET integration_id = EXCLUDED.integration_id, model = EXCLUDED.model, updated_at = now()`,
-		c.UserID, c.Integration, c.Model)
+	sets, err := skillsetsJSON(c.Skillsets)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO assistant_choices (user_id, integration_id, model, skillsets, updated_at) VALUES ($1, $2, $3, $4::jsonb, now())
+		ON CONFLICT (user_id) DO UPDATE SET integration_id = EXCLUDED.integration_id, model = EXCLUDED.model,
+		  skillsets = EXCLUDED.skillsets, updated_at = now()`,
+		c.UserID, c.Integration, c.Model, sets)
 	return err
 }
 

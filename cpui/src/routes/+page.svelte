@@ -271,7 +271,8 @@
 		gap: 16px;
 		flex-wrap: wrap;
 		margin: var(--shell-gap) var(--shell-gap) 0;
-		padding: 12px 12px 12px 16px;
+		/* Clear of the assistant's floating button, wrapped or not. */
+		padding: 12px var(--assistant-inset) 12px 16px;
 		border-radius: var(--r-pane);
 	}
 	.tt {

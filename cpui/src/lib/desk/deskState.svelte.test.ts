@@ -64,6 +64,13 @@ describe('starting up', () => {
 	it.each([
 		['corrupt JSON', '{nope'],
 		['a bad tree', JSON.stringify({ tree: { k: 'leaf', id: 'L1', tabs: ['gone'] } })],
+		['an empty window', JSON.stringify({ tree: { k: 'leaf', id: 'L1', tabs: [], act: 'flow' } })],
+		[
+			'a split short of sizes',
+			JSON.stringify({
+				tree: { k: 'split', dir: 'row', s: [1], c: [leaf(['flow']), leaf(['ask'])] }
+			})
+		],
 		['no tree', JSON.stringify({ preset: 'dock' })],
 		['null', 'null']
 	])('starts from the default on %s', (_, raw) => {
@@ -97,6 +104,40 @@ describe('starting up', () => {
 		d.moveView('ask', taken, { id: taken, zone: 'right' });
 		const ids = leavesOf(d.tree).map((l) => l.id);
 		expect(new Set(ids).size).toBe(2);
+	});
+
+	describe('a layout saved with the retired assistant view', () => {
+		const save = (tree: unknown) =>
+			localStorage.setItem(KEY, JSON.stringify({ tree, preset: 'dock' }));
+
+		it('loads without it, keeping its other tabs', () => {
+			save({ k: 'leaf', id: 'L1', tabs: ['session', 'assistant', 'logs'], act: 'assistant' });
+			const d = new DeskState();
+			expect(tabs(d)).toEqual([['session', 'logs']]);
+			expect(leavesOf(d.tree)[0].act).toBe('session');
+			expect(d.preset).toBe('dock');
+		});
+
+		it('drops a window that held only it, the rest taking its room', () => {
+			save({
+				k: 'split',
+				dir: 'row',
+				s: [0.2, 0.3, 0.5],
+				c: [
+					{ k: 'leaf', id: 'L1', tabs: ['flow'], act: 'flow' },
+					{ k: 'leaf', id: 'L2', tabs: ['assistant'], act: 'assistant' },
+					{ k: 'leaf', id: 'L3', tabs: ['session', 'ask'], act: 'ask' }
+				]
+			});
+			const d = new DeskState();
+			expect(tabs(d)).toEqual([['flow'], ['session', 'ask']]);
+			expect(d.tree?.k === 'split' && d.tree.s).toEqual([0.2 / 0.7, 0.5 / 0.7]);
+		});
+
+		it('starts from the default when it was the only window', () => {
+			save({ k: 'leaf', id: 'L1', tabs: ['assistant'], act: 'assistant' });
+			expect(new DeskState().preset).toBe('split');
+		});
 	});
 });
 

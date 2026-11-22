@@ -65,6 +65,9 @@
 	--sidebar-w: 232px;
 	--rail-w: 64px;
 	--shell-gap: 12px; /* the margin around the sidebar and the desk */
+	--assistant-btn: 40px; /* the assistant button, floating at the top right */
+	/* what a header's trailing edge keeps clear of the assistant button */
+	--assistant-inset: calc(var(--assistant-btn) + var(--shell-gap));
 	--content-max: 1600px; /* a page's content, centred in its window */
 	--settings-max: 900px; /* a page that is one settings form */
 	--section-min: 640px; /* the narrowest a section sits beside another */

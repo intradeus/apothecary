@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"path"
 	"slices"
 	"strings"
 	"sync"
@@ -17,6 +18,8 @@ import (
 
 	"apothecary/internal/ports/assistantport"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/run/event"
+	"apothecary/internal/skills"
 	"apothecary/internal/workspace/sidecar"
 )
 
@@ -85,6 +88,9 @@ const repoFresh = 10 * time.Minute
 // turnTimeout bounds one answer.
 const turnTimeout = 10 * time.Minute
 
+// warmTimeout bounds a warm: a pod started ahead of a question.
+const warmTimeout = 2 * time.Minute
+
 // maxQuestion bounds what a person sends.
 const maxQuestion = 32 << 10
 
@@ -99,6 +105,9 @@ type Service struct {
 	Workshops Workshops
 	Tokens    Tokens
 	Checks    Checks
+	// Skills is the person's skill library: nil on a server that keeps
+	// none, where a choice names no skillset.
+	Skills Skills
 	// FaceActions are the read actions a session's token holds on the
 	// engine's MCP face (the tools' actions, which the API supplies),
 	// beside FillAction.
@@ -109,8 +118,8 @@ type Service struct {
 	// NewID is nil for a ULID.
 	NewID func() string
 
-	// saveMu orders every change to a stored session (edit): a rebind or a
-	// model picked mid-answer is not undone by the answer's end.
+	// saveMu orders every change to a stored session (edit): a model
+	// picked mid-answer is not undone by the answer's end.
 	saveMu  sync.Mutex
 	mu      sync.Mutex
 	turns   map[string]*turn      // by session id: the one in flight
@@ -120,7 +129,9 @@ type Service struct {
 	// deciding are the requests a person's confirm is running, by session
 	// and seq: a second click waits its turn.
 	deciding map[string]bool
-	hub      hub
+	// warming are the persons whose pod a warm is starting.
+	warming map[string]bool
+	hub     hub
 }
 
 type liveToken struct {
@@ -174,6 +185,7 @@ func (svc *Service) init() {
 		svc.fetched = map[string]time.Time{}
 		svc.repos = map[string][]RepoView{}
 		svc.deciding = map[string]bool{}
+		svc.warming = map[string]bool{}
 	}
 }
 
@@ -236,8 +248,9 @@ func (svc *Service) Status(ctx context.Context, person, workshop string) (Status
 	return st, nil
 }
 
-// SetChoice records the harness integration (one of the person's) and the
-// model their sessions start with.
+// SetChoice records the harness integration (one of the person's), the
+// model their sessions start with and the skillsets (their own) a new
+// session installs.
 func (svc *Service) SetChoice(ctx context.Context, person string, c Choice) error {
 	c.UserID = person
 	if c.Integration != "" {
@@ -249,11 +262,50 @@ func (svc *Service) SetChoice(ctx context.Context, person string, c Choice) erro
 			return errors.Join(ErrInvalid, errors.New("not one of your harness integrations the assistant runs on"))
 		}
 	}
+	var sets []skills.Ref
+	for _, r := range c.Skillsets {
+		if !slices.ContainsFunc(sets, func(x skills.Ref) bool { return x.ID == r.ID }) {
+			sets = append(sets, r)
+		}
+	}
+	c.Skillsets = sets
+	if len(sets) > 0 {
+		if svc.Skills == nil {
+			return errors.Join(ErrInvalid, errors.New("this server keeps no skills"))
+		}
+		if _, err := svc.Skills.ResolveSkillsets(ctx, person, sets); err != nil {
+			return errors.Join(ErrInvalid, err)
+		}
+	}
 	return svc.Store.SaveAssistantChoice(ctx, c)
 }
 
-// Open is a person's session about a subject: their latest, or a new one.
-func (svc *Service) Open(ctx context.Context, person string, kind Kind, workshop, subject string) (Session, []Message, error) {
+// pins are a choice's skillsets as a new session installs them: each ref
+// resolved on its own, one that no longer resolves (deleted since) left
+// out, so the assistant keeps working. The library failing to answer is
+// an error: a session opened without the pin would never install it.
+func (svc *Service) pins(ctx context.Context, person string, refs []skills.Ref) ([]event.SkillsetPin, error) {
+	if svc.Skills == nil {
+		return nil, nil
+	}
+	var out []event.SkillsetPin
+	for _, r := range refs {
+		p, err := svc.Skills.ResolveSkillsets(ctx, person, []skills.Ref{r})
+		if errors.Is(err, ErrSkillsetGone) {
+			svc.log().Warn("assistant: a chosen skillset is gone; skipping", "person", person, "skillset", r.ID, "err", err)
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("your skills: %w", err)
+		}
+		out = append(out, p...)
+	}
+	return out, nil
+}
+
+// Open is a person's session about a subject: their latest, or a new one;
+// always a new one when fresh.
+func (svc *Service) Open(ctx context.Context, person string, kind Kind, workshop, subject string, fresh bool) (Session, []Message, error) {
 	if !kind.Valid() || strings.TrimSpace(subject) == "" {
 		return Session{}, nil, errors.Join(ErrInvalid, errors.New("a session needs a kind and a subject"))
 	}
@@ -267,17 +319,25 @@ func (svc *Service) Open(ctx context.Context, person string, kind Kind, workshop
 			return Session{}, nil, err
 		}
 	}
-	s, ok, err := svc.Store.FindAssistantSession(ctx, person, kind, workshop, subject)
-	if err != nil {
-		return Session{}, nil, err
+	var s Session
+	ok := false
+	if !fresh {
+		var err error
+		if s, ok, err = svc.Store.FindAssistantSession(ctx, person, kind, workshop, subject); err != nil {
+			return Session{}, nil, err
+		}
 	}
 	if !ok {
 		choice, err := svc.Store.AssistantChoice(ctx, person)
 		if err != nil {
 			return Session{}, nil, err
 		}
+		pins, err := svc.pins(ctx, person, choice.Skillsets)
+		if err != nil {
+			return Session{}, nil, err
+		}
 		s = Session{ID: strings.ToLower(svc.newID()), UserID: person, Kind: kind, Workshop: workshop, Subject: subject,
-			Integration: choice.Integration, Model: choice.Model}
+			Integration: choice.Integration, Model: choice.Model, Skillsets: pins}
 		if err := svc.Store.SaveAssistantSession(ctx, s); err != nil {
 			return Session{}, nil, err
 		}
@@ -287,19 +347,6 @@ func (svc *Service) Open(ctx context.Context, person string, kind Kind, workshop
 	}
 	msgs, err := svc.Store.AssistantMessages(ctx, s.ID, 0)
 	return s, msgs, err
-}
-
-// Rebind moves a draft's session to the subject it was saved as, so the
-// conversation follows the ticket or skill it made.
-func (svc *Service) Rebind(ctx context.Context, person, sessionID, subject string) (Session, error) {
-	s, err := svc.session(ctx, person, sessionID)
-	if err != nil {
-		return Session{}, err
-	}
-	if strings.TrimSpace(subject) == "" {
-		return Session{}, errors.Join(ErrInvalid, errors.New("no subject"))
-	}
-	return svc.edit(ctx, s.ID, func(x *Session) { x.Subject = subject })
 }
 
 // edit changes a stored session: read it again, change it, save it, under
@@ -330,6 +377,18 @@ func (svc *Service) session(ctx context.Context, person, id string) (Session, er
 		return Session{}, ErrNotFound
 	}
 	return s, nil
+}
+
+// Reopen is one of a person's sessions as it stands, by its id, and its
+// messages: the session a page holds, never another about the same
+// subject opened since.
+func (svc *Service) Reopen(ctx context.Context, person, id string) (Session, []Message, error) {
+	s, err := svc.session(ctx, person, id)
+	if err != nil {
+		return Session{}, nil, err
+	}
+	msgs, err := svc.Store.AssistantMessages(ctx, s.ID, 0)
+	return s, msgs, err
 }
 
 // Messages are a session's, after a sequence.
@@ -430,8 +489,8 @@ func (svc *Service) answer(ctx context.Context, t *turn, s Session, text string,
 	defer cancel()
 	// The session's token stays with its harness session (token): its
 	// process, idle in the pod, reads through it on the next turn.
-	// What the turn learnt, onto the session as it is now: a subject or a
-	// model changed while it answered stays.
+	// What the turn learnt, onto the session as it is now: a model changed
+	// while it answered stays.
 	if _, serr := svc.edit(sctx, s.ID, func(x *Session) {
 		x.HarnessSession = s.HarnessSession
 		if x.Integration == "" {
@@ -492,6 +551,9 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	}
 	svc.status(person, s.ID, "starting your assistant")
 	if err := svc.Pods.Ensure(ctx, person, h.EgressDomains()); err != nil {
+		return "", 0, err
+	}
+	if err := svc.installSkills(ctx, s, prof.skills(env.home)); err != nil {
 		return "", 0, err
 	}
 	var repos []assistantport.Repo
@@ -640,6 +702,47 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	}
 }
 
+// skillsMarker is the file in a session's skills directory that names the
+// pins installed there: a turn finding it as it would write it skips the
+// install.
+const skillsMarker = ".apothecary-skillsets"
+
+// installSkills writes the session's pinned skills into the harness's
+// skills directory in the session's home, once: the pins are fixed per
+// session, so nothing is ever removed.
+func (svc *Service) installSkills(ctx context.Context, s *Session, dir string) error {
+	if len(s.Skillsets) == 0 || svc.Skills == nil {
+		return nil
+	}
+	var mark strings.Builder
+	for _, p := range s.Skillsets {
+		fmt.Fprintf(&mark, "%s v%d %s\n", p.ID, p.Seq, p.Hash)
+	}
+	marker := path.Join(dir, skillsMarker)
+	if got, err := svc.Pods.ReadFile(ctx, s.UserID, marker); err == nil && string(got) == mark.String() {
+		return nil
+	}
+	svc.status(s.UserID, s.ID, "loading your skills")
+	trees, err := svc.Skills.SkillTrees(ctx, s.Skillsets)
+	if err != nil {
+		return fmt.Errorf("your skills: %w", err)
+	}
+	for _, t := range trees {
+		for _, f := range t.Files {
+			mode := uint32(f.Mode.Perm())
+			if mode == 0 {
+				mode = 0o644
+			}
+			// Rooted, then joined: a name or a path never leaves dir.
+			p := path.Join(dir, path.Clean("/"+t.Name), path.Clean("/"+f.Path))
+			if err := svc.Pods.WriteFile(ctx, s.UserID, p, f.Data, mode); err != nil {
+				return fmt.Errorf("install skill %s: %w", t.Name, err)
+			}
+		}
+	}
+	return svc.Pods.WriteFile(ctx, s.UserID, marker, []byte(mark.String()), 0o600)
+}
+
 func (svc *Service) gitServer(sessionID string, repos []assistantport.Repo) (string, []string) {
 	args := []string{"git-mcp", "--state", svc.Pods.Home(sessionID)}
 	for _, r := range repos {
@@ -747,9 +850,10 @@ func (svc *Service) installed(sessionID, tokenID string) {
 	}
 }
 
-// FillTool is what the MCP face shows a session's token for its fill tool:
-// the session it is bound to and the page's fill schema.
-func (svc *Service) FillTool(ctx context.Context, tokenID string) (sessionID string, schema map[string]any, ok bool) {
+// FillTool is what the MCP face shows a session's token for its fill and
+// request tools: the session it is bound to, the page's fill schema (nil
+// for none) and whether the page acts.
+func (svc *Service) FillTool(ctx context.Context, tokenID string) (sessionID string, schema map[string]any, acts, ok bool) {
 	svc.mu.Lock()
 	svc.init()
 	var sid string
@@ -760,13 +864,14 @@ func (svc *Service) FillTool(ctx context.Context, tokenID string) (sessionID str
 	}
 	svc.mu.Unlock()
 	if sid == "" {
-		return "", nil, false
+		return "", nil, false, false
 	}
 	s, found, err := svc.Store.AssistantSession(ctx, sid)
 	if err != nil || !found || s.TokenID != tokenID {
-		return "", nil, false
+		return "", nil, false, false
 	}
-	return sid, pages[s.Kind].FillSchema, true
+	p := pages[s.Kind]
+	return sid, p.FillSchema, p.Acts, true
 }
 
 // Fill is the fill tool: checked against its page, then sent to the
@@ -803,6 +908,48 @@ func (svc *Service) Fill(ctx context.Context, tokenID, person, sessionID string,
 	svc.mu.Unlock()
 	svc.hub.publish(person, Frame{Kind: "fill", Session: sessionID, Fill: out, Subject: s.Subject, Page: s.Kind})
 	return nil, nil
+}
+
+// Warm starts the person's pod ahead of their first question (they began
+// typing one), with their harness's model hosts, and returns at once. One
+// warm runs at a time per person: another while it runs is nothing.
+// Ensure is idempotent, so a turn that starts meanwhile waits for the pod
+// rather than racing it.
+func (svc *Service) Warm(ctx context.Context, person string) error {
+	if svc.Pods == nil {
+		return ErrNotEnabled
+	}
+	choice, err := svc.Store.AssistantChoice(ctx, person)
+	if err != nil {
+		return err
+	}
+	if choice.Integration == "" {
+		return ErrNoChoice
+	}
+	h, err := svc.Harnesses.Open(ctx, person, choice.Integration, nil)
+	if err != nil {
+		return fmt.Errorf("your harness integration: %w", err)
+	}
+	hosts := h.EgressDomains()
+	svc.mu.Lock()
+	svc.init()
+	if svc.warming[person] {
+		svc.mu.Unlock()
+		return nil
+	}
+	svc.warming[person] = true
+	svc.mu.Unlock()
+	go func() {
+		wctx, cancel := context.WithTimeout(context.Background(), warmTimeout)
+		defer cancel()
+		if err := svc.Pods.Ensure(wctx, person, hosts); err != nil {
+			svc.log().Warn("assistant: warm a pod", "person", person, "err", err)
+		}
+		svc.mu.Lock()
+		delete(svc.warming, person)
+		svc.mu.Unlock()
+	}()
+	return nil
 }
 
 // Refresh fetches a workshop's repositories now.
@@ -1091,6 +1238,9 @@ func (svc *Service) Propose(ctx context.Context, tokenID, person, sessionID stri
 	}
 	if tokenID == "" || s.TokenID != tokenID {
 		return nil, ErrNotYours
+	}
+	if !pages[s.Kind].Acts {
+		return []string{"this session fills its page and requests nothing: acting on the platform is the global assistant's, behind the assistant button at the top right of every page"}, nil
 	}
 	if len(r.Acts) == 0 || len(r.Acts) > maxActs || strings.TrimSpace(r.Why) == "" {
 		return []string{fmt.Sprintf("a request is why (one line for the person) and 1 to %d acts", maxActs)}, nil
