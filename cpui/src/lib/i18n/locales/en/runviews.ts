@@ -243,6 +243,10 @@ export default {
 	'runview.logs.no_stream': 'No live output here — this provisioner does not stream it.',
 	'runview.logs.no_log': 'No log: {message}',
 	'runview.logs.earlier': 'Load earlier output · {size} before this',
+	'runview.graphs.oom_one':
+		'{count} process in this sandbox was killed at its memory limit ({limit}). Give the workshop more sandbox memory in its Settings → Workspace; it applies to the next sandbox.',
+	'runview.graphs.oom_other':
+		'{count} processes in this sandbox were killed at its memory limit ({limit}). Give the workshop more sandbox memory in its Settings → Workspace; it applies to the next sandbox.',
 	'runview.graphs.cpu': 'CPU',
 	'runview.graphs.memory': 'Memory',
 	'runview.graphs.network': 'Network',

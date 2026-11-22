@@ -265,6 +265,25 @@ export default {
 	'page.limits.saved': 'Limits saved',
 	'page.limits.saveFail': 'The limits were not saved',
 	'page.limits.applyNote': 'Applies to the next run that starts; running ones are not stopped.',
+	'page.limits.sizeHead': 'Sandbox size',
+	'page.limits.sizeSub':
+		'what each run’s sandbox may use; a workshop may set its own up to the ceiling',
+	'page.limits.sizeDefault': 'Default size',
+	'page.limits.sizeDefaultHelp':
+		'What a workshop that sets no size gets. Memory is reserved on the node at its limit; CPU is a limit, reserved at a quarter of it. Empty: no limit.',
+	'page.limits.sizeCeiling': 'Ceiling',
+	'page.limits.sizeCeilingHelp':
+		'The most any workshop may ask for; a workshop saved above it is refused, and one saved before a lower ceiling is held to it at its next sandbox. Empty: no ceiling.',
+	'page.limits.sizeNone': 'none',
+	'page.limits.idle': 'Stop when idle',
+	'page.limits.idleHelp':
+		'Minutes a sandbox may sit unused (no agent working, no terminal, editor, port or SSH connection) before it is stopped, its checkout and containers kept for the next use to start again. Only for storage that outlives a pod. A workshop may set its own. Empty: never.',
+	'page.limits.idleIs': 'after {m} min',
+	'page.limits.idleNever': 'never',
+	'page.limits.sizeUnset': 'not set',
+	'page.limits.sizeAny': 'any',
+	'page.limits.sizeIs': '{cpus} CPUs · {memory} GiB',
+	'page.limits.sizeOverCeiling': 'The default is above the ceiling.',
 	'page.limits.concLabel': 'Max concurrent runs',
 	'page.limits.concHelp':
 		'Runs actively working at once. Beyond this, runs queue as pending, first in first out. A run waiting on a human or paused gives its slot back.',

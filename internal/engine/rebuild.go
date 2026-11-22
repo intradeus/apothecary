@@ -7,6 +7,7 @@ import (
 
 	"apothecary/internal/platform/logs"
 	"apothecary/internal/ports/envport"
+	"apothecary/internal/project/resolution"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
 	"apothecary/internal/run/runcore"
@@ -68,33 +69,11 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		return err
 	}
 
-	// Same spec ensureEnv builds (provision.go). The name derives from the
-	// branch STEM (BranchBase), not the suffixed branch, or the CLI doubles
-	// the run-id tail.
-	nameBranch := v.BranchBase
-	if nameBranch == "" {
-		nameBranch = v.Branch
+	spec, err := runEnvSpec(v, res)
+	if err != nil {
+		return fmt.Errorf("run %s: %w", runID, err)
 	}
-	spec := envport.EnvSpec{
-		RunID:              runID,
-		NoCache:            noCache,
-		RepoURL:            res.RepoRef.URL,
-		Branch:             v.Branch,
-		SourceBranch:       bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
-		Fetch:              viewPrimaryFetch(v),
-		Name:               wsname.For(nameBranch, runID),
-		Project:            res.ProjectID,
-		ProjectName:        res.ProjectName,
-		EgressDomains:      res.EgressDomains,
-		EgressMode:         res.EgressMode,
-		EgressDenylist:     res.EgressDenylist,
-		EgressBlocked:      res.EgressBlocked,
-		EgressAllowedCIDRs: res.EgressAllowedCIDRs,
-		EgressAllowedPorts: res.EgressAllowedPorts,
-		Docker:             res.WorkspaceDocker,
-		GitUser:            res.GitUser,
-		GitPass:            res.GitPass,
-	}
+	spec.NoCache = noCache
 	// Egress policy is delivered to the per-project gateway by the provisioner's
 	// Rebuild (from the EnvSpec egress fields) — nothing to prime here.
 
@@ -158,6 +137,42 @@ func (e *Engine) RebuildEnv(ctx context.Context, runID string, noCache bool) (er
 		e.envState.ClearDirty(runID)
 	}
 	return e.finishRebuild(ctx, runID, v.EnvID, nil)
+}
+
+// runEnvSpec is the spec ensureEnv builds (provision.go), from the run's
+// view: what a rebuild and a wake provision again. The name derives from the
+// branch STEM (BranchBase), not the suffixed branch, or the CLI doubles the
+// run-id tail.
+func runEnvSpec(v run.View, res *resolution.Resolution) (envport.EnvSpec, error) {
+	nameBranch := v.BranchBase
+	if nameBranch == "" {
+		nameBranch = v.Branch
+	}
+	runtime, err := res.SandboxRuntime()
+	if err != nil {
+		return envport.EnvSpec{}, err
+	}
+	return envport.EnvSpec{
+		Runtime:            runtime,
+		RunID:              v.RunID,
+		RepoURL:            res.RepoRef.URL,
+		Branch:             v.Branch,
+		SourceBranch:       bootstrap.SourceBranchOr(v.SourceBranch, res.RepoRef.DefaultBranch),
+		Fetch:              viewPrimaryFetch(v),
+		Name:               wsname.For(nameBranch, v.RunID),
+		Project:            res.ProjectID,
+		ProjectName:        res.ProjectName,
+		EgressDomains:      res.EgressDomains,
+		EgressMode:         res.EgressMode,
+		EgressDenylist:     res.EgressDenylist,
+		EgressBlocked:      res.EgressBlocked,
+		EgressAllowedCIDRs: res.EgressAllowedCIDRs,
+		EgressAllowedPorts: res.EgressAllowedPorts,
+		Docker:             res.WorkspaceDocker,
+		Size:               res.WorkspaceSize,
+		GitUser:            res.GitUser,
+		GitPass:            res.GitPass,
+	}, nil
 }
 
 // finishRebuild emits the terminal rebuild event and returns opErr (which the

@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"apothecary/internal/flow"
 	"apothecary/internal/flow/actionspec"
@@ -95,6 +96,21 @@ type Resolution struct {
 	// (confstore.WorkspaceConfig.Docker): the provisioner injects the
 	// docker-outside-of-docker feature into the workspace build.
 	WorkspaceDocker bool
+	// WorkspaceSize is the size the run's sandbox gets: the project's own
+	// under the instance's default and ceiling (envport.SandboxPolicy).
+	WorkspaceSize envport.SandboxSize
+	// WorkspaceIdleAfter is how long the run's sandbox may sit unused before
+	// it is stopped and kept (0: never): the project's setting under the
+	// instance's default (envport.SandboxPolicy.IdleAfter).
+	WorkspaceIdleAfter time.Duration
+	// WorkspaceRuntime is the runtime the run's sandbox runs under, chosen
+	// against the provisioner's offer ("" its default); WorkspaceRuntimeErr
+	// is why the project's choice cannot be honoured (unapproved since it was
+	// saved, or unable to give what it needs). Only a sandbox about to be
+	// created reads them (SandboxRuntime): everything else a resolution
+	// serves goes on working.
+	WorkspaceRuntime    envport.Runtime
+	WorkspaceRuntimeErr error
 	// HarnessKind is a deterministic FALLBACK harness kind (the first
 	// available in the project's set) — NOT a project-chosen default. The
 	// real default is the flow's defaults.harness, applied per stage; this
@@ -342,4 +358,13 @@ func ForRun(ctx context.Context, r Resolver, v run.View) (*Resolution, error) {
 		return nil, fmt.Errorf("%w: run %s has no project (created pre-v2)", ErrUnresolvable, v.RunID)
 	}
 	return r.Resolve(ctx, v.ProjectID)
+}
+
+// SandboxRuntime is the runtime a sandbox created now runs under, or why
+// none may be created.
+func (r *Resolution) SandboxRuntime() (envport.Runtime, error) {
+	if r.WorkspaceRuntimeErr != nil {
+		return "", fmt.Errorf("sandbox runtime: %w", r.WorkspaceRuntimeErr)
+	}
+	return r.WorkspaceRuntime, nil
 }

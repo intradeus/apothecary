@@ -31,6 +31,7 @@ import (
 	"apothecary/internal/platform/config"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/browserport"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/project/automation"
 	"apothecary/internal/project/channels"
@@ -194,7 +195,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// The daemon door under privileged sandboxes is the operator's explicit
 	// call (README, "Docker in workspaces"): say so once, where the choice is
 	// read off the deployment, not discovered from a run.
-	if boot.WorkspaceDocker == "on" && boot.K8s.Privileged != "off" {
+	if boot.WorkspaceDocker == "on" && boot.K8s.Runtime == "privileged" {
 		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with privileged sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on its node")
 	}
 	// The keeper is the one party that redeems provider refresh tokens
@@ -212,9 +213,18 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// the database and read on every admission: a change applies to the next
 	// run, no restart. Unset = the engine's defaults.
 	limits := engine.StoredLimits{Store: store}
+	// A run's sandbox size is its project's under the instance's default and
+	// ceiling, read on every resolve like the caps.
+	resolver.SetSandboxSizes(func(ctx context.Context) (envport.SandboxPolicy, error) {
+		l, err := limits.Limits(ctx)
+		return l.Sandbox, err
+	})
 	runs := &run.Reader{Store: store}
 	mrSvc := mrs.New(resolver, runs)
 	sampler := resources.New(runs, resolver, nil, log)
+	if err := sampler.RegisterMetrics(otel.Meter("apothecaryd")); err != nil {
+		log.Warn("sandbox memory metrics", "err", err)
+	}
 	envSt := envstate.New(runs, resolver, nil, log)
 	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
 	egressSvc.Log = log
@@ -355,6 +365,8 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		Notices:  notes,
 		Log:      log,
 	})
+	// Every connection to an exposed port is use of its run (stop-on-idle).
+	portRelay.Track = e.Use().PortConn
 	egressSvc.ActiveRuns = e.ActiveRunIDs
 	wsSvc := wsinfo.New(runs, resolver, envSt)
 	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
@@ -429,7 +441,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	if err != nil {
 		return nil, nil, err
 	}
-	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Authorizer: doorAuthz{az}, Advertise: advertise, Log: log})
+	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Authorizer: doorAuthz{az}, Advertise: advertise, Log: log,
+		Wake: func(ctx context.Context, runID string) error { return e.WakeEnv(ctx, runID, engine.WokeBySSH) },
+		Use:  e.Use().Busy})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -454,6 +468,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Conf = conf
 	api.Kinds = reg
 	api.Ops = resolver
+	api.Runtimes = resolver
 	api.Sources = resolver // ticket sources the API's ticket factory reads
 	api.Live = live        // the same cache the engine and the automations read
 	api.Trackers = resolver

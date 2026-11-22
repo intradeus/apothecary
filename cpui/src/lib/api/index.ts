@@ -30,6 +30,8 @@ import type {
 	AuthStatus,
 	CliLogin,
 	Limits,
+	SandboxRunUsage,
+	RuntimeOffer,
 	Me,
 	Notice,
 	Permission,
@@ -267,6 +269,9 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 		services: p.workspace.services.map(serviceBody),
 		browser: { enabled: p.workspace.browserEnabled },
 		docker: p.workspace.docker,
+		size: map.fromSandboxSize(p.workspace.size),
+		runtime: p.workspace.runtime || undefined,
+		idle_minutes: p.workspace.idleMinutes || undefined,
 		...(p.workspace.egressMode ? { egress_mode: p.workspace.egressMode } : {}),
 		editor: {
 			theme: p.workspace.editor?.theme,
@@ -330,6 +335,8 @@ export const runs = {
 	 *  for what a cache key cannot see, like a floating base tag that moved. */
 	rebuild: (id: string, noCache = false) =>
 		unwrapVoid(gen.rebuildWorkspace({ path: { id }, body: { no_cache: noCache } })),
+	/** Start a workspace stopped when idle, on its kept checkout and containers. */
+	wake: (id: string) => unwrapVoid(gen.wakeRunWorkspace({ path: { id } })),
 
 	/** Lazily start code-server in the workspace and get its browser URL.
 	 *  Blocks while code-server boots on first open. */
@@ -1269,6 +1276,11 @@ export const projects = {
 	preflight: async (id: string): Promise<Preflight> =>
 		map.toPreflight(await unwrap(gen.preflightProject({ path: { id } }))),
 
+	/** What the workshop's recent runs' sandboxes reached, newest first
+	 *  (engine memory: empty since it started). */
+	sandboxUsage: async (id: string): Promise<SandboxRunUsage[]> =>
+		many((await unwrap(gen.getSandboxUsage({ path: { id } }))).runs, map.toSandboxRunUsage),
+
 	/** Prove the workspace really builds. keep leaves the container up. */
 	startEnvCheck: async (id: string, keep: boolean): Promise<string> =>
 		(await unwrap(gen.startEnvCheck({ path: { id }, body: { keep } }))).check_id,
@@ -1642,6 +1654,10 @@ export const system = {
 		map.toIntegration(
 			await unwrap(gen.updateProvisioner({ body: { name: patch.name ?? '', ...patch } }))
 		),
+
+	/** The sandbox runtimes a workshop may choose on it. */
+	runtimeOffer: async (): Promise<RuntimeOffer> =>
+		map.toRuntimeOffer(await unwrap(gen.getRuntimeOffer())),
 
 	/** Check it reaches its cluster (admin). */
 	testProvisioner: async (): Promise<TestOutcome> =>

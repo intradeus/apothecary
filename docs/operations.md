@@ -57,7 +57,8 @@ documents each.
 - **Uploads:** `APOTHECARY_UPLOAD_MAX_BYTES`, `APOTHECARY_UPLOAD_MIME_ALLOW`,
   `APOTHECARY_SNAPSHOT_MAX_BYTES`.
 - **Kubernetes:** `APOTHECARY_K8S_*` (namespace, engine URL, protected
-  ranges, `RUNTIME_CLASS`, `PRIVILEGED`, …) and the images
+  ranges, `RUNTIME`, `RUNTIMES`, `RUNTIME_CLASS`, …; the runtimes are in
+  [Sandbox runtimes](kubernetes.md#sandbox-runtimes)) and the images
   `APOTHECARY_SANDBOX_IMAGE`, `_SHIM_IMAGE`, `_TOOLS_IMAGE`, `_GATEWAY_IMAGE`,
   `_BROWSER_IMAGE`. `APOTHECARY_WORKSPACE_DOCKER`: the
   [daemon door](../README.md#docker-in-workspaces).
@@ -74,8 +75,11 @@ documents each.
 - **Telemetry:** the standard `OTEL_*` variables; set
   `OTEL_EXPORTER_OTLP_ENDPOINT` to turn it on.
 
-Run capacity (concurrent runs, default 3; live environments, default 6) is
-not an environment variable: an admin sets it under **System → Limits**.
+Run capacity (concurrent runs, default 3; live environments, default 6),
+the sandbox size default and ceiling, and how long an unused sandbox stays
+up are not environment variables: an admin sets them under **System →
+Limits** ([sizing and stop-on-idle](kubernetes.md#sizing)). A Kata
+sandbox must have a size.
 
 ## Probes and telemetry
 
@@ -97,7 +101,10 @@ set. For development, `observability/docker-compose.yaml` runs
 127.0.0.1:3001) with six provisioned dashboards — platform, engine, LLM
 spend, humans, feature usage, and run analytics over the `run_facts` /
 `stage_attempts` tables (set `APOTHECARY_PG_PASSWORD`, and
-`APOTHECARY_PG_ADDR` if Postgres is not the default deployment's). In
+`APOTHECARY_PG_ADDR` if Postgres is not the default deployment's). The
+engine dashboard counts sandboxes by runtime and state
+(`apothecary_sandboxes`) and sums the memory they hold against their limits
+(`apothecary_sandboxes_memory_used_bytes`, `_limit_bytes`). In
 production, point `OTEL_*` at your own backend and import the same
 dashboards. `APOTHECARY_GRAFANA_URL` puts a link to them in
 **System → Observability**, which only an admin sees.

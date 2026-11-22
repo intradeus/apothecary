@@ -1085,6 +1085,7 @@ export type KindDescriptor = {
 export type LimitsInfo = {
 	max_concurrent_runs: number;
 	max_environments: number;
+	sandbox: SandboxPolicy;
 };
 
 export type LoginRequest = {
@@ -1614,6 +1615,7 @@ export type ResourceSample = {
 	mem_used: number;
 	net_rx: number;
 	net_tx: number;
+	oom_kills: number;
 	pids: number;
 };
 
@@ -1749,6 +1751,14 @@ export type RunServices = {
 	workspace: boolean;
 };
 
+export type RunUsage = {
+	at: string;
+	mem_limit: number;
+	oom_kills: number;
+	peak_mem: number;
+	run_id: string;
+};
+
 export type RunView = {
 	adopted?: AdoptedMr;
 	archived_at?: string;
@@ -1800,6 +1810,26 @@ export type RunWait = {
 	seen: string;
 };
 
+export type RuntimeCapabilities = {
+	contained: boolean;
+	nested_containers: boolean;
+	nested_kubernetes: boolean;
+	user_namespaces: boolean;
+};
+
+export type RuntimeInfo = {
+	capabilities: RuntimeCapabilities;
+	name: string;
+};
+
+export type RuntimeOffer = {
+	approved: Array<RuntimeInfo> | null;
+	default: string;
+	error?: string;
+	noSleep?: string;
+	offered: boolean;
+};
+
 export type SshKey = {
 	created_at: string;
 	fingerprint: string;
@@ -1813,6 +1843,21 @@ export type SshKey = {
 export type SshKeyRequest = {
 	name?: string;
 	public_key: string;
+};
+
+export type SandboxPolicy = {
+	ceiling: SandboxSize;
+	default: SandboxSize;
+	idle_minutes: number;
+};
+
+export type SandboxSize = {
+	memory_mib: number;
+	milli_cpu: number;
+};
+
+export type SandboxUsage = {
+	runs: Array<RunUsage> | null;
 };
 
 export type Scorecard = {
@@ -2507,7 +2552,10 @@ export type WorkspaceConfig = {
 	egress_allowed_ports?: Array<number>;
 	egress_mode?: string;
 	extra_domains?: Array<string>;
+	idle_minutes?: number;
+	runtime?: string;
 	services?: Array<ServiceConfig>;
+	size?: SandboxSize;
 };
 
 export type WorkspaceDiff = {
@@ -8507,6 +8555,47 @@ export type StartNothingRunResponses = {
 
 export type StartNothingRunResponse = StartNothingRunResponses[keyof StartNothingRunResponses];
 
+export type GetSandboxUsageData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/sandbox-usage';
+};
+
+export type GetSandboxUsageErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetSandboxUsageResponses = {
+	/**
+	 * OK
+	 */
+	200: SandboxUsage;
+};
+
+export type GetSandboxUsageResponse = GetSandboxUsageResponses[keyof GetSandboxUsageResponses];
+
 export type ListProjectSecretsData = {
 	body?: never;
 	path: {
@@ -9515,6 +9604,41 @@ export type UpdateProvisionerResponses = {
 
 export type UpdateProvisionerResponse =
 	UpdateProvisionerResponses[keyof UpdateProvisionerResponses];
+
+export type GetRuntimeOfferData = {
+	body?: never;
+	path?: never;
+	query?: never;
+	url: '/api/provisioner/runtimes';
+};
+
+export type GetRuntimeOfferErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetRuntimeOfferResponses = {
+	/**
+	 * OK
+	 */
+	200: RuntimeOffer;
+};
+
+export type GetRuntimeOfferResponse = GetRuntimeOfferResponses[keyof GetRuntimeOfferResponses];
 
 export type TestProvisionerData = {
 	body?: never;
@@ -11698,6 +11822,51 @@ export type WaitRunResponses = {
 };
 
 export type WaitRunResponse = WaitRunResponses[keyof WaitRunResponses];
+
+export type WakeRunWorkspaceData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/wake';
+};
+
+export type WakeRunWorkspaceErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type WakeRunWorkspaceResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type WakeRunWorkspaceResponse = WakeRunWorkspaceResponses[keyof WakeRunWorkspaceResponses];
 
 export type GetWorkspaceLogData = {
 	body?: never;

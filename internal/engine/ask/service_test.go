@@ -37,6 +37,32 @@ type engine struct {
 	deliveries []delivery
 	undone     [][]string // the ids of each delivery undone
 	deliverErr error
+	// wakes are WakeEnv's runs, wakeErr its answer; holds counts HoldEnv
+	// holds not yet released.
+	wakes   []string
+	wakeErr error
+	holds   int
+}
+
+func (e *engine) WakeEnv(_ context.Context, runID, by string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.wakes = append(e.wakes, runID+":"+by)
+	return e.wakeErr
+}
+
+func (e *engine) HoldEnv(string) func() {
+	e.mu.Lock()
+	e.holds++
+	e.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			e.mu.Lock()
+			e.holds--
+			e.mu.Unlock()
+		})
+	}
 }
 
 // delivery is one DeliverAskFiles call.
@@ -1272,5 +1298,30 @@ func TestDefaultIDsAreUniqueAndTheDefaultLogIsUsable(t *testing.T) {
 	}
 	if svc.log() == nil {
 		t.Error("no default log")
+	}
+}
+
+// A question wakes a workspace stopped when idle, and holds it while the
+// answer runs; a workspace that will not wake refuses the question.
+func TestAQuestionWakesAndHoldsTheWorkspace(t *testing.T) {
+	ctx := context.Background()
+	r := newRig(t)
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q", nil); err != nil {
+		t.Fatal(err)
+	}
+	r.answered(t, 2)
+	r.eng.mu.Lock()
+	wakes, holds := r.eng.wakes, r.eng.holds
+	r.eng.mu.Unlock()
+	if len(wakes) != 1 || wakes[0] != runID+":ask" {
+		t.Errorf("wakes = %v", wakes)
+	}
+	if holds != 0 {
+		t.Errorf("%d holds left after the answer", holds)
+	}
+
+	r.eng.wakeErr = errors.New("no pod")
+	if _, err := r.svc.Ask(ctx, runID, "", "u", "q2", nil); err == nil || !strings.Contains(err.Error(), "no pod") {
+		t.Errorf("ask on a workspace that would not wake = %v", err)
 	}
 }

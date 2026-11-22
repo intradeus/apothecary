@@ -83,7 +83,7 @@ func (x *exec) ensureEnv() (err error) {
 		// re-probe once after a short pause before deciding to re-provision, so
 		// a transient blip doesn't nuke a workspace that's just coming back up.
 		// EnvAbsent is skipped — a genuinely gone container won't reappear.
-		if err == nil && status != envport.EnvRunning && status != envport.EnvAbsent {
+		if err == nil && status != envport.EnvRunning && status != envport.EnvAbsent && status != envport.EnvAsleep {
 			select {
 			case <-time.After(recoveryReprobeDelay):
 			case <-x.ctx.Done():
@@ -99,6 +99,18 @@ func (x *exec) ensureEnv() (err error) {
 			// healthy env and re-running bootstrap on top of it would be worse
 			// than waiting for the next boot.
 			return fmt.Errorf("recovery: env status: %w", err)
+		}
+		if status == envport.EnvAsleep {
+			// Stopped when idle (sleep.go): start it again on its storage —
+			// checkout, containers and egress identity as they were — then
+			// re-enter it like any running workspace below.
+			if err := x.wakeInLoop(); err != nil {
+				if x.ctx.Err() != nil {
+					return context.Cause(x.ctx)
+				}
+				return fmt.Errorf("recovery: %w", err)
+			}
+			status = envport.EnvRunning
 		}
 		if status == envport.EnvRunning {
 			// Re-establish the reverse tunnel — it died with the previous
@@ -148,7 +160,12 @@ func (x *exec) ensureEnv() (err error) {
 			return err
 		}
 	}
+	runtime, err := x.res.SandboxRuntime()
+	if err != nil {
+		return err
+	}
 	spec := envport.EnvSpec{
+		Runtime: runtime,
 		RunID:   rs.RunID,
 		RepoURL: x.res.RepoRef.URL,
 		// The provisioner puts the checkout on the run's branch before the
@@ -171,6 +188,7 @@ func (x *exec) ensureEnv() (err error) {
 		EgressAllowedCIDRs: x.res.EgressAllowedCIDRs,
 		EgressAllowedPorts: x.res.EgressAllowedPorts,
 		Docker:             x.res.WorkspaceDocker,
+		Size:               x.res.WorkspaceSize,
 		// For clone-first provisioners (devcontainer): the engine-side
 		// checkout needs the repository host credential before the env exists.
 		GitUser: x.res.GitUser,

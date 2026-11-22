@@ -39,6 +39,9 @@ export default {
 	'run.header.destroyWorkspace': 'Destroy workspace',
 	'run.header.destroyWorkspaceTitle':
 		'Workspace {env} outlived the archive and still counts against the environment cap. The reaper retries it; this retries now.',
+	'run.header.wake': 'Wake',
+	'run.header.wakeTitle':
+		"Start this workspace again: it was stopped after sitting unused, with its checkout and containers kept. Processes it ran (dev servers, services) start again from the project's hooks",
 	'run.header.editor': 'Editor',
 	'run.header.editorTitle':
 		"VS Code (code-server) in the browser on this workspace — the repo, the agent's commits, a terminal",
@@ -581,6 +584,9 @@ export default {
 	'run.event.play': 'play — continuing where it left off',
 	'run.event.archived': 'archived',
 	'run.event.destroyed': 'workspace destroyed',
+	'run.event.slept': 'workspace stopped after {m} min unused, checkout kept',
+	'run.event.woke': 'workspace started again (by {by})',
+	'run.event.wakeFailed': 'workspace would not start again: {error}',
 	'run.event.destroyFailed': 'workspace could not be destroyed: {error} — the reaper retries it',
 
 	// Store

@@ -28,6 +28,7 @@ import (
 	"apothecary/internal/run/runinput"
 	"apothecary/internal/skills"
 	"apothecary/internal/skills/skillstore"
+	"apothecary/internal/workspace/resources"
 )
 
 // --- errors -----------------------------------------------------------------
@@ -236,6 +237,33 @@ type EditorURL struct {
 // page's graphs.
 type RunResources struct {
 	Samples []envport.ResourceSample `json:"samples"`
+}
+
+// RuntimeOffer is what a workshop may choose for its sandbox runtime.
+type RuntimeOffer struct {
+	// Offered is false when the provisioner offers no choice (or there is
+	// none yet): the form shows no pick.
+	Offered  bool            `json:"offered"`
+	Default  envport.Runtime `json:"default"`
+	Approved []RuntimeInfo   `json:"approved"`
+	// Error is why the provisioner's offer cannot be read (its config).
+	Error string `json:"error,omitempty"`
+	// NoSleep is why idle sandboxes cannot be stopped and kept on this
+	// provisioner ("" when they can).
+	NoSleep string `json:"noSleep,omitempty"`
+}
+
+// RuntimeInfo is one approved runtime and what it gives a sandbox.
+type RuntimeInfo struct {
+	Name         envport.Runtime             `json:"name"`
+	Capabilities envport.RuntimeCapabilities `json:"capabilities"`
+}
+
+// SandboxUsage is what a workshop's recent runs' sandboxes reached, newest
+// first: the evidence beside its sandbox size setting. Engine memory, like
+// the samples it comes from: empty since the engine started.
+type SandboxUsage struct {
+	Runs []resources.RunUsage `json:"runs"`
 }
 
 // --- pings ------------------------------------------------------------------
@@ -802,10 +830,12 @@ type PasswordResetRequest struct {
 	Password string `json:"password"`
 }
 
-// LimitsInfo is the deployment's capacity: -1 means no cap.
+// LimitsInfo is the deployment's capacity: -1 means no cap. Sandbox is the
+// sandbox sizing policy (0 fields: unset); a PUT replaces it whole.
 type LimitsInfo struct {
-	MaxConcurrentRuns int `json:"max_concurrent_runs"`
-	MaxEnvironments   int `json:"max_environments"`
+	MaxConcurrentRuns int                   `json:"max_concurrent_runs"`
+	MaxEnvironments   int                   `json:"max_environments"`
+	Sandbox           envport.SandboxPolicy `json:"sandbox"`
 }
 
 // Compile-time proof that the config-plane types the spec names are the ones

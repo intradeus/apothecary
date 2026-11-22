@@ -29,6 +29,12 @@ type devcontainerDef struct {
 
 func (devcontainerDef) Name() string { return "devcontainer" }
 
+// Needs: the devcontainer CLI builds and runs in the sandbox's own docker
+// daemon.
+func (devcontainerDef) Needs() envport.RuntimeCapabilities {
+	return envport.RuntimeCapabilities{NestedContainers: true}
+}
+
 // dockerOutsideOfDockerFeature is the feature a project's "Docker in
 // workspaces" toggle injects (upOptions.docker). Pinned: a floating major
 // would change every such build when the feature moves; bump deliberately.

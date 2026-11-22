@@ -16,7 +16,7 @@ func clearEnv(t *testing.T) {
 		"APOTHECARY_LOG_FORMAT", "APOTHECARY_LOG_LEVEL", "APOTHECARY_DEBUG_ADDR", "APOTHECARY_GRAFANA_URL",
 		"APOTHECARY_ARTIFACT_MAX_BYTES", "APOTHECARY_UPLOAD_MAX_BYTES",
 		"APOTHECARY_ARTIFACT_MIME_ALLOW", "APOTHECARY_UPLOAD_MIME_ALLOW", "APOTHECARY_SNAPSHOT_MAX_BYTES",
-		"APOTHECARY_PORT_AUTOEXPOSE", "APOTHECARY_K8S_RUNTIME_CLASS", "APOTHECARY_K8S_PRIVILEGED", "APOTHECARY_WORKSPACE_DOCKER", "APOTHECARY_K8S_NAMESPACE",
+		"APOTHECARY_PORT_AUTOEXPOSE", "APOTHECARY_K8S_RUNTIME_CLASS", "APOTHECARY_K8S_RUNTIME", "APOTHECARY_K8S_RUNTIMES", "APOTHECARY_K8S_PRIVILEGED", "APOTHECARY_WORKSPACE_DOCKER", "APOTHECARY_K8S_NAMESPACE",
 		"APOTHECARY_K8S_ENGINE_NAMESPACE", "APOTHECARY_K8S_ENGINE_URL", "APOTHECARY_K8S_KUBECONFIG",
 		"APOTHECARY_K8S_TRANSPORT", "APOTHECARY_K8S_PROTECT_CIDRS", "APOTHECARY_SANDBOX_IMAGE",
 		"APOTHECARY_SHIM_IMAGE", "APOTHECARY_TOOLS_IMAGE", "APOTHECARY_GATEWAY_IMAGE", "APOTHECARY_BROWSER_IMAGE",
@@ -170,7 +170,7 @@ func TestKubernetesSettings(t *testing.T) {
 	}
 	k := b.K8s
 	if k.Namespace != "sandboxes" || k.Transport != "direct" || k.BrowserProxyListen != ":9000" || k.SandboxImage != "img:1" ||
-		k.RuntimeClass != "sysbox-runc" || k.Privileged != "off" ||
+		k.RuntimeClass != "sysbox-runc" || k.Runtime != "sysbox" ||
 		!slices.Equal(k.ProtectCIDRs, []string{"10.0.0.0/8", "192.168.0.0/16"}) {
 		t.Errorf("set = %+v", k)
 	}
@@ -178,6 +178,62 @@ func TestKubernetesSettings(t *testing.T) {
 	t.Setenv("APOTHECARY_K8S_TRANSPORT", "carrier-pigeon")
 	if _, err := FromEnv(); err == nil || !strings.Contains(err.Error(), "APOTHECARY_K8S_TRANSPORT") {
 		t.Errorf("bad transport = %v", err)
+	}
+}
+
+// APOTHECARY_K8S_RUNTIME names the runtime; unset, the older privileged
+// setting decides it, privileged when that is unset too.
+func TestBootSandboxRuntime(t *testing.T) {
+	for _, c := range []struct {
+		env  map[string]string
+		want string
+	}{
+		{map[string]string{}, "privileged"},
+		{map[string]string{"APOTHECARY_K8S_RUNTIME": " Sysbox "}, "sysbox"},
+		{map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_PRIVILEGED": "off"}, "sysbox"},
+		{map[string]string{"APOTHECARY_K8S_RUNTIME": "privileged", "APOTHECARY_K8S_PRIVILEGED": "on"}, "privileged"},
+		{map[string]string{"APOTHECARY_K8S_PRIVILEGED": "on", "APOTHECARY_K8S_RUNTIME_CLASS": "dind"}, "privileged"},
+		{map[string]string{"APOTHECARY_K8S_PRIVILEGED": "off", "APOTHECARY_K8S_RUNTIME_CLASS": "sysbox-runc"}, "sysbox"},
+	} {
+		clearEnv(t)
+		for k, v := range c.env {
+			t.Setenv(k, v)
+		}
+		b, err := FromEnv()
+		if err != nil {
+			t.Errorf("%v: %v", c.env, err)
+			continue
+		}
+		if b.K8s.Runtime != c.want {
+			t.Errorf("%v: runtime = %q, %v; want %q", c.env, b.K8s.Runtime, err, c.want)
+		}
+	}
+}
+
+// The approved runtimes: the default alone unless listed; listed, deduped
+// in the order given, case and space ignored.
+func TestBootApprovedRuntimes(t *testing.T) {
+	for _, c := range []struct {
+		env  map[string]string
+		want []string
+	}{
+		{map[string]string{}, []string{"privileged"}},
+		{map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox"}, []string{"sysbox"}},
+		{map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_RUNTIMES": " Sysbox, privileged,sysbox "}, []string{"sysbox", "privileged"}},
+		{map[string]string{"APOTHECARY_K8S_RUNTIMES": " , "}, []string{"privileged"}},
+	} {
+		clearEnv(t)
+		for k, v := range c.env {
+			t.Setenv(k, v)
+		}
+		b, err := FromEnv()
+		if err != nil {
+			t.Errorf("%v: %v", c.env, err)
+			continue
+		}
+		if !slices.Equal(b.K8s.Runtimes, c.want) {
+			t.Errorf("%v: %v, want %v", c.env, b.K8s.Runtimes, c.want)
+		}
 	}
 }
 
@@ -192,6 +248,11 @@ func TestBootRefusals(t *testing.T) {
 		{"ssh door with a bad address", map[string]string{"APOTHECARY_SSH_LISTEN": "nonsense"}, "APOTHECARY_SSH_LISTEN"},
 		{"privileged neither on nor off", map[string]string{"APOTHECARY_K8S_PRIVILEGED": "maybe"}, "APOTHECARY_K8S_PRIVILEGED"},
 		{"unprivileged sandboxes need a runtime class", map[string]string{"APOTHECARY_K8S_PRIVILEGED": "off"}, "APOTHECARY_K8S_RUNTIME_CLASS"},
+		{"an unknown runtime", map[string]string{"APOTHECARY_K8S_RUNTIME": "gvisor"}, "kata, privileged, sysbox"},
+		{"privileged on contradicts sysbox", map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_PRIVILEGED": "on"}, "contradicts"},
+		{"privileged off contradicts privileged", map[string]string{"APOTHECARY_K8S_RUNTIME": "privileged", "APOTHECARY_K8S_PRIVILEGED": "off"}, "contradicts"},
+		{"an unknown approved runtime", map[string]string{"APOTHECARY_K8S_RUNTIMES": "sysbox,gvisor"}, `APOTHECARY_K8S_RUNTIMES must list runtimes among kata, privileged, sysbox, got "gvisor"`},
+		{"approved without the default", map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_RUNTIMES": "privileged"}, "must include the default runtime APOTHECARY_K8S_RUNTIME=sysbox"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			clearEnv(t)

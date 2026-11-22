@@ -82,6 +82,11 @@ type Config struct {
 	// to. Empty when the door is reached only through the HTTPS tunnel.
 	Advertise string
 	Log       *slog.Logger
+	// Wake, when set, starts the target run's workspace again if it was
+	// stopped when idle, before the door dials it; Use holds the run for the
+	// session's life (stop-on-idle). Both optional.
+	Wake func(ctx context.Context, runID string) error
+	Use  func(runID string) (release func())
 }
 
 const (
@@ -90,6 +95,9 @@ const (
 	// upstreamTimeout bounds reaching the sidecar: it covers the sidecar's
 	// lazy start and, on Kubernetes, a port-forward.
 	upstreamTimeout = 45 * time.Second
+	// wakeTimeout bounds starting a workspace stopped when idle (Config.Wake):
+	// a pod on its kept storage, its container restarted.
+	wakeTimeout = 5 * time.Minute
 	// maxAuthTries is OpenSSH's default: an agent may offer several keys
 	// before the right one.
 	maxAuthTries = 6
@@ -322,6 +330,19 @@ func (d *Door) handle(nc net.Conn, workspace, remote string) {
 	if err != nil {
 		log.Info("ssh door: account no longer allowed in", "err", err)
 		return
+	}
+
+	if d.cfg.Use != nil {
+		defer d.cfg.Use(c.target.RunID)()
+	}
+	if d.cfg.Wake != nil {
+		ctx, cancel = context.WithTimeout(context.Background(), wakeTimeout)
+		err = d.cfg.Wake(ctx, c.target.RunID)
+		cancel()
+		if err != nil {
+			log.Warn("ssh door: the workspace would not wake", "err", err)
+			return
+		}
 	}
 
 	ctx, cancel = context.WithTimeout(context.Background(), upstreamTimeout)

@@ -72,6 +72,6 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... [--serve <addr> --dir <dir> --token-file <f>] | shim relay --stdio <sock> | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] [--tls] <host:port> | shim sidecar [--daemon] [--listen <sock>] [--repo <dir>] | shim jq <jq args> | shim service start|stop|status|logs | shim browser-mcp | shim browser-session --sock <sock> | --engine <host:port> --token <t> -- <argv> | shim seed <dir> | shim confine --check | --spec <json> -- <argv> | shim git-mcp --state <dir> --repo <name>=<path>... | shim fetch [--protocols https] < request | shim idle | shim version")
+	fmt.Fprintln(os.Stderr, "usage: shim ask-human | shim relay [<port>:<sock>]... [--reverse <sock>:<host>:<port>]... [--serve <addr> --dir <dir> --token-file <f>] | shim relay --stdio|--stdio-ack <sock> | shim portscan [--exclude <ports>] | shim probe [--wait <dur>] [--tls] <host:port> | shim sidecar [--daemon] [--listen <sock>] [--repo <dir>] | shim jq <jq args> | shim service start|stop|status|logs | shim browser-mcp | shim browser-session --sock <sock> | --engine <host:port> --token <t> -- <argv> | shim seed <dir> | shim confine --check | --spec <json> -- <argv> | shim git-mcp --state <dir> --repo <name>=<path>... | shim fetch [--protocols https] < request | shim idle | shim version")
 	os.Exit(2)
 }

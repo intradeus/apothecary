@@ -13,6 +13,7 @@ import (
 	"apothecary/internal/notices"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/egressport"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/run"
 	"apothecary/internal/run/event"
@@ -45,8 +46,8 @@ func TestDeadDatabaseIsAnErrorEverywhere(t *testing.T) {
 		"LoadExposedPorts":   func() error { _, err := s.LoadExposedPorts(ctx); return err },
 		"ListPings":          func() error { _, err := s.ListPings(ctx, nil, "", 0); return err },
 		"GetPing":            func() error { _, err := s.GetPing(ctx, "p"); return err },
-		"LoadLimits":         func() error { _, _, _, err := s.LoadLimits(ctx); return err },
-		"SaveLimits":         func() error { return s.SaveLimits(ctx, 1, 1) },
+		"LoadLimits":         func() error { _, _, _, _, err := s.LoadLimits(ctx); return err },
+		"SaveLimits":         func() error { return s.SaveLimits(ctx, 1, 1, envport.SandboxPolicy{}) },
 		"AskThread":          func() error { _, _, err := s.AskThread(ctx, "r", "t"); return err },
 		"AskThreads":         func() error { _, err := s.AskThreads(ctx, "r"); return err },
 		"SaveAskThread":      func() error { return s.SaveAskThread(ctx, ask.Thread{RunID: "r", ID: "t"}) },

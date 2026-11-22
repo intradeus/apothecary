@@ -157,6 +157,22 @@ type CmdRunner interface {
 	Run(ctx context.Context, bin string, args []string, stdin []byte, tee io.Writer, env ...string) (stdout, stderr []byte, exitCode int, err error)
 }
 
+// definitions are the workspace definitions an adapter detects, in order.
+func definitions(cfg Config) []Definition {
+	return []Definition{devcontainerDef{bin: cfg.DevcontainerBin, docker: cfg.DockerBin}}
+}
+
+// Needs is what this adapter's workspace definitions ask of a sandbox's
+// runtime, together: a runtime a project picks must give it, whichever
+// definition its repo turns out to use.
+func Needs() envport.RuntimeCapabilities {
+	var need envport.RuntimeCapabilities
+	for _, d := range definitions(Config{}) {
+		need = need.Union(d.Needs())
+	}
+	return need
+}
+
 func New(cfg Config) *Adapter {
 	if cfg.DevcontainerBin == "" {
 		cfg.DevcontainerBin = "devcontainer"
@@ -177,7 +193,7 @@ func New(cfg Config) *Adapter {
 		sibPorts:   map[envport.EnvID]map[int]string{},
 		defByEnv:   map[string]Definition{},
 	}
-	a.defs = []Definition{devcontainerDef{bin: cfg.DevcontainerBin, docker: cfg.DockerBin}}
+	a.defs = definitions(cfg)
 	if cfg.Kube != nil {
 		kh := newK8sHost(a, cfg.Kube)
 		a.host = kh
@@ -374,6 +390,8 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, rebuild b
 			return
 		}
 		plog("=== workspace %s ready in %s ===\n", name, took)
+		// Up again: no longer asleep (Sleep).
+		_ = os.Remove(a.asleepMarker(name))
 	}()
 	plog("→ preparing source checkout: %s%s\n", safeURL(spec.RepoURL), branchNote(spec))
 
@@ -399,7 +417,7 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, rebuild b
 			asks = "the project's Docker setting"
 			injectDocker = true
 		}
-		return def, a.checkDaemonDoor(asks)
+		return def, a.checkDaemonDoor(asks, spec.Runtime)
 	})
 	if err != nil {
 		return left, err
@@ -537,16 +555,16 @@ var errNoDefinition = fmt.Errorf("repo has no .devcontainer/devcontainer.json �
 // doorOpen is the daemon door's state for this deployment: whether a
 // workspace may take its run's docker daemon (the sandbox then also serves it
 // on /var/run/docker.sock). "on" and "off" are the operator's word; "auto"
-// (the default) follows the sandbox's privilege — an unprivileged sandbox is
-// the boundary already, so its daemon adds nothing the run does not hold.
-func (a *Adapter) doorOpen() bool {
+// (the default) follows the sandbox's runtime — a contained sandbox is the
+// boundary already, so its daemon adds nothing the run does not hold.
+func (a *Adapter) doorOpen(rt envport.Runtime) bool {
 	switch a.cfg.WorkspaceDocker {
 	case "on":
 		return true
 	case "off":
 		return false
 	}
-	return a.host.unprivileged()
+	return a.host.contained(rt)
 }
 
 // checkDaemonDoor refuses, before anything is built, a workspace that asks
@@ -559,15 +577,15 @@ func (a *Adapter) doorOpen() bool {
 // documented (README, security model). The refusal names what asked and
 // both ways out, instead of docker's late "bind source path does not exist"
 // when the feature's mount finds no socket.
-func (a *Adapter) checkDaemonDoor(what string) error {
-	if what == "" || a.doorOpen() {
+func (a *Adapter) checkDaemonDoor(what string, rt envport.Runtime) error {
+	if what == "" || a.doorOpen(rt) {
 		return nil
 	}
 	drop := fmt.Sprintf("or drop the ask (the docker-outside-of-docker feature / the %s mount in the devcontainer, or the project's Docker setting)", daemonDoorSocket)
 	if a.cfg.WorkspaceDocker == "off" {
 		return fmt.Errorf("devcontainer asks for the sandbox's docker daemon (%s), which this deployment does not hand to workspaces (APOTHECARY_WORKSPACE_DOCKER=off). Set it to auto or on, %s", what, drop)
 	}
-	return fmt.Errorf("devcontainer asks for the sandbox's docker daemon (%s), which this deployment does not hand to workspaces: its sandboxes are privileged, so that daemon is root on the host. Either run sandboxes unprivileged (%s — README, \"Unprivileged sandboxes\"), or set APOTHECARY_WORKSPACE_DOCKER=on — accepting that a workspace using it is root on this host (fine on your own laptop, not on a shared server) — %s", what, a.host.unprivilegedHint(), drop)
+	return fmt.Errorf("devcontainer asks for the sandbox's docker daemon (%s), which this deployment does not hand to workspaces: its sandboxes are privileged, so that daemon is root on the host. Either run sandboxes unprivileged (%s — README, \"Unprivileged sandboxes\"), or set APOTHECARY_WORKSPACE_DOCKER=on — accepting that a workspace using it is root on this host (fine on your own laptop, not on a shared server) — %s", what, a.host.containedHint(), drop)
 }
 
 // detect picks the repo's definition (first match wins). A repo without one
@@ -1086,6 +1104,9 @@ func (a *Adapter) status(ctx context.Context, name string) (envport.EnvStatus, e
 	}
 	switch sbx {
 	case "":
+		if a.asleep(name) {
+			return envport.EnvAsleep, nil
+		}
 		return envport.EnvAbsent, nil
 	case "running":
 		return a.workspaceState(ctx, name) // sandbox up → query the inner workspace
@@ -1125,6 +1146,42 @@ func (a *Adapter) workspaceState(ctx context.Context, name string) (envport.EnvS
 		return envport.EnvStopped, nil
 	}
 }
+
+// --- envport.EnvSleeper ---------------------------------------------------------
+
+// CanSleep (envport.EnvSleeper): the host's answer (storage that outlives
+// the sandbox).
+func (a *Adapter) CanSleep() error { return a.host.canStop() }
+
+// Sleep (envport.EnvSleeper) stops the run's sandbox and keeps the rest: its
+// storage, its relay secret, its gateway link and its run folder. The
+// marker, written first, makes Status say asleep instead of absent, so
+// recovery does not take the run for lost; a failed stop leaves it, and a
+// retry finishes. Provision with the run's spec wakes it.
+func (a *Adapter) Sleep(ctx context.Context, env envport.EnvID) error {
+	if err := a.host.canStop(); err != nil {
+		return err
+	}
+	name := string(env)
+	if _, err := os.Stat(a.folderFor(name)); err != nil {
+		return fmt.Errorf("sleep %s: no such workspace: %w", name, err)
+	}
+	if err := os.WriteFile(a.asleepMarker(name), nil, 0o644); err != nil {
+		return err
+	}
+	return a.host.stopSandbox(ctx, name)
+}
+
+func (a *Adapter) asleepMarker(name string) string {
+	return filepath.Join(a.folderFor(name), ".asleep")
+}
+
+func (a *Adapter) asleep(name string) bool {
+	_, err := os.Stat(a.asleepMarker(name))
+	return err == nil
+}
+
+var _ envport.EnvSleeper = (*Adapter)(nil)
 
 func (a *Adapter) Destroy(ctx context.Context, env envport.EnvID) error {
 	name := string(env)

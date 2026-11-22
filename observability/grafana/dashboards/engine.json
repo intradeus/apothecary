@@ -1,7 +1,7 @@
 {
   "uid": "apothecary-engine",
   "title": "Apothecary \u00b7 Engine",
-  "description": "The run scheduler: occupancy, outcomes, waits, stage failures, loops and budgets.",
+  "description": "The run scheduler: occupancy, outcomes, waits, stage failures, loops and budgets; sandboxes by runtime and state, and the memory they hold.",
   "tags": [
     "apothecary",
     "engine"
@@ -421,6 +421,82 @@
       "fieldConfig": {
         "defaults": {
           "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "Sandboxes by runtime and state",
+      "gridPos": {
+        "x": 0,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "refId": "A",
+          "expr": "sum by (runtime, state) (apothecary_sandboxes)",
+          "legendFormat": "{{runtime}} {{state}}",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": []
+      },
+      "options": {}
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Sandbox memory held / limits by runtime",
+      "gridPos": {
+        "x": 12,
+        "y": 32,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${prom}"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "refId": "A",
+          "expr": "sum by (runtime) (apothecary_sandboxes_memory_used_bytes)",
+          "legendFormat": "{{runtime}} held",
+          "range": true
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${prom}"
+          },
+          "refId": "B",
+          "expr": "sum by (runtime) (apothecary_sandboxes_memory_limit_bytes)",
+          "legendFormat": "{{runtime}} limits",
+          "range": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "bytes"
         },
         "overrides": []
       },

@@ -488,3 +488,35 @@ func TestRegistryStartUnresolvable(t *testing.T) {
 		t.Fatal("Start of an unresolvable project must fail")
 	}
 }
+
+// The runtime the project was given is the one the check provisions under;
+// one that cannot be honoured fails the check before anything is built.
+func TestRunChecksTheSandboxRuntime(t *testing.T) {
+	h := newFixture(t)
+	h.envp.ExecFunc = firewallAwareExec()
+	h.res.WorkspaceRuntime = envport.RuntimeSysbox
+	var steps []CheckStep
+	Run(context.Background(), h.res, "envck-rt", Options{EngineURL: "http://127.0.0.1:9", Keep: true},
+		func(s CheckStep) { steps = append(steps, s) })
+	if len(steps) == 0 || steps[0].ID != "runtime" || steps[0].Status != "pass" || steps[0].Detail != "sysbox" {
+		t.Fatalf("first step = %+v", steps)
+	}
+	var env envport.EnvID
+	for _, s := range steps {
+		if s.ID == "provision" {
+			env = envport.EnvID(s.Detail)
+		}
+	}
+	if e := h.envp.Env(env); e == nil || e.Spec.Runtime != envport.RuntimeSysbox {
+		t.Errorf("provisioned %q under %+v", env, e)
+	}
+
+	h = newFixture(t)
+	h.res.WorkspaceRuntimeErr = errors.New("sandbox runtime privileged is not approved")
+	steps = nil
+	failed := Run(context.Background(), h.res, "envck-rt2", Options{EngineURL: "http://127.0.0.1:9"},
+		func(s CheckStep) { steps = append(steps, s) })
+	if failed != 1 || len(steps) != 1 || steps[0].Status != "fail" || !strings.Contains(steps[0].Detail, "not approved") {
+		t.Errorf("failed = %d, steps = %+v", failed, steps)
+	}
+}

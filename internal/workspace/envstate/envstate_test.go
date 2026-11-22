@@ -128,6 +128,7 @@ func TestReconcileRecordsLiveStatusAndDirty(t *testing.T) {
 	b := h.addRun(t, "b", fixtureProject)
 	h.envp.Dirty[b] = true
 	h.envp.Env(a).Status = envport.EnvStopped
+	h.resolver.res.WorkspaceRuntime = envport.RuntimeSysbox
 
 	if err := h.s.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
@@ -135,6 +136,9 @@ func TestReconcileRecordsLiveStatusAndDirty(t *testing.T) {
 	st := h.s.Statuses()
 	if st["a"] != envport.EnvStopped || st["b"] != envport.EnvRunning {
 		t.Fatalf("statuses = %v", st)
+	}
+	if rt := h.s.Runtimes(); rt["a"] != envport.RuntimeSysbox || len(rt) != 2 {
+		t.Errorf("runtimes = %v", rt)
 	}
 	if d := h.s.Dirty(); d["a"] || !d["b"] {
 		t.Fatalf("dirty = %v", d)

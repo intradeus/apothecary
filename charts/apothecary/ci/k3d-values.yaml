@@ -17,8 +17,7 @@ engine:
 
 # k3d's nodes have no sysbox: privileged sandboxes, on a cluster of one's own.
 workspaces:
-  runtimeClassName: ""
-  privileged: true
+  runtime: privileged
 
 access:
   http:

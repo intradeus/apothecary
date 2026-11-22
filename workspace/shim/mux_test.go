@@ -104,7 +104,7 @@ func TestPumpStdio(t *testing.T) {
 	dir := shortTempDir(t)
 	echoSock(t, dir, "app-3000.sock")
 	var out bytes.Buffer
-	if err := pumpStdio(filepath.Join(dir, "app-3000.sock"), strings.NewReader("ping\n"), &out); err != nil {
+	if err := pumpStdio(filepath.Join(dir, "app-3000.sock"), strings.NewReader("ping\n"), &out, false); err != nil {
 		t.Fatal(err)
 	}
 	if out.String() != "PING\n" {
@@ -187,7 +187,7 @@ func TestStartMuxFailsOnABadAddress(t *testing.T) {
 }
 
 func TestPumpStdioNeedsASocket(t *testing.T) {
-	if err := pumpStdio(filepath.Join(t.TempDir(), "gone.sock"), strings.NewReader(""), io.Discard); err == nil {
+	if err := pumpStdio(filepath.Join(t.TempDir(), "gone.sock"), strings.NewReader(""), io.Discard, true); err == nil {
 		t.Error("pumping to a socket that is not there succeeded")
 	}
 }

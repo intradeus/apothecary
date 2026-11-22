@@ -16,7 +16,9 @@
 		type Integration,
 		type Project,
 		type ProjectDraft,
-		projectCan
+		type SandboxSize,
+		projectCan,
+		unsetSize
 	} from '$lib/domain';
 	import Toggle from '$lib/ui/Toggle.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -161,6 +163,12 @@
 	let browserEnabled = $state(init?.workspace.browserEnabled ?? false);
 	// Docker in workspaces: the run's own daemon, added to the build.
 	let docker = $state(init?.workspace.docker ?? false);
+	// The sandbox's size; unset fields take the instance's default.
+	let size = $state<SandboxSize>({ ...(init?.workspace.size ?? unsetSize()) });
+	// The sandbox runtime; '' is the provisioner's default.
+	let runtime = $state(init?.workspace.runtime ?? '');
+	// Stop-on-idle; 0 is the instance's default.
+	let idleMinutes = $state(init?.workspace.idleMinutes ?? 0);
 	// Flows are user-defined — no built-in fallback exists.
 	let defaultFlow = $state(init?.defaultFlow ?? flowNames[0] ?? '');
 
@@ -265,7 +273,10 @@
 				},
 				services: serviceConfigs(serviceList),
 				browserEnabled,
-				docker
+				docker,
+				size: { ...size },
+				runtime,
+				idleMinutes
 			},
 			defaultFlow
 		};
@@ -419,6 +430,10 @@
 			bind:allowDomains
 			bind:denyDomains
 			bind:docker
+			bind:size
+			bind:runtime
+			bind:idleMinutes
+			projectId={existing?.id}
 			bind:codeServerExtensions
 			bind:editor
 			onerror={(message) => (error = message)}

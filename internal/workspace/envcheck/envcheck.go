@@ -129,7 +129,12 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 	branch := "apothecary/" + strings.ToLower(runID)
 
 	name := wsname.For(branch, runID)
+	runtime, err := res.SandboxRuntime()
+	if !step("runtime", err, string(runtime)) {
+		return failed, noTeardown
+	}
 	env, err := envp.Provision(ctx, envport.EnvSpec{
+		Runtime: runtime,
 		RunID:   runID,
 		RepoURL: res.RepoRef.URL,
 		Branch:  branch,
@@ -147,6 +152,7 @@ func check(ctx context.Context, res *resolution.Resolution, runID string, opts O
 		EgressAllowedCIDRs: res.EgressAllowedCIDRs,
 		EgressAllowedPorts: res.EgressAllowedPorts,
 		Docker:             res.WorkspaceDocker,
+		Size:               res.WorkspaceSize,
 		GitUser:            res.GitUser,
 		GitPass:            res.GitPass,
 	})

@@ -109,6 +109,10 @@ func (a *app) background(ctx context.Context) {
 	// eager first pass populates the badge without waiting a full interval.
 	go a.envSt.Run(ctx, 30*time.Second)
 
+	// Stop-on-idle: a sandbox nobody used for its project's idle period is
+	// stopped and kept (engine/sleep.go); the next use wakes it.
+	go a.e.RunIdleSweep(ctx, time.Minute)
+
 	// Resource sampler: one docker-stats reading of every active run's sandbox
 	// per pass, feeding the run-page cpu/ram graphs. Same honesty rule as
 	// the reconciler: a failed sample is a gap in the series, never a

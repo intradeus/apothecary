@@ -4,8 +4,27 @@
 #   - a CGNAT address pool, so no inner network can shadow the cluster's pod
 #     and service ranges (or the engine's Service address);
 #   - with a gateway (APO_GATEWAY_IP): its resolver, its pull-through image
-#     mirror and its build-cache registry, and the WireGuard tunnel's MTU.
+#     mirror and its build-cache registry, and the WireGuard tunnel's MTU;
+#     without one, the pod interface's MTU (docker's 1500 default is more
+#     than an overlay network's 1450, and inner traffic would be dropped);
+#   - under a VM runtime (APO_DEV_PRELUDE=1, Kata), a full /dev first.
 set -eu
+if [ "${APO_DEV_PRELUDE:-}" = 1 ]; then
+  # Kata gives a privileged container a minimal /dev, and every container
+  # nested in this daemon inherits it: k3s dies on a missing /dev/kmsg, a
+  # tunnel needs /dev/net/tun. The guest's devtmpfs holds them; copy in
+  # what /dev lacks, leaving what the runtime put there.
+  mkdir -p /run/apo/devt
+  mount -t devtmpfs devtmpfs /run/apo/devt
+  for n in /run/apo/devt/*; do
+    b=${n##*/}
+    [ -e "/dev/$b" ] || cp -a "$n" "/dev/$b" 2>/dev/null || true
+  done
+  mkdir -p /dev/net
+  [ -e /dev/net/tun ] || mknod /dev/net/tun c 10 200
+  umount /run/apo/devt
+  rmdir /run/apo/devt
+fi
 set -- dockerd --host=unix:///var/run/docker.sock --default-address-pool base=100.64.0.0/10,size=24
 if [ -n "${APO_GATEWAY_IP:-}" ]; then
   set -- "$@" --dns "$APO_GATEWAY_IP" \
@@ -15,5 +34,10 @@ if [ -n "${APO_GATEWAY_IP:-}" ]; then
 fi
 if [ -s /run/apo/mtu ]; then
   set -- "$@" --mtu "$(cat /run/apo/mtu)"
+else
+  mtu=$(ip -o link show dev eth0 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "mtu") {print $(i + 1); exit}}')
+  if [ -n "$mtu" ]; then
+    set -- "$@" --mtu "$mtu"
+  fi
 fi
 exec dockerd-entrypoint.sh "$@"

@@ -329,15 +329,15 @@ func TestK8sStorageChoices(t *testing.T) {
 	}
 }
 
-// A runtime class drops privilege, and with it the tunnel's privileged
-// container to a bare capability; the pod asks for a user namespace of its
-// own (hostUsers: false, sysbox's documented pod shape — without it the
-// sandbox sysctls containerd writes fail with "ip_unprivileged_port_start:
+// sysbox drops privilege, and with it the tunnel's privileged container to
+// a bare capability; the pod asks for a user namespace of its own
+// (hostUsers: false, sysbox's documented pod shape — without it the sandbox
+// sysctls containerd writes fail with "ip_unprivileged_port_start:
 // permission denied" and the pod never starts).
-func TestK8sUnprivilegedRuntime(t *testing.T) {
+func TestK8sSysboxRuntime(t *testing.T) {
 	k := &kubeFake{}
 	_, h := k8sWith(t, k, false)
-	h.cfg.RuntimeClass, h.cfg.Privileged = "sysbox-runc", false
+	h.rt, h.rtErr = lookupRuntime(envport.RuntimeSysbox)
 	att := egressgw.Attachment{GatewayIP: "10.90.0.1", WGEndpoint: "10.43.9.9:51820", WGSecret: "s"}
 	pod, err := h.podManifest(context.Background(), "w", envport.EnvSpec{ProjectName: "My App"}, att)
 	if err != nil {
@@ -353,8 +353,8 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 		t.Errorf("hostUsers false must reach the manifest (omitempty on a bool would drop it): %s", b)
 	}
 	// ...which is also what opens the daemon door under auto.
-	if !h.unprivileged() {
-		t.Error("a runtime class with privileged off is an unprivileged sandbox")
+	if !h.contained("") {
+		t.Error("a sysbox sandbox is contained")
 	}
 	if pod.Metadata.Annotations["apothecary.io/project-name"] != "My App" {
 		t.Errorf("annotations = %v", pod.Metadata.Annotations)
@@ -363,8 +363,9 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 	if wg.SecurityContext.Privileged != nil || wg.SecurityContext.Capabilities.Add[0] != "NET_ADMIN" {
 		t.Errorf("wg = %+v", wg.SecurityContext)
 	}
-	// Asking for privilege keeps it even on a runtime class.
-	h.cfg.Privileged = true
+	// The privileged runtime keeps privilege even on a class of its own.
+	h.rt, h.rtErr = lookupRuntime(envport.RuntimePrivileged)
+	h.cfg.RuntimeClass = "sysbox-runc"
 	pod, _ = h.podManifest(context.Background(), "w", envport.EnvSpec{}, att)
 	if pod.Spec.Containers[0].SecurityContext == nil || !*pod.Spec.Containers[0].SecurityContext.Privileged {
 		t.Errorf("sandbox = %+v", pod.Spec.Containers[0].SecurityContext)
@@ -372,8 +373,11 @@ func TestK8sUnprivilegedRuntime(t *testing.T) {
 	if pod.Spec.HostUsers != nil {
 		t.Errorf("hostUsers = %v on a privileged pod, want unset: it stays in the host's user namespace", *pod.Spec.HostUsers)
 	}
-	if h.unprivileged() {
-		t.Error("a privileged pod is not an unprivileged sandbox, runtime class or not")
+	if h.contained("") {
+		t.Error("a privileged pod is not a contained sandbox, runtime class or not")
+	}
+	if pod.Spec.RuntimeClassName != "sysbox-runc" {
+		t.Errorf("class = %q, want the integration's override", pod.Spec.RuntimeClassName)
 	}
 }
 
@@ -422,7 +426,7 @@ func TestK8sDaemonDoor(t *testing.T) {
 		var seen []string
 		k := &kubeFake{secrets: map[string]string{}, exec: doorPod(&seen)}
 		a, h := k8sWith(t, k, false)
-		h.cfg.RuntimeClass, h.cfg.Privileged = "sysbox-runc", false
+		h.rt, h.rtErr = lookupRuntime(envport.RuntimeSysbox)
 		if _, err := a.Provision(context.Background(), spec); err != nil {
 			t.Fatalf("provision: %v\nin-pod: %v", err, seen)
 		}
@@ -944,8 +948,9 @@ func TestK8sProbe(t *testing.T) {
 	ctx := context.Background()
 	version := kubeRule{match: "version", out: `{"serverVersion":{"gitVersion":"v1.31.0"}}`}
 	yes := kubeRule{match: "auth can-i", out: "yes\n"}
+	ran := probeRan
 	t.Run("healthy", func(t *testing.T) {
-		a, h := k8sWith(t, &kubeFake{}, true, version, yes)
+		a, h := k8sWith(t, &kubeFake{}, true, version, yes, ran)
 		h.cfg.Forward = true
 		if err := a.Test(ctx); err != nil {
 			t.Errorf("err = %v", err)
@@ -988,7 +993,7 @@ func TestK8sProbe(t *testing.T) {
 			}
 		}
 		// The gateway image only matters with the firewall on.
-		a, h := k8sWith(t, &kubeFake{}, false, version, yes)
+		a, h := k8sWith(t, &kubeFake{}, false, version, yes, ran)
 		h.cfg.GatewayImage = ""
 		if err := a.Test(ctx); err != nil {
 			t.Errorf("firewall off = %v", err)
@@ -1190,5 +1195,35 @@ func TestPodProgress(t *testing.T) {
 		if got := podProgress(c.s); got != c.want {
 			t.Errorf("podProgress = %q, want %q", got, c.want)
 		}
+	}
+}
+
+// A pod the scheduler cannot place (its size is more than any node has
+// free) says why in the provisioning log while it waits, and in the error
+// when the wait gives up — never a bare timeout.
+func TestK8sUnschedulablePodSaysWhy(t *testing.T) {
+	prev := podProgressEvery
+	podProgressEvery = 5 * time.Millisecond
+	t.Cleanup(func() { podProgressEvery = prev })
+	event := `{"items":[{"reason":"FailedScheduling","message":"0/1 nodes are available: 1 Insufficient memory.","lastTimestamp":"2026-11-22T10:00:00Z"}]}`
+	k := &kubeFake{secrets: map[string]string{}, pod: `{"status":{"phase":"Pending"}}`}
+	_, h := k8sWith(t, k, false, kubeRule{match: "get --request-timeout=30s events", out: event})
+	h.cfg.Kube.R = &slowWait{kubeRules: h.cfg.Kube.R.(*kubeRules), d: 60 * time.Millisecond}
+	var mu sync.Mutex
+	var lines []string
+	plog := func(f string, a ...any) { mu.Lock(); lines = append(lines, fmt.Sprintf(f, a...)); mu.Unlock() }
+	if err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, egressgw.Attachment{}, plog); err != nil {
+		t.Fatal(err)
+	}
+	want := "  … pod Pending; last warning: FailedScheduling: 0/1 nodes are available: 1 Insufficient memory.\n"
+	if all := strings.Join(lines, ""); strings.Count(all, want) != 1 {
+		t.Errorf("log = %q, want one line %q", all, want)
+	}
+
+	_, h = k8sWith(t, k, false, kubeRule{match: "get --request-timeout=30s events", out: event},
+		kubeRule{match: "wait --for=condition=Ready", stderr: "timed out", code: 1})
+	err := h.ensurePod(context.Background(), "w", envport.EnvSpec{}, egressgw.Attachment{}, func(string, ...any) {})
+	if err == nil || !strings.Contains(err.Error(), "never became ready") || !strings.Contains(err.Error(), "Insufficient memory") {
+		t.Errorf("err = %v", err)
 	}
 }

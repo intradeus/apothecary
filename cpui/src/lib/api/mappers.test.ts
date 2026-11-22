@@ -273,7 +273,8 @@ describe('runs', () => {
 				mem_limit: 4,
 				net_rx: 5,
 				net_tx: 6,
-				pids: 7
+				pids: 7,
+				oom_kills: 8
 			})
 		).toEqual({
 			at: AT,
@@ -283,8 +284,17 @@ describe('runs', () => {
 			memLimit: 4,
 			netRx: 5,
 			netTx: 6,
-			pids: 7
+			pids: 7,
+			oomKills: 8
 		});
+	});
+
+	it('reads a sample from an engine without OOM counts as none', () => {
+		expect(
+			map.toResourceSample(
+				wire<Wire.ResourceSample>({ at: AT, cpu_perc: 0, cpus: 0, mem_used: 0, mem_limit: 0 })
+			).oomKills
+		).toBe(0);
 	});
 
 	it('reads a run’s ports', () => {
@@ -1195,6 +1205,9 @@ describe('projects', () => {
 				services: [],
 				browserEnabled: false,
 				docker: false,
+				size: { cpus: null, memoryGiB: null },
+				runtime: '',
+				idleMinutes: 0,
 				editor: undefined
 			},
 			defaultFlow: '',
@@ -1780,18 +1793,60 @@ describe('settings and limits', () => {
 		expect(map.toSettings(wire<Wire.Settings>({})).destroyAbandoned).toBe('');
 	});
 
+	const unsetWire = { milli_cpu: 0, memory_mib: 0 };
+	const unset = { cpus: null, memoryGiB: null };
 	it.each<[Wire.LimitsInfo, object]>([
 		[
-			{ max_concurrent_runs: 3, max_environments: 0 },
-			{ maxConcurrentRuns: 3, maxEnvironments: 0 }
+			{
+				max_concurrent_runs: 3,
+				max_environments: 0,
+				sandbox: { default: unsetWire, ceiling: unsetWire, idle_minutes: 0 }
+			},
+			{
+				maxConcurrentRuns: 3,
+				maxEnvironments: 0,
+				sandbox: { default: unset, ceiling: unset, idleMinutes: 0 }
+			}
 		],
 		[
-			{ max_concurrent_runs: -1, max_environments: -1 },
-			{ maxConcurrentRuns: null, maxEnvironments: null }
+			{
+				max_concurrent_runs: -1,
+				max_environments: -1,
+				sandbox: {
+					default: { milli_cpu: 1500, memory_mib: 4096 },
+					ceiling: { milli_cpu: 8000, memory_mib: 512 },
+					idle_minutes: 30
+				}
+			},
+			{
+				maxConcurrentRuns: null,
+				maxEnvironments: null,
+				sandbox: {
+					default: { cpus: 1.5, memoryGiB: 4 },
+					ceiling: { cpus: 8, memoryGiB: 0.5 },
+					idleMinutes: 30
+				}
+			}
 		]
 	])('turns %j into %j and back', (w, domain) => {
 		expect(map.toLimits(w)).toEqual(domain);
 		expect(map.fromLimits(map.toLimits(w))).toEqual(w);
+	});
+
+	it('reads limits from an engine without sizes as none set, and sends unset as 0', () => {
+		const l = map.toLimits(wire<Wire.LimitsInfo>({ max_concurrent_runs: 1, max_environments: 1 }));
+		expect(l.sandbox).toEqual({ default: unset, ceiling: unset, idleMinutes: 0 });
+		expect(map.fromLimits({ maxConcurrentRuns: 1, maxEnvironments: 1 }).sandbox).toEqual({
+			default: unsetWire,
+			ceiling: unsetWire,
+			idle_minutes: 0
+		});
+	});
+
+	it('reads a run’s sandbox usage', () => {
+		expect(
+			map.toSandboxRunUsage({ run_id: 'r', peak_mem: 1, mem_limit: 2, oom_kills: 3, at: AT })
+		).toEqual({ runId: 'r', peakMem: 1, memLimit: 2, oomKills: 3, at: AT });
 	});
 });
 
@@ -2663,5 +2718,48 @@ describe('war room', () => {
 		expect(sw.units[0].envStatus).toBeUndefined();
 		expect(sw.units[1].crew).toMatchObject({ subagents: [], tool: undefined });
 		expect(map.toSwarm(wire<Wire.Swarm>({ at: AT, units: null })).units).toEqual([]);
+	});
+});
+
+describe('the runtime offer', () => {
+	it('reads the default and each approved runtime with what it gives', () => {
+		expect(
+			map.toRuntimeOffer({
+				offered: true,
+				default: 'sysbox',
+				approved: [
+					{
+						name: 'sysbox',
+						capabilities: {
+							nested_containers: true,
+							nested_kubernetes: true,
+							user_namespaces: false,
+							contained: true
+						}
+					}
+				]
+			})
+		).toEqual({
+			offered: true,
+			default: 'sysbox',
+			approved: [
+				{
+					name: 'sysbox',
+					capabilities: {
+						nestedContainers: true,
+						nestedKubernetes: true,
+						userNamespaces: false,
+						contained: true
+					}
+				}
+			],
+			error: undefined
+		});
+	});
+
+	it('reads none approved and an error', () => {
+		expect(
+			map.toRuntimeOffer({ offered: false, default: '', approved: null, error: 'bad' })
+		).toEqual({ offered: false, default: '', approved: [], error: 'bad' });
 	});
 });

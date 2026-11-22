@@ -7,7 +7,9 @@ describe('wsValue', () => {
 	it.each<[Run['envStatus'], WsValue]>([
 		['rebuilding', 'rebuilding'],
 		['destroying', 'destroying'],
-		['error', 'error']
+		['error', 'error'],
+		['sleeping', 'sleeping'],
+		['waking', 'waking']
 	])('lets the in-flight %s win over everything', (status, value) => {
 		expect(wsValue('running', 'env-1', status)).toBe(value);
 		expect(wsValue('provisioning', undefined, status)).toBe(value);
@@ -32,7 +34,8 @@ describe('wsValue', () => {
 		['stopped', 'stopped'],
 		['absent', 'none'],
 		['unknown', 'unknown'],
-		['broken', 'broken']
+		['broken', 'broken'],
+		['asleep', 'asleep']
 	])('reads the engine status %s as %s', (status, value) => {
 		expect(wsValue('running', 'env-1', status)).toBe(value);
 	});
@@ -99,7 +102,10 @@ describe('WorkspaceStatus', () => {
 		['error', 'hue-danger', '.ldot.flat', false],
 		['stopped', 'hue-muted', '.ldot.hollow', false],
 		['unknown', 'hue-warning', '.ldot.dashed', false],
-		['broken', 'hue-danger', '.ldot.dashed', false]
+		['broken', 'hue-danger', '.ldot.dashed', false],
+		['asleep', 'hue-muted', '.ldot.hollow', false],
+		['sleeping', 'hue-running', '.ldot.flat', true],
+		['waking', 'hue-running', '.ldot.flat', true]
 	])('draws %s as DESIGN 3.2 says', (envStatus, hue, dot, pulsing) => {
 		const { container } = render(WorkspaceStatus, { state: 'running', envId: 'e', envStatus });
 		expect(container.firstElementChild).toHaveClass(hue);
@@ -118,6 +124,12 @@ describe('WorkspaceStatus', () => {
 		);
 		expect(screen.queryByText('live')).toBeNull();
 		expect(screen.queryByText('ws_19b4')).toBeNull();
+	});
+
+	it('says an asleep workspace is kept and what wakes it', () => {
+		render(WorkspaceStatus, { state: 'completed', envId: 'e', envStatus: 'asleep' });
+		expect(screen.getByText('asleep')).toBeInTheDocument();
+		expect(screen.getByTitle(/checkout and containers are kept/)).toBeInTheDocument();
 	});
 
 	it('keeps a dashed ring for "no workspace" in the compact form', () => {

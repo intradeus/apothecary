@@ -49,3 +49,11 @@ IfNotPresent
 {{- printf "%s://%s" $h.scheme $h.ingress.host -}}{{- with $h.port }}:{{ . }}{{- end -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+The sandbox runtime: workspaces.runtime, else the older workspaces.privileged
+(true: privileged, false: sysbox).
+*/}}
+{{- define "apothecary.sandboxRuntime" -}}
+{{- .Values.workspaces.runtime | default (ternary "privileged" "sysbox" .Values.workspaces.privileged) -}}
+{{- end }}

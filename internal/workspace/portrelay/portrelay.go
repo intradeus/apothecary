@@ -84,6 +84,10 @@ type Manager struct {
 
 	// domain/scheme switch exposures to host routing (RouteByHost).
 	domain, scheme string
+
+	// Track, when set, wraps each exposure's port before it is served: what
+	// stop-on-idle counts as use (every connection holds the run).
+	Track func(runID string, pc envport.PortConn) envport.PortConn
 }
 
 // RouteByHost serves every exposure at <port>-<run label>.<domain> through
@@ -249,6 +253,9 @@ func (m *Manager) ForHost(raw, reqHost string) string {
 // before (persisted), falling back to a kernel-picked port if none is saved
 // or it is now taken.
 func (m *Manager) Expose(runID string, port int, pc envport.PortConn) (string, error) {
+	if m.Track != nil {
+		pc = m.Track(runID, pc)
+	}
 	m.mu.Lock()
 	if ex, ok := m.byRun[runID][port]; ok {
 		m.mu.Unlock()

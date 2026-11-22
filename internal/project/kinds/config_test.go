@@ -446,35 +446,110 @@ func TestKubernetesValidation(t *testing.T) {
 	}
 }
 
-// The deployment's sandbox shape (APOTHECARY_K8S_RUNTIME_CLASS and
-// APOTHECARY_K8S_PRIVILEGED) answers an integration that leaves it empty, and
-// the form shows it; an integration's own value still wins.
+// The deployment's runtime (APOTHECARY_K8S_RUNTIME, the older privileged
+// setting folded in by the boot) answers an integration that leaves its own
+// empty, and the form shows it; an integration's own value still wins.
 func TestKubernetesSandboxShapeFromTheDeployment(t *testing.T) {
-	d := KubernetesDefaults{Namespace: "w", EngineURL: "http://e:8080", RuntimeClass: "sysbox-runc", Privileged: "off"}
+	d := KubernetesDefaults{Namespace: "w", EngineURL: "http://e:8080", Runtime: "sysbox", RuntimeClass: "sysbox-runc-v2"}
 	byName := map[string]Field{}
 	for _, f := range (Kubernetes{Defaults: d}).Descriptor().Fields {
 		byName[f.Name] = f
 	}
-	if byName["privileged"].Placeholder != "off" || byName["runtime_class"].Placeholder != "sysbox-runc" || byName["privileged"].Default != "" {
-		t.Errorf("privileged %+v, runtime_class %+v", byName["privileged"], byName["runtime_class"])
+	if byName["runtime"].Placeholder != "sysbox" || byName["runtime_class"].Placeholder != "sysbox-runc-v2" || byName["runtime"].Default != "" {
+		t.Errorf("runtime %+v, runtime_class %+v", byName["runtime"], byName["runtime_class"])
+	}
+	if !strings.Contains(byName["runtime"].Label, "privileged/sysbox") {
+		t.Errorf("runtime label = %q, want the known runtimes", byName["runtime"].Label)
 	}
 	secrets := map[string]string{"kubeconfig": testKubeconfig}
 	p, err := Kubernetes{Defaults: d}.New(Config{Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()})
 	if err != nil {
-		t.Fatalf("unprivileged from the deployment: %v", err)
+		t.Fatalf("sysbox from the deployment: %v", err)
 	}
 	p.Close()
-	// Privileged off from the deployment, but no runtime class anywhere: refused.
-	d.RuntimeClass = ""
-	if _, err := (Kubernetes{Defaults: d}).New(Config{Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "privileged=off needs a runtime_class") {
+	// An unknown runtime from the deployment is refused, naming it.
+	d.Runtime = "gvisor"
+	if _, err := (Kubernetes{Defaults: d}).New(Config{Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()}); err == nil || !strings.Contains(err.Error(), "deployment's") {
 		t.Errorf("err = %v", err)
 	}
-	// The integration's own value wins over the deployment's.
-	p, err = Kubernetes{Defaults: d}.New(Config{Values: map[string]any{"privileged": "on"}, Secrets: secrets}, ProvisionerDeps{RunsDir: t.TempDir()})
-	if err != nil {
-		t.Fatalf("privileged from the integration: %v", err)
+}
+
+// The integration's runtime: its own field, else its older privileged field,
+// else the deployment's; the class override rides along.
+func TestKubernetesRuntime(t *testing.T) {
+	sysboxDeploy := KubernetesDefaults{Runtime: "sysbox", RuntimeClass: "sysbox-runc"}
+	for _, c := range []struct {
+		name      string
+		values    map[string]any
+		d         KubernetesDefaults
+		rt, class string
+		err       string
+	}{
+		{"nothing anywhere", nil, KubernetesDefaults{}, "privileged", "", ""},
+		{"the deployment's", nil, sysboxDeploy, "sysbox", "sysbox-runc", ""},
+		{"the integration's runtime wins", map[string]any{"runtime": "privileged"}, sysboxDeploy, "privileged", "sysbox-runc", ""},
+		{"its class too", map[string]any{"runtime": "privileged", "runtime_class": ""}, KubernetesDefaults{}, "privileged", "", ""},
+		{"privileged on", map[string]any{"privileged": "on"}, sysboxDeploy, "privileged", "sysbox-runc", ""},
+		{"privileged off with a class", map[string]any{"privileged": "off", "runtime_class": "sysbox-runc"}, KubernetesDefaults{}, "sysbox", "sysbox-runc", ""},
+		{"privileged off with the deployment's class", map[string]any{"privileged": "Off"}, sysboxDeploy, "sysbox", "sysbox-runc", ""},
+		{"privileged off without a class", map[string]any{"privileged": "off"}, KubernetesDefaults{}, "", "", "needs a runtime_class"},
+		{"privileged neither", map[string]any{"privileged": "maybe"}, KubernetesDefaults{}, "", "", "on or off"},
+		{"agreeing fields", map[string]any{"runtime": "sysbox", "privileged": "off"}, KubernetesDefaults{}, "sysbox", "", ""},
+		{"contradicting fields", map[string]any{"runtime": "sysbox", "privileged": "on"}, KubernetesDefaults{}, "", "", "contradicts"},
+		{"unknown runtime", map[string]any{"runtime": "gvisor"}, KubernetesDefaults{}, "", "", "unknown sandbox runtime"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			rt, class, err := kubernetesRuntime(Config{Values: c.values}, c.d)
+			if c.err != "" {
+				if err == nil || !strings.Contains(err.Error(), c.err) {
+					t.Fatalf("err = %v, want %q", err, c.err)
+				}
+				return
+			}
+			if err != nil || string(rt) != c.rt || class != c.class {
+				t.Errorf("= %q, %q, %v; want %q, %q", rt, class, err, c.rt, c.class)
+			}
+		})
 	}
-	p.Close()
+}
+
+// The runtimes an integration approves: its own list (the default among
+// them), else the deployment's with the default added; the definition's
+// needs come with it.
+func TestKubernetesRuntimeChoice(t *testing.T) {
+	both := KubernetesDefaults{Runtime: "sysbox", Runtimes: []string{"sysbox", "privileged"}}
+	for _, c := range []struct {
+		name     string
+		values   map[string]any
+		d        KubernetesDefaults
+		def      envport.Runtime
+		approved []envport.Runtime
+		err      string
+	}{
+		{"nothing anywhere: the default alone", nil, KubernetesDefaults{}, "privileged", []envport.Runtime{"privileged"}, ""},
+		{"the deployment's list", nil, both, "sysbox", []envport.Runtime{"sysbox", "privileged"}, ""},
+		{"the integration's own default joins the deployment's list", map[string]any{"runtime": "privileged"}, KubernetesDefaults{Runtime: "sysbox", Runtimes: []string{"sysbox"}}, "privileged", []envport.Runtime{"privileged", "sysbox"}, ""},
+		{"the integration's own list", map[string]any{"runtimes": " sysbox ,, sysbox"}, both, "sysbox", []envport.Runtime{"sysbox"}, ""},
+		{"its own list must hold its default", map[string]any{"runtimes": "privileged"}, both, "", nil, "not among the approved"},
+		{"an unknown approved runtime", map[string]any{"runtimes": "sysbox,gvisor"}, both, "", nil, "runtimes: unknown sandbox runtime"},
+		{"a bad default", map[string]any{"runtime": "gvisor"}, both, "", nil, "unknown sandbox runtime"},
+		{"kata on claims", map[string]any{"runtimes": "sysbox,kata", "storage": "pvc"}, both, "", nil, "kata runtime needs the integration's storage set to emptydir"},
+		{"kata, storage unset", map[string]any{"runtimes": "sysbox,kata"}, both, "sysbox", []envport.Runtime{"sysbox", "kata"}, ""},
+		{"kata on emptydir", map[string]any{"runtimes": "sysbox,kata", "storage": "emptydir"}, both, "sysbox", []envport.Runtime{"sysbox", "kata"}, ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := Kubernetes{Defaults: c.d}.RuntimeChoice(Config{Values: c.values})
+			if c.err != "" {
+				if err == nil || !strings.Contains(err.Error(), c.err) {
+					t.Fatalf("err = %v, want %q", err, c.err)
+				}
+				return
+			}
+			if err != nil || got.Default != c.def || !slices.Equal(got.Approved, c.approved) || !got.Needs.NestedContainers {
+				t.Errorf("= %+v, %v; want %s of %v", got, err, c.def, c.approved)
+			}
+		})
+	}
 }
 
 func TestKubernetesBuildsAndCleansUp(t *testing.T) {

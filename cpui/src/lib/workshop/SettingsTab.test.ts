@@ -17,10 +17,12 @@ vi.mock('$lib/api', () => ({
 			remove: vi.fn(),
 			startEnvCheck: vi.fn(),
 			browser: vi.fn(),
-			secrets: vi.fn()
+			secrets: vi.fn(),
+			sandboxUsage: vi.fn()
 		},
 		integrations: { repos: vi.fn() },
-		egress: { defaults: vi.fn() }
+		egress: { defaults: vi.fn() },
+		system: { runtimeOffer: vi.fn() }
 	}
 }));
 
@@ -49,6 +51,12 @@ const nameField = () => screen.getByLabelText('Workshop name');
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	vi.mocked(api.projects.sandboxUsage).mockResolvedValue([]);
+	vi.mocked(api.system.runtimeOffer).mockResolvedValue({
+		offered: false,
+		default: '',
+		approved: []
+	});
 	vi.mocked(api.projects.update).mockImplementation(async (id, d) =>
 		aWorkshop({ ...project, id, name: d.name })
 	);

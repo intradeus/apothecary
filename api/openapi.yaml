@@ -2476,9 +2476,12 @@ components:
           type: integer
         max_environments:
           type: integer
+        sandbox:
+          $ref: '#/components/schemas/SandboxPolicy'
       required:
         - max_concurrent_runs
         - max_environments
+        - sandbox
       type: object
     LoginRequest:
       properties:
@@ -3653,6 +3656,8 @@ components:
         net_tx:
           format: int64
           type: integer
+        oom_kills:
+          type: integer
         pids:
           type: integer
       required:
@@ -3663,6 +3668,7 @@ components:
         - mem_used
         - net_rx
         - net_tx
+        - oom_kills
         - pids
       type: object
     ReviewComment:
@@ -3966,6 +3972,28 @@ components:
         - services
         - workspace
       type: object
+    RunUsage:
+      properties:
+        at:
+          format: date-time
+          type: string
+        mem_limit:
+          format: int64
+          type: integer
+        oom_kills:
+          type: integer
+        peak_mem:
+          format: int64
+          type: integer
+        run_id:
+          type: string
+      required:
+        - at
+        - mem_limit
+        - oom_kills
+        - peak_mem
+        - run_id
+      type: object
     RunView:
       properties:
         adopted:
@@ -4084,6 +4112,52 @@ components:
         - run
         - seen
       type: object
+    RuntimeCapabilities:
+      properties:
+        contained:
+          type: boolean
+        nested_containers:
+          type: boolean
+        nested_kubernetes:
+          type: boolean
+        user_namespaces:
+          type: boolean
+      required:
+        - contained
+        - nested_containers
+        - nested_kubernetes
+        - user_namespaces
+      type: object
+    RuntimeInfo:
+      properties:
+        capabilities:
+          $ref: '#/components/schemas/RuntimeCapabilities'
+        name:
+          type: string
+      required:
+        - capabilities
+        - name
+      type: object
+    RuntimeOffer:
+      properties:
+        approved:
+          items:
+            $ref: '#/components/schemas/RuntimeInfo'
+          nullable: true
+          type: array
+        default:
+          type: string
+        error:
+          type: string
+        noSleep:
+          type: string
+        offered:
+          type: boolean
+      required:
+        - approved
+        - default
+        - offered
+      type: object
     SSHKey:
       properties:
         created_at:
@@ -4118,6 +4192,39 @@ components:
           type: string
       required:
         - public_key
+      type: object
+    SandboxPolicy:
+      properties:
+        ceiling:
+          $ref: '#/components/schemas/SandboxSize'
+        default:
+          $ref: '#/components/schemas/SandboxSize'
+        idle_minutes:
+          type: integer
+      required:
+        - ceiling
+        - default
+        - idle_minutes
+      type: object
+    SandboxSize:
+      properties:
+        memory_mib:
+          type: integer
+        milli_cpu:
+          type: integer
+      required:
+        - memory_mib
+        - milli_cpu
+      type: object
+    SandboxUsage:
+      properties:
+        runs:
+          items:
+            $ref: '#/components/schemas/RunUsage'
+          nullable: true
+          type: array
+      required:
+        - runs
       type: object
     Scorecard:
       properties:
@@ -5768,10 +5875,16 @@ components:
           items:
             type: string
           type: array
+        idle_minutes:
+          type: integer
+        runtime:
+          type: string
         services:
           items:
             $ref: '#/components/schemas/ServiceConfig'
           type: array
+        size:
+          $ref: '#/components/schemas/SandboxSize'
       type: object
     WorkspaceDiff:
       properties:
@@ -12326,6 +12439,49 @@ paths:
       tags:
         - projects
       x-apothecary-action: run:operate
+  /api/projects/{id}/sandbox-usage:
+    get:
+      operationId: getSandboxUsage
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SandboxUsage'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'What the workshop''s recent runs'' sandboxes reached: peak memory, its limit, processes killed at it'
+      tags:
+        - projects
+      x-apothecary-action: project:read
   /api/projects/{id}/secrets:
     get:
       description: What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.
@@ -13499,6 +13655,39 @@ paths:
       tags:
         - integrations
       x-apothecary-action: instance:admin
+  /api/provisioner/runtimes:
+    get:
+      operationId: getRuntimeOffer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RuntimeOffer'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'The sandbox runtimes a workshop may choose: the instance provisioner''s default and approved ones, with what each can run'
+      tags:
+        - integrations
+      x-apothecary-action: project:read
   /api/provisioner/test:
     post:
       operationId: testProvisioner
@@ -15844,6 +16033,50 @@ paths:
       tags:
         - runs
       x-apothecary-action: run:read
+  /api/runs/{id}/wake:
+    post:
+      description: A workspace stopped after its project's idle period keeps its checkout and containers; this starts it on them (a terminal, the editor, a port or an SSH session does the same on its own). 204 once it is up, or when it was not asleep; 503 with Retry-After while another request is waking it; 502 when it would not come back.
+      operationId: wakeRunWorkspace
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Start the run's workspace again after it was stopped when idle
+      tags:
+        - workspace
+      x-apothecary-action: run:shell
   /api/runs/{id}/workspace-log:
     get:
       description: 'Without from: the last n bytes. With from: up to n bytes from that offset — the end of the last read, to keep up, or a range ending at the start of what is on screen, to go back. A size below the offset kept up to means the log was replaced: read the tail again.'

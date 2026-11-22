@@ -117,8 +117,15 @@ spec:
               value: direct
             - name: APOTHECARY_K8S_IMAGE_PULL_POLICY
               value: {{ include "apothecary.pullPolicy" . }}
-            - name: APOTHECARY_K8S_PRIVILEGED
-              value: {{ ternary "on" "off" .Values.workspaces.privileged | quote }}
+            - name: APOTHECARY_K8S_RUNTIME
+              value: {{ include "apothecary.sandboxRuntime" . | quote }}
+            {{- with .Values.workspaces.runtimes }}
+            {{- if not (has (include "apothecary.sandboxRuntime" $) .) }}
+            {{- fail (printf "workspaces.runtimes (%s) must include the default runtime %s" (join "," .) (include "apothecary.sandboxRuntime" $)) }}
+            {{- end }}
+            - name: APOTHECARY_K8S_RUNTIMES
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.workspaces.runtimeClassName }}
             - name: APOTHECARY_K8S_RUNTIME_CLASS
               value: {{ . | quote }}

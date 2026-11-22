@@ -7,6 +7,7 @@ package resources
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -35,7 +36,28 @@ type Sampler struct {
 	// carried-forward value is the stale lie the reconciler comment warns
 	// against.
 	buf map[string][]envport.ResourceSample
+	// usage is each project's recent runs, newest first, at most usageRuns:
+	// what their sandboxes reached, beside the sandbox size setting. Memory
+	// only like buf, but kept past a run's end: it is the answer to "how big
+	// does this project's sandbox need to be".
+	usage map[string][]RunUsage
+	// runtime is each sampled run's runtime, for the memory gauges' label.
+	runtime map[string]envport.Runtime
 }
+
+// RunUsage is what one run's sandbox reached while it was sampled: its peak
+// memory (working set), the limit it ran under, and the processes the kernel
+// killed at that limit.
+type RunUsage struct {
+	RunID    string    `json:"run_id"`
+	PeakMem  int64     `json:"peak_mem"`
+	MemLimit int64     `json:"mem_limit"`
+	OOMKills int       `json:"oom_kills"`
+	At       time.Time `json:"at"` // the latest sample
+}
+
+// usageRuns bounds a project's usage record.
+const usageRuns = 10
 
 func New(runs *run.Reader, resolver resolution.Resolver, clock func() time.Time, log *slog.Logger) *Sampler {
 	return &Sampler{Runs: runs, Resolver: resolver, Clock: clock, Log: log}
@@ -139,16 +161,52 @@ func (s *Sampler) SampleOnce(ctx context.Context) error {
 			buf = buf[len(buf)-resourceWindow:]
 		}
 		s.buf[id] = buf
+		if s.runtime == nil {
+			s.runtime = map[string]envport.Runtime{}
+		}
+		s.runtime[id] = res.WorkspaceRuntime
+		s.recordUsage(v.ProjectID, id, sample)
 		s.mu.Unlock()
 	}
 	s.mu.Lock()
 	for id := range s.buf {
 		if !live[id] {
 			delete(s.buf, id)
+			delete(s.runtime, id)
 		}
 	}
 	s.mu.Unlock()
 	return nil
+}
+
+// recordUsage folds a sample into its run's usage record (s.mu held).
+func (s *Sampler) recordUsage(project, runID string, x envport.ResourceSample) {
+	if s.usage == nil {
+		s.usage = map[string][]RunUsage{}
+	}
+	runs := s.usage[project]
+	i := slices.IndexFunc(runs, func(u RunUsage) bool { return u.RunID == runID })
+	var u RunUsage
+	if i >= 0 {
+		u = runs[i]
+		runs = slices.Delete(runs, i, i+1)
+	}
+	u.RunID, u.At, u.MemLimit = runID, x.At, x.MemLimit
+	u.PeakMem = max(u.PeakMem, x.MemUsed)
+	u.OOMKills = max(u.OOMKills, x.OOMKills)
+	runs = append([]RunUsage{u}, runs...)
+	if len(runs) > usageRuns {
+		runs = runs[:usageRuns]
+	}
+	s.usage[project] = runs
+}
+
+// Usage is the project's recent runs' usage, newest first; empty since the
+// engine started or for a project whose runs were never sampled.
+func (s *Sampler) Usage(project string) []RunUsage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]RunUsage{}, s.usage[project]...)
 }
 
 // Samples returns a snapshot copy of the run's resource-sample window

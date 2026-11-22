@@ -179,6 +179,7 @@ export const aSample = (over: Partial<ResourceSample> = {}): ResourceSample => (
 	netRx: 0,
 	netTx: 0,
 	pids: 7,
+	oomKills: 0,
 	...over
 });
 

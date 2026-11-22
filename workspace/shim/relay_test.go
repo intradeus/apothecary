@@ -206,6 +206,7 @@ func TestRelayRefusesBadArguments(t *testing.T) {
 	}{
 		{nil, "no relay pairs given"},
 		{[]string{"--stdio"}, "--stdio needs <sock>"},
+		{[]string{"--stdio-ack"}, "--stdio-ack needs <sock>"},
 		{[]string{"--stdio", missing}, "stdio " + missing},
 		{[]string{"--reverse"}, "--reverse needs <sock>:<host>:<port>"},
 		{[]string{"--reverse", "just-a-socket"}, "bad reverse spec"},
@@ -250,6 +251,16 @@ func TestRelayStdio(t *testing.T) {
 	r := shim(t, "ping\n", "relay", "--stdio", filepath.Join(dir, "app-3000.sock"))
 	if r.code != 0 || r.stdout != "PING\n" {
 		t.Errorf("relay --stdio = %+v", r)
+	}
+	// With the ack, the mux's "OK" first, then the stream.
+	r = shim(t, "ping\n", "relay", "--stdio-ack", filepath.Join(dir, "app-3000.sock"))
+	if r.code != 0 || r.stdout != "OK\nPING\n" {
+		t.Errorf("relay --stdio-ack = %+v", r)
+	}
+	// No socket, no ack: the dial sees the process end instead.
+	r = shim(t, "", "relay", "--stdio-ack", filepath.Join(dir, "gone.sock"))
+	if r.code == 0 || strings.Contains(r.stdout, "OK") {
+		t.Errorf("relay --stdio-ack to nothing = %+v", r)
 	}
 }
 

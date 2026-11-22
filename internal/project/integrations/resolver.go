@@ -23,6 +23,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"apothecary/internal/account/providers"
 	"apothecary/internal/flow/agentspec"
@@ -53,6 +54,9 @@ type Resolver struct {
 	logins CredentialOpener
 	// notices hears k8s image drift; nil = log only.
 	notices ProvisionerNotices
+	// sizes is the instance's sandbox sizing policy (System → Limits), read
+	// on every resolve; nil = no policy (a project's own size as it is).
+	sizes SandboxPolicy
 	// Live is the read cache of remote trackers: a write through a ticket's
 	// tracker drops what it holds of the issue. Set by the daemon after New;
 	// nil (tests) leaves writes unwrapped.
@@ -76,6 +80,42 @@ type ProvisionerNotices interface {
 
 // SetNotices wires the notice feed.
 func (r *Resolver) SetNotices(n ProvisionerNotices) { r.notices = n }
+
+// SandboxPolicy reads the instance's sandbox sizing policy (engine.StoredLimits).
+type SandboxPolicy func(ctx context.Context) (envport.SandboxPolicy, error)
+
+// SetSandboxSizes wires the sizing policy.
+func (r *Resolver) SetSandboxSizes(f SandboxPolicy) { r.sizes = f }
+
+// sandboxSize is p's sandbox size under the instance's policy. A policy that
+// cannot be read sizes nothing rather than failing the run: an unreadable
+// setting must not stop work it does not decide.
+func (r *Resolver) sandboxSize(ctx context.Context, own envport.SandboxSize) envport.SandboxSize {
+	if r.sizes == nil {
+		return own
+	}
+	policy, err := r.sizes(ctx)
+	if err != nil {
+		slog.Warn("sandbox sizes unreadable; the project's own size applies", "err", err)
+		return own
+	}
+	return policy.Effective(own)
+}
+
+// sandboxIdle is the project's idle setting under the instance's default;
+// unreadable limits leave the project's own (never, when it has none).
+func (r *Resolver) sandboxIdle(ctx context.Context, own int) time.Duration {
+	var policy envport.SandboxPolicy
+	if r.sizes != nil {
+		p, err := r.sizes(ctx)
+		if err != nil {
+			slog.Warn("sandbox policy unreadable; the project's own idle setting applies", "err", err)
+		} else {
+			policy = p
+		}
+	}
+	return policy.IdleAfter(own)
+}
 
 // driftFor reports in's image drift to the notices; nil when none are wired.
 func (r *Resolver) driftFor(in confstore.Integration) func(ctx context.Context, part string, err error) {
@@ -213,6 +253,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 	if err != nil {
 		return nil, err
 	}
+	runtime, runtimeErr := r.chooseRuntime(provInt, p.Workspace)
 	prov, release, err := r.acquireProvisioner(provInt)
 	if err != nil {
 		return nil, err
@@ -339,13 +380,17 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 			WordWrap:       p.Workspace.Editor.WordWrap,
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
-		Secrets:         projectSecrets,
-		Browser:         p.Workspace.Browser.Enabled,
-		WorkspaceDocker: p.Workspace.Docker,
-		ExtraRepos:      extras,
-		RepoHosts:       repoHosts,
-		HarnessKind:     defaultKind,
-		HarnessKinds:    kindList,
+		Secrets:             projectSecrets,
+		Browser:             p.Workspace.Browser.Enabled,
+		WorkspaceDocker:     p.Workspace.Docker,
+		WorkspaceSize:       r.sandboxSize(ctx, p.Workspace.Size),
+		WorkspaceIdleAfter:  r.sandboxIdle(ctx, p.Workspace.IdleMinutes),
+		WorkspaceRuntime:    runtime,
+		WorkspaceRuntimeErr: runtimeErr,
+		ExtraRepos:          extras,
+		RepoHosts:           repoHosts,
+		HarnessKind:         defaultKind,
+		HarnessKinds:        kindList,
 		Models: func(ctx context.Context, kind string) ([]string, error) {
 			h, ok := byKind[kind]
 			if !ok {

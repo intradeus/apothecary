@@ -156,6 +156,13 @@ type ProvisionerKind interface {
 	New(cfg Config, deps ProvisionerDeps) (Provisioner, error)
 }
 
+// RuntimeOffering is a provisioner kind whose integrations offer projects a
+// choice of sandbox runtime, read from the stored config alone (nothing is
+// reached): a project is checked against it when saved.
+type RuntimeOffering interface {
+	RuntimeChoice(cfg Config) (envport.RuntimeChoice, error)
+}
+
 // Harness is the AgentRunner port plus the §4 capability surface. The
 // harness owns model auth entirely (post-M8 amendment): its integration
 // config carries API keys and/or subscription logins in native format —

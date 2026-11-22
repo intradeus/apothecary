@@ -2,6 +2,7 @@
 	// The WORKSPACE's controls: the Env menu's and the rebuild menu's triggers,
 	// and the editor. The menus themselves are the header's: they open beside
 	// these buttons, from outside the glass.
+	import { api } from '$lib/api';
 	import { errorMessage } from '$lib/core/errors';
 	import { openRunEditor } from '$lib/app/editor';
 	import { t } from '$lib/i18n/index.svelte';
@@ -33,6 +34,22 @@
 	// reload or a second tab must not offer a rebuild on top of it.
 	const rebuilding = $derived(actions.has('rebuild') || run.envStatus === 'rebuilding');
 
+	const asleep = $derived(run.envStatus === 'asleep' || run.envStatus === 'waking');
+	const waking = $derived(actions.has('wake') || run.envStatus === 'waking');
+
+	function wake() {
+		return actions.run('wake', async () => {
+			rs.error = '';
+			try {
+				await api.runs.wake(run.id);
+				return true;
+			} catch (e) {
+				rs.error = errorMessage(e);
+				return false;
+			}
+		});
+	}
+
 	function openEditor() {
 		return actions.run('editor', async () => {
 			rs.error = '';
@@ -51,6 +68,15 @@
 	{#snippet label()}
 		<WorkspaceStatus state={run.state} envId={run.envId} envStatus={run.envStatus} />
 	{/snippet}
+	{#if asleep}
+		<button
+			disabled={!rs.canShell || waking}
+			aria-busy={waking}
+			onclick={wake}
+			title={rs.canShell ? t('run.header.wakeTitle') : t('common.needsPermission')}
+			>{t('run.header.wake')}</button
+		>
+	{/if}
 	<button
 		bind:this={envBtn}
 		disabled={!rs.hasWorkspace}

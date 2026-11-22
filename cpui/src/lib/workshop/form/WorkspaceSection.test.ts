@@ -5,15 +5,30 @@ import { api } from '$lib/api';
 import { bindable } from '$test/fixtures/app.svelte';
 import WorkspaceSection from './WorkspaceSection.svelte';
 
-vi.mock('$lib/api', () => ({ api: { egress: { defaults: vi.fn() } } }));
+vi.mock('$lib/api', () => ({
+	api: {
+		egress: { defaults: vi.fn() },
+		system: { runtimeOffer: vi.fn() },
+		projects: { sandboxUsage: vi.fn() }
+	}
+}));
 
 const setup = (over: Record<string, unknown> = {}) => {
+	vi.mocked(api.system.runtimeOffer).mockResolvedValue({
+		offered: false,
+		default: '',
+		approved: []
+	});
+	vi.mocked(api.projects.sandboxUsage).mockResolvedValue([]);
 	const props = bindable({
 		blockedDomains: [] as string[],
 		egressMode: 'allow' as 'allow' | 'deny',
 		allowDomains: [] as string[],
 		denyDomains: [] as string[],
 		docker: false,
+		size: { cpus: null, memoryGiB: null } as { cpus: number | null; memoryGiB: number | null },
+		runtime: '',
+		idleMinutes: 0,
 		codeServerExtensions: [] as string[],
 		editor: {
 			theme: '',
@@ -72,5 +87,11 @@ describe('WorkspaceSection', () => {
 		const props = setup();
 		await userEvent.click(screen.getByRole('button', { name: /Add sensible defaults/ }));
 		expect(props.onerror).toHaveBeenCalledWith('down');
+	});
+
+	it('binds the sandbox size', async () => {
+		const props = setup();
+		await userEvent.type(screen.getByLabelText('CPUs'), '3');
+		expect(props.size).toEqual({ cpus: 3, memoryGiB: null });
 	});
 });

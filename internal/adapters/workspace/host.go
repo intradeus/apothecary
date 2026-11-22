@@ -36,12 +36,13 @@ type Host interface {
 	// comes up wherever the host allows it.
 	prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error)
 
-	// unprivileged reports that this host's sandboxes run without
-	// --privileged (a user-namespace runtime): sandbox root is not host root.
-	// It decides the daemon door under APOTHECARY_WORKSPACE_DOCKER=auto;
-	// unprivilegedHint is how an operator gets there on this host.
-	unprivileged() bool
-	unprivilegedHint() string
+	// contained reports that this host's sandboxes are contained from their
+	// node (the runtime's trait): sandbox root is not node root. It decides
+	// the daemon door under APOTHECARY_WORKSPACE_DOCKER=auto; containedHint
+	// is how an operator gets there on this host.
+	// rt is the env's runtime, "" the host's default.
+	contained(rt envport.Runtime) bool
+	containedHint() string
 
 	// runInner runs one CLI invocation against the run's sandbox: its inner
 	// docker daemon, its checkout, its devcontainer CLI. A sandbox whose
@@ -56,6 +57,11 @@ type Host interface {
 	// none. An unreachable host is an error, never "".
 	sandboxState(ctx context.Context, name string) (state string, err error)
 	destroySandbox(ctx context.Context, name string) error
+	// stopSandbox ends the sandbox and keeps what it stands on: its storage,
+	// its secrets, its network policy (Sleep). canStop says why a host's
+	// sandboxes cannot be stopped and kept.
+	stopSandbox(ctx context.Context, name string) error
+	canStop() error
 	// resetSandbox empties the sandbox for a compose rebuild: every workspace
 	// and side container goes, and with them what they hold in the daemon.
 	// The checkout stays: agent commits live there and nowhere else yet.

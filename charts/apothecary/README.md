@@ -39,10 +39,10 @@ the `apothecary` CLI from the release.
 
 ## Before you install
 
-- **Sandboxes run unprivileged under sysbox** (`workspaces.runtimeClassName:
-  sysbox-runc`). Install sysbox on the nodes that run them. Its RuntimeClass
-  places sandbox pods on those nodes. Privileged sandboxes
-  (`workspaces.privileged: true`) are for a cluster of your own only.
+- **Sandboxes run unprivileged under sysbox** (`workspaces.runtime: sysbox`,
+  RuntimeClass `sysbox-runc`). Install sysbox on the nodes that run them. Its
+  RuntimeClass places sandbox pods on those nodes. Privileged sandboxes
+  (`workspaces.runtime: privileged`) are for a cluster of your own only.
 - **Nodes need the wireguard kernel module**, in-tree since Linux 5.6.
 - **Workspace volumes need a local or block storage class.** The inner
   docker daemon cannot run on NFS.
@@ -86,8 +86,10 @@ Kubernetes: `>=1.29.0-0`
 | workspaces.namespace | string | `"apothecary-workspaces"` | Where sandboxes, gateways and browsers live. |
 | workspaces.createNamespace | bool | `true` | Create that namespace with the chart. |
 | workspaces.podSecurity | string | `"privileged"` | The namespace's Pod Security level. Gateways need NET_ADMIN, so privileged even with unprivileged sandboxes. |
-| workspaces.runtimeClassName | string | `"sysbox-runc"` | The RuntimeClass that nests each run's dockerd unprivileged (sysbox, installed on the nodes that run sandboxes). The RuntimeClass's own scheduling (nodeSelector, tolerations) places sandbox pods on those nodes. |
-| workspaces.privileged | bool | `false` | Run sandboxes privileged instead. Sandbox root is then root on its node: for a cluster of your own without sysbox (k3d, a dev box), never a shared one. Needed when runtimeClassName is empty. |
+| workspaces.runtime | string | `""` | What isolates each run's sandbox: `sysbox` (unprivileged, in a user namespace of its own; sysbox-runc installed on the nodes that run sandboxes), `kata` (a VM per sandbox: Kata Containers with Cloud Hypervisor and a `kata` RuntimeClass, KVM on the nodes; sandboxes must be sized, System → Limits, and use emptydir storage) or `privileged` (sandbox root is root on its node: for a cluster of your own, k3d or a dev box, never a shared one). Empty: from the older `privileged` below (true: privileged; false: sysbox). |
+| workspaces.runtimeClassName | string | `""` | The RuntimeClass sandbox pods name, when not the runtime's own (sysbox: sysbox-runc; kata: kata; privileged: none). The RuntimeClass's own scheduling (nodeSelector, tolerations) places sandbox pods on its nodes. |
+| workspaces.runtimes | list | `[]` | The runtimes a workshop may choose for its sandboxes, the default (`runtime`) among them: only runtimes this cluster's nodes run. Empty: the default alone. An admin may narrow it on the provisioner (System → Provisioner); its Test starts a pod under each. |
+| workspaces.privileged | bool | `false` | Older form of `runtime`, read only when that is empty: true is `privileged`, false is `sysbox`. |
 | workspaces.protectCIDRs | string | `"10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"` | Destinations no workspace may reach through its gateway: the cluster's pod and service ranges and link-local metadata. The defaults are k3s's; set your cluster's (EKS: the VPC CIDR). |
 | workspaces.clusterDomain | string | `"cluster.local"` | The cluster's DNS domain. |
 | assistant.enabled | bool | `true` | Run it. People still each choose their harness (Claude Code or opencode) in their settings. |

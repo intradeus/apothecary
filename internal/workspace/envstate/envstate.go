@@ -89,6 +89,10 @@ type Store struct {
 	// since its container was built (envport.WorkspaceDirtyChecker), refreshed
 	// with status. Same discipline: external state, memory only.
 	dirty map[string]bool
+	// runtime is, per run, the runtime its project's sandboxes run under at
+	// the last pass ("" when the provisioner offers no choice): telemetry's
+	// label, refreshed with status.
+	runtime map[string]envport.Runtime
 
 	// ops is the per-run in-flight workspace-operation gate (keyed by run id).
 	// It serializes provision/rebuild/destroy on one env — the reaper,
@@ -110,6 +114,15 @@ func New(runs *run.Reader, resolver resolution.Resolver, clock func() time.Time,
 		dirty:  map[string]bool{},
 		ops:    map[string]*op{},
 	}
+}
+
+// InFlight reports a workspace op claimed and not finished (a failed one
+// does not count).
+func (s *Store) InFlight(runID string) bool {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	op := s.ops[runID]
+	return op != nil && !op.failed
 }
 
 func (s *Store) now() time.Time {
@@ -183,6 +196,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 	}
 	next := map[string]envport.EnvStatus{}
 	dirty := map[string]bool{}
+	runtimes := map[string]envport.Runtime{}
 	// Runs with an op in flight (rebuild/destroy) are skipped: their docker
 	// state is churning and the Badges overlay already covers the badge, so
 	// probing would only manufacture a spurious EnvUnknown mid-op.
@@ -229,6 +243,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 			continue
 		}
 		next[id] = st
+		runtimes[id] = res.WorkspaceRuntime
 		// Same pass, same honesty: a failed check records nothing, so the
 		// hint disappears rather than carrying a stale "changed" forward.
 		if dc, ok := res.Envp.(envport.WorkspaceDirtyChecker); ok {
@@ -242,6 +257,7 @@ func (s *Store) Reconcile(ctx context.Context) error {
 	s.statusMu.Lock()
 	s.status = next
 	s.dirty = dirty
+	s.runtime = runtimes
 	s.statusMu.Unlock()
 	return nil
 }
@@ -254,6 +270,15 @@ func (s *Store) Dirty() map[string]bool {
 	defer s.statusMu.Unlock()
 	out := make(map[string]bool, len(s.dirty))
 	maps.Copy(out, s.dirty)
+	return out
+}
+
+// Runtimes returns a snapshot copy of each reconciled run's runtime.
+func (s *Store) Runtimes() map[string]envport.Runtime {
+	s.statusMu.Lock()
+	defer s.statusMu.Unlock()
+	out := make(map[string]envport.Runtime, len(s.runtime))
+	maps.Copy(out, s.runtime)
 	return out
 }
 

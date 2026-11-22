@@ -152,13 +152,27 @@ netfilter. Run privileged, **root in a sandbox is root on its node**, and
 `"runArgs": ["--privileged"]` or compose `privileged: true` run verbatim by
 design.
 
-So the chart's default is sysbox (`workspaces.runtimeClassName:
-sysbox-runc`, privileged off): root in a sandbox is an unprivileged uid on
-the node, `/proc` and `/sys` are virtualised, and the pod gets its own user
-namespace. Neither the chart nor the engine accepts unprivileged without a
-runtime class, so a typo can't silently fall back to privileged.
-`workspaces.privileged: true` is for a cluster of your own without sysbox
-(k3d, a dev box), never a shared one.
+So the chart's default runtime is sysbox (`workspaces.runtime: sysbox`, its
+RuntimeClass `sysbox-runc`): root in a sandbox is an unprivileged uid on the
+node, `/proc` and `/sys` are virtualised, and the pod gets its own user
+namespace. Neither the chart nor the engine accepts a runtime it does not
+know, so a typo can't silently fall back to privileged.
+`workspaces.runtime: privileged` is for a cluster of your own without sysbox
+(k3d, a dev box), never a shared one. `workspaces.runtime: kata` gives each
+sandbox a VM of its own (Kata Containers, on nodes with KVM): privileged
+inside its own kernel, never on the node. A Kubernetes integration may pick
+its own (its `runtime` field).
+[Sandbox runtimes](docs/kubernetes.md#sandbox-runtimes) compares the three
+and installs Kata.
+
+A workshop may run under another runtime than the default, one the
+deployment approves (`workspaces.runtimes`, the default among them: only
+runtimes the nodes run). An admin may narrow that list on the provisioner
+(System → Provisioner, its `runtimes` field), whose Test starts a pod under
+each. The workshop's Sandbox runtime pick (Settings → Workspace) offers the
+approved ones, and the engine refuses a pick that is not approved or that
+cannot give what the workshop needs (Docker in workspaces needs a docker
+daemon inside), naming the runtimes that would do.
 
 ### Docker in workspaces
 
@@ -187,7 +201,9 @@ Any Kubernetes cluster, k3s included, with:
 - **sysbox** on the nodes that run sandboxes: sysbox ≥ 0.7, containerd ≥
   2.0.5, kernel ≥ 6.3. Recent Ubuntu also needs two AppArmor overrides, and
   sysbox and containerd must not restart under running sandboxes
-  ([why](docs/kubernetes.md#cluster-requirements)).
+  ([why](docs/kubernetes.md#cluster-requirements)). Or, for the `kata`
+  runtime, **KVM** and Kata ≥ 4.4 with a `kata` RuntimeClass
+  ([install](docs/kubernetes.md#installing-kata)).
 - **NetworkPolicy enforcement**, and the **`wireguard`** kernel module.
 - A **local or block storage class**, not NFS.
 - For the assistant, nodes on **Linux ≥ 6.12** with Landlock enabled.

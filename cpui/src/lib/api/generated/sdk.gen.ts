@@ -320,6 +320,12 @@ import type {
 	GetRunSshData,
 	GetRunSshErrors,
 	GetRunSshResponses,
+	GetRuntimeOfferData,
+	GetRuntimeOfferErrors,
+	GetRuntimeOfferResponses,
+	GetSandboxUsageData,
+	GetSandboxUsageErrors,
+	GetSandboxUsageResponses,
 	GetScorecardData,
 	GetScorecardErrors,
 	GetScorecardResponses,
@@ -767,6 +773,9 @@ import type {
 	WaitRunData,
 	WaitRunErrors,
 	WaitRunResponses,
+	WakeRunWorkspaceData,
+	WakeRunWorkspaceErrors,
+	WakeRunWorkspaceResponses,
 	WarmAssistantData,
 	WarmAssistantErrors,
 	WarmAssistantResponses
@@ -4495,6 +4504,29 @@ export const startNothingRun = <ThrowOnError extends boolean = false>(
 	});
 
 /**
+ * What the workshop's recent runs' sandboxes reached: peak memory, its limit, processes killed at it
+ */
+export const getSandboxUsage = <ThrowOnError extends boolean = false>(
+	options: Options<GetSandboxUsageData, ThrowOnError>
+): RequestResult<GetSandboxUsageResponses, GetSandboxUsageErrors, ThrowOnError> =>
+	(options.client ?? client).get<GetSandboxUsageResponses, GetSandboxUsageErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/projects/{id}/sandbox-usage',
+		...options
+	});
+
+/**
  * The project's secrets, by name
  *
  * What a flow's MCP servers read where they say ${secrets.<name>}. Names and when each was last set — never a value.
@@ -5161,6 +5193,29 @@ export const updateProvisioner = <ThrowOnError extends boolean = false>(
 			}
 		}
 	);
+
+/**
+ * The sandbox runtimes a workshop may choose: the instance provisioner's default and approved ones, with what each can run
+ */
+export const getRuntimeOffer = <ThrowOnError extends boolean = false>(
+	options?: Options<GetRuntimeOfferData, ThrowOnError>
+): RequestResult<GetRuntimeOfferResponses, GetRuntimeOfferErrors, ThrowOnError> =>
+	(options?.client ?? client).get<GetRuntimeOfferResponses, GetRuntimeOfferErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/provisioner/runtimes',
+		...options
+	});
 
 /**
  * Check the instance's provisioner reaches its cluster (admin)
@@ -6393,6 +6448,31 @@ export const waitRun = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/wait',
+		...options
+	});
+
+/**
+ * Start the run's workspace again after it was stopped when idle
+ *
+ * A workspace stopped after its project's idle period keeps its checkout and containers; this starts it on them (a terminal, the editor, a port or an SSH session does the same on its own). 204 once it is up, or when it was not asleep; 503 with Retry-After while another request is waking it; 502 when it would not come back.
+ */
+export const wakeRunWorkspace = <ThrowOnError extends boolean = false>(
+	options: Options<WakeRunWorkspaceData, ThrowOnError>
+): RequestResult<WakeRunWorkspaceResponses, WakeRunWorkspaceErrors, ThrowOnError> =>
+	(options.client ?? client).post<WakeRunWorkspaceResponses, WakeRunWorkspaceErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/wake',
 		...options
 	});
 

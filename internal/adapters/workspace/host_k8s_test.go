@@ -120,7 +120,6 @@ func newK8sTestAdapter(t *testing.T, k *kubeFake, firewall bool) *Adapter {
 			SandboxImage: "sbx:1", ShimImage: "shim:1", ToolsImage: "tools:1", GatewayImage: "gw:1",
 			EngineURL:       "http://10.43.0.20:8080",
 			EngineNamespace: "apothecary",
-			Privileged:      true,
 			Firewall:        firewall,
 		},
 	})
@@ -202,8 +201,8 @@ func TestK8sProvisionSequence(t *testing.T) {
 	if pod == nil {
 		t.Fatal("no pod created")
 	}
-	if a.host.unprivileged() {
-		t.Error("the default pod is privileged: not an unprivileged sandbox")
+	if a.host.contained("") {
+		t.Error("the default pod is privileged: not a contained sandbox")
 	}
 	b, _ := json.Marshal(pod)
 	ps := string(b)
@@ -532,5 +531,23 @@ func TestParseCgroupSampleWorkingSet(t *testing.T) {
 	// Counters read a moment apart never go below zero.
 	if s, _ = parseCgroupSample("cpu 1\nmem 100\ninactive 120\n"); s.memUsed != 0 {
 		t.Fatalf("clamped = %d", s.memUsed)
+	}
+}
+
+// The sandbox cgroup's oom_kill counter rides in the sample: a process killed
+// at the sandbox's memory limit leaves the sandbox up (measured under sysbox:
+// the inner container exits 137, memory.events oom_kill goes 0 → 1), so the
+// counter is how the run learns of it. A kernel without memory.events reads
+// as none.
+func TestParseCgroupSampleOOMKills(t *testing.T) {
+	s, err := parseCgroupSample("cpu 1\nmem 10\noom 3\n")
+	if err != nil || s.oomKills != 3 {
+		t.Fatalf("oom = %d, %v", s.oomKills, err)
+	}
+	if got := cpuSample(s, s); got.OOMKills != 3 {
+		t.Errorf("sample = %+v", got)
+	}
+	if s, _ = parseCgroupSample("cpu 1\noom\n"); s.oomKills != 0 {
+		t.Errorf("no memory.events = %d", s.oomKills)
 	}
 }

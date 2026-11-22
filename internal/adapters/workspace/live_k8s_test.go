@@ -16,6 +16,12 @@ package workspace
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
 //   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
 //     images were imported into the cluster's nodes instead of pushed.
+//   - APOTHECARY_LIVE_WG_USERSPACE=1 to run each sandbox's tunnel as
+//     wireguard-go (the Kata guest's path) on a kernel with the module.
+//   - APOTHECARY_LIVE_RUNTIME (default privileged): the sandboxes' runtime.
+//     kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
+//     its sandboxes are sized, on emptyDir disks, and tunnel through
+//     wireguard-go (the stock guest kernel has no WireGuard).
 //
 // The test runs OUTSIDE the cluster, like an engine on a laptop: it reaches
 // pods through kubectl port-forward. Pods cannot reach a docker host's own
@@ -146,6 +152,17 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	}
 	img := func(name string) string { return prefix + "/" + name + ":local" }
 	gateway := os.Getenv("APOTHECARY_LIVE_GATEWAY") != "0"
+	runtime := envport.RuntimePrivileged
+	if v := os.Getenv("APOTHECARY_LIVE_RUNTIME"); v != "" {
+		var err error
+		if runtime, err = envport.ParseRuntime(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vm := runtime == envport.RuntimeKata
+	if _, err := os.Stat("/dev/kvm"); vm && err != nil {
+		livetest.Skip(t, "APOTHECARY_LIVE_RUNTIME=kata without /dev/kvm here: the Kata rig runs on this host's KVM")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 
@@ -179,9 +196,12 @@ func TestLiveK8sLifecycle(t *testing.T) {
 			EngineURL:       "http://" + engineIP + ":8080",
 			EngineNamespace: ns,
 			Forward:         true,
-			Storage:         "pvc",
-			Privileged:      true,
+			Storage:         DefaultStorage([]envport.Runtime{runtime}),
+			Runtime:         runtime,
 			Firewall:        gateway,
+			// The tunnel either way: kernel WireGuard by default, userspace
+			// when asked.
+			WireGuardUserspace: os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") == "1",
 		},
 	})
 	defer a.Close()
@@ -195,6 +215,10 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		// git port, the escape hatch's job.
 		EgressDomains:      builtin.EgressDefaults(),
 		EgressAllowedPorts: []int{9418},
+	}
+	if vm {
+		// The pod's limits size the VM.
+		spec.Size = envport.SandboxSize{MilliCPU: 4000, MemoryMiB: 8192}
 	}
 	start := time.Now()
 	env, err := a.Provision(ctx, spec)
@@ -222,6 +246,17 @@ func TestLiveK8sLifecycle(t *testing.T) {
 
 	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvRunning {
 		t.Fatalf("status = %s %v", st, err)
+	}
+	if gateway {
+		// The tunnel is the WireGuard asked for: the wg container records it
+		// on the pod's shared /run/apo.
+		want := "kernel"
+		if os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") == "1" || vm {
+			want = "userspace"
+		}
+		if mode := kubectl(t, c, "", "exec", name, "-c", "sandbox", "--", "cat", "/run/apo/wg-mode"); mode != want {
+			t.Errorf("tunnel = %q WireGuard, want %q", mode, want)
+		}
 	}
 	res, err := a.Exec(ctx, env, envport.Command{Script: `echo "$SMOKE"; cat "$HOME/repo/file.txt"; test -f /tmp/pc-ran && echo hooks-ran`})
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Output, "live-42") ||
@@ -404,6 +439,48 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	}
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
+	}
+	if a.CanSleep() == nil {
+		liveSleepWake(ctx, t, a, c, env, spec)
+	}
+}
+
+// liveSleepWake: the run sleeps (its pod deleted, its claim kept) and wakes
+// by provisioning its spec again, with the same workspace container (no
+// rebuild) and the checkout as it was.
+func liveSleepWake(ctx context.Context, t *testing.T, a *Adapter, c *kube.Client, env envport.EnvID, spec envport.EnvSpec) {
+	t.Helper()
+	name := string(env)
+	if _, err := a.Exec(ctx, env, envport.Command{Script: "echo kept > .apo-live-sleep"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.containerID(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := a.Sleep(ctx, env); err != nil {
+		t.Fatalf("sleep: %v", err)
+	}
+	var pod kube.Pod
+	if found, _ := c.Get(ctx, "pod", name, &pod); found {
+		t.Fatal("the pod survived Sleep")
+	}
+	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvAsleep {
+		t.Fatalf("asleep: status = %s %v", st, err)
+	}
+	start := time.Now()
+	if _, err := a.Provision(ctx, spec); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	t.Logf("woke in %s", time.Since(start).Truncate(time.Second))
+	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvRunning {
+		t.Fatalf("awake: status = %s %v", st, err)
+	}
+	if after, err := a.containerID(ctx, name); err != nil || after != before {
+		t.Errorf("workspace container %s before sleep, %s after (%v): rebuilt", before, after, err)
+	}
+	if res, err := a.Exec(ctx, env, envport.Command{Script: "cat .apo-live-sleep"}); err != nil || !strings.Contains(res.Output, "kept") {
+		t.Errorf("checkout after waking: %+v %v", res, err)
 	}
 }
 

@@ -386,3 +386,39 @@ func TestForHost(t *testing.T) {
 		t.Errorf("host-routed ForHost = %q", got)
 	}
 }
+
+// trackedConn counts the dials through the port Track wrapped.
+type trackedConn struct {
+	envport.PortConn
+	dials *atomic.Int32
+}
+
+func (c trackedConn) Dial(ctx context.Context) (net.Conn, error) {
+	c.dials.Add(1)
+	return c.PortConn.Dial(ctx)
+}
+
+// Track wraps each exposure's port before it is served: what stop-on-idle
+// counts as use.
+func TestExposeServesTheTrackedPort(t *testing.T) {
+	m := New("127.0.0.1")
+	defer m.CloseAll()
+	var dials atomic.Int32
+	var runs []string
+	m.Track = func(runID string, pc envport.PortConn) envport.PortConn {
+		runs = append(runs, runID)
+		return trackedConn{PortConn: pc, dials: &dials}
+	}
+	u, err := m.Expose("run1", 3000, newEchoConn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialURL(t, u)
+	_, _ = c.Write([]byte("ping"))
+	_ = c.(*net.TCPConn).CloseWrite()
+	got, _ := io.ReadAll(c)
+	c.Close()
+	if string(got) != "pong-ping" || dials.Load() != 1 || len(runs) != 1 || runs[0] != "run1" {
+		t.Errorf("got %q, %d dials, tracked %v", got, dials.Load(), runs)
+	}
+}

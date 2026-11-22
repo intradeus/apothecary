@@ -750,6 +750,21 @@ describe('describe', () => {
 		['run_archived', '', {}, 'archived', ''],
 		['env_destroyed', '', {}, 'workspace destroyed', ''],
 		[
+			'env_slept',
+			'',
+			{ idle_minutes: 30 },
+			'workspace stopped after 30 min unused, checkout kept',
+			''
+		],
+		['env_woke', '', { by: 'terminal' }, 'workspace started again (by terminal)', 'info'],
+		[
+			'env_woke',
+			'',
+			{ by: 'stage', error: 'no node' },
+			'workspace would not start again: no node',
+			'bad'
+		],
+		[
 			'env_destroy_failed',
 			'',
 			{ error: 'pod stuck' },
