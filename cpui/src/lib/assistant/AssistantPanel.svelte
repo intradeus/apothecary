@@ -98,13 +98,13 @@
 				<button
 					class="btn-primary btn-sm"
 					onclick={() => convo.decide(m, true)}
-					disabled={convo.deciding !== null}
+					disabled={convo.deciding !== null || convo.switching}
 					aria-busy={convo.deciding === m.seq}>{t('assistant.confirm')}</button
 				>
 				<button
 					class="btn-sm"
 					onclick={() => convo.decide(m, false)}
-					disabled={convo.deciding !== null}>{t('assistant.decline')}</button
+					disabled={convo.deciding !== null || convo.switching}>{t('assistant.decline')}</button
 				>
 			</div>
 		{:else}
@@ -125,6 +125,7 @@
 				options={modelOptions}
 				value={convo.session.model ?? ''}
 				onchange={(m) => convo.pickModel(m)}
+				disabled={convo.switching}
 				title={ownHarness ? undefined : t('assistant.modelOldHarness')}
 			/>
 		</span>
@@ -174,12 +175,12 @@
 			{/if}
 
 			<!-- Not .log: that is LogOutput's monospace (components.css). -->
-			<div class="thread col" aria-live="polite">
+			<div class="thread col" aria-live="polite" aria-busy={convo.switching}>
 				{#if !convo.messages.length && !convo.busy}
 					<p class="muted">{t('assistant.drawerEmpty')}</p>
 					<div class="presets col">
 						{#each convo.page?.presets ?? [] as p (p)}
-							<button class="preset" onclick={() => ask(p)}>{p}</button>
+							<button class="preset" onclick={() => ask(p)} disabled={convo.switching}>{p}</button>
 						{/each}
 					</div>
 				{/if}
@@ -214,14 +215,16 @@
 					aria-label={t('assistant.placeholder')}
 					onkeydown={onKey}
 					oninput={() => convo.typing(draft)}
-					disabled={convo.busy}></textarea>
+					disabled={convo.busy || convo.switching}></textarea>
 				<div class="foot row">
 					{#if convo.error}<span class="error" title={convo.error}>{convo.error}</span>{/if}
 					{#if convo.busy}
 						<button class="btn-sm" onclick={() => convo.cancel()}>{t('assistant.stop')}</button>
 					{:else}
-						<button class="btn-primary btn-sm" onclick={() => ask()} disabled={!draft.trim()}
-							>{t('assistant.send')}</button
+						<button
+							class="btn-primary btn-sm"
+							onclick={() => ask()}
+							disabled={!draft.trim() || convo.switching}>{t('assistant.send')}</button
 						>
 					{/if}
 				</div>

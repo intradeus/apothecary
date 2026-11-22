@@ -2294,6 +2294,15 @@ describe('the assistant', () => {
 		});
 	});
 
+	it('reads a session by its id, a null thread as none', async () => {
+		const fn = reply('getAssistantSession', answer({ session, messages: null, busy: true }));
+		const out = await assistant.session('s1');
+		expect(fn).toHaveBeenCalledWith({ path: { id: 's1' } });
+		expect(out.session.id).toBe('s1');
+		expect(out.messages).toEqual([]);
+		expect(out.busy).toBe(true);
+	});
+
 	it('sends, picks, warms and stops', async () => {
 		const send = reply('sendAssistantMessage', answer({ ...message, role: 'person', fill: null }));
 		const m = await assistant.send('s1', 'hi', { title: '' });

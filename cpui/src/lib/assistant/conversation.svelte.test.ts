@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
-import type { AssistantFrame, AssistantMessage, AssistantStatus } from '$lib/domain';
+import type {
+	AssistantFrame,
+	AssistantMessage,
+	AssistantSession,
+	AssistantStatus
+} from '$lib/domain';
 import { Conversation, WARM_EVERY_MS, type FillHook } from './conversation.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -8,6 +13,7 @@ vi.mock('$lib/api', () => ({
 		assistant: {
 			status: vi.fn(),
 			open: vi.fn(),
+			session: vi.fn(),
 			warm: vi.fn(),
 			send: vi.fn(),
 			cancel: vi.fn(),
@@ -241,26 +247,163 @@ describe('Conversation frames', () => {
 		c.onFrame(f({ kind: 'state', busy: true }));
 		c.onFrame(f({ kind: 'delta', text: 'half' }));
 		c.onFrame(f({ kind: 'request', message: msg(0, 'assistant', '', { request }) }));
-		vi.mocked(api.assistant.open).mockResolvedValue({
+		vi.mocked(api.assistant.session).mockResolvedValue({
 			session,
 			messages: [msg(1, 'assistant', 'from the record')],
 			busy: false
 		});
 		c.onFrame({ kind: 'gap' } as AssistantFrame);
 		await vi.waitFor(() => expect(c.messages[0]?.text).toBe('from the record'));
-		expect(api.assistant.open).toHaveBeenLastCalledWith('ticket', 'T-1', 'w1');
+		expect(api.assistant.session).toHaveBeenLastCalledWith('s1');
 		expect([c.busy, c.live, c.liveRequest]).toEqual([false, '', null]);
+	});
+
+	it('reads again the session it holds after a gap, not a newer one about its subject', async () => {
+		const c = await loaded();
+		// Another tab opened s2 about T-1 since: a plain open would answer it.
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session: { ...session, id: 's2' },
+			messages: [msg(1, 'person', 'the other tab’s', { sessionId: 's2' })],
+			busy: true
+		});
+		vi.mocked(api.assistant.session).mockResolvedValue({
+			session,
+			messages: [msg(1, 'person', 'mine')],
+			busy: false
+		});
+		await c.reopen();
+		expect(api.assistant.open).toHaveBeenCalledTimes(1);
+		expect([c.session?.id, c.messages[0]?.text, c.busy]).toEqual(['s1', 'mine', false]);
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(2, 'person', 'go'));
+		await c.ask('go');
+		expect(api.assistant.send).toHaveBeenCalledWith('s1', 'go', undefined);
+	});
+
+	it('drops a reread that another session overtook', async () => {
+		const c = await loaded();
+		const late = Promise.withResolvers<{
+			session: AssistantSession;
+			messages: AssistantMessage[];
+			busy: boolean;
+		}>();
+		vi.mocked(api.assistant.session).mockReturnValueOnce(late.promise);
+		const p = c.reopen();
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session: { ...session, id: 's2' },
+			messages: [],
+			busy: false
+		});
+		await c.load({ fresh: true });
+		late.resolve({ session, messages: [msg(1, 'person', 'old')], busy: true });
+		await p;
+		expect([c.session?.id, c.messages, c.busy]).toEqual(['s2', [], false]);
+		// Nor does its failure speak for the new one.
+		vi.mocked(api.assistant.session).mockImplementationOnce(async () => {
+			await c.load({ fresh: true });
+			throw new Error('gone');
+		});
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session: { ...session, id: 's3' },
+			messages: [],
+			busy: false
+		});
+		await c.reopen();
+		expect([c.session?.id, c.error]).toEqual(['s3', '']);
 	});
 
 	it('ignores a gap before a session, and says when the record cannot be read', async () => {
 		const c = new Conversation({ kind: 'ticket', subject: 'T-1' });
 		c.onFrame({ kind: 'gap' } as AssistantFrame);
 		await c.reopen();
-		expect(api.assistant.open).not.toHaveBeenCalled();
+		expect(api.assistant.session).not.toHaveBeenCalled();
 		await c.load();
-		vi.mocked(api.assistant.open).mockRejectedValueOnce(new Error('gone'));
+		vi.mocked(api.assistant.session).mockRejectedValueOnce(new Error('gone'));
 		await c.reopen();
 		expect(c.error).toBe('gone');
+	});
+});
+
+describe('Conversation switching sessions', () => {
+	type View = { session: AssistantSession; messages: AssistantMessage[]; busy: boolean };
+	const view = (id: string, messages: AssistantMessage[] = []): View => ({
+		session: { ...session, id },
+		messages,
+		busy: false
+	});
+
+	it('takes no question, decision or model while a new session opens', async () => {
+		const m = msg(2, 'assistant', 'Shall I?', { request });
+		vi.mocked(api.assistant.open).mockResolvedValue(view('s1', [m]));
+		const c = await loaded();
+		expect(c.switching).toBe(false);
+		const opening = Promise.withResolvers<View>();
+		vi.mocked(api.assistant.open).mockReturnValueOnce(opening.promise);
+		const p = c.load({ fresh: true });
+		expect(c.switching).toBe(true);
+		await vi.waitFor(() => expect(api.assistant.open).toHaveBeenCalledTimes(2));
+		// The old thread still shows; nothing goes to its session.
+		expect(await c.ask('to the old one?')).toBe(false);
+		await c.decide(m, true);
+		await c.pickModel('model-b');
+		expect(api.assistant.send).not.toHaveBeenCalled();
+		expect(api.assistant.confirm).not.toHaveBeenCalled();
+		expect(api.assistant.setModel).not.toHaveBeenCalled();
+		opening.resolve(view('s2'));
+		await p;
+		expect([c.switching, c.session?.id, c.messages]).toEqual([false, 's2', []]);
+		vi.mocked(api.assistant.send).mockResolvedValue(msg(1, 'person', 'now', { sessionId: 's2' }));
+		expect(await c.ask('now')).toBe(true);
+		expect(api.assistant.send).toHaveBeenCalledWith('s2', 'now', undefined);
+	});
+
+	it('ends switching when the session cannot be opened', async () => {
+		const c = await loaded();
+		vi.mocked(api.assistant.open).mockRejectedValueOnce(new Error('down'));
+		await c.load({ fresh: true });
+		expect([c.switching, c.loadError]).toEqual([false, 'down']);
+	});
+
+	it('drops what the old session answered once another is shown', async () => {
+		const m = msg(2, 'assistant', 'Shall I?', { request });
+		vi.mocked(api.assistant.open).mockResolvedValue(view('s1', [m]));
+		const c = await loaded();
+		vi.mocked(api.assistant.open).mockResolvedValue(view('s2', [m]));
+		const sent = Promise.withResolvers<AssistantMessage>();
+		vi.mocked(api.assistant.send).mockReturnValueOnce(sent.promise);
+		const asked = c.ask('to s1');
+		const decided = Promise.withResolvers<AssistantMessage>();
+		vi.mocked(api.assistant.confirm).mockReturnValueOnce(decided.promise);
+		const deciding = c.decide(m, true);
+		const model = Promise.withResolvers<AssistantSession>();
+		vi.mocked(api.assistant.setModel).mockReturnValueOnce(model.promise);
+		const picking = c.pickModel('model-b');
+		await c.retarget('w2');
+		sent.resolve(msg(3, 'person', 'to s1'));
+		decided.resolve({ ...m, request: { ...request, state: 'done' } });
+		model.resolve({ ...session, model: 'model-b' });
+		await Promise.all([asked, deciding, picking]);
+		expect([c.session?.id, c.session?.model, c.messages]).toEqual(['s2', 'model-a', [m]]);
+		// Nor do its refusals speak for the new one: each a session of its own.
+		vi.mocked(api.assistant.open)
+			.mockResolvedValueOnce(view('s3'))
+			.mockResolvedValueOnce(view('s4'))
+			.mockResolvedValueOnce(view('s5'));
+		vi.mocked(api.assistant.send).mockImplementationOnce(async () => {
+			await c.retarget('w3');
+			throw new Error('busy');
+		});
+		vi.mocked(api.assistant.confirm).mockImplementationOnce(async () => {
+			await c.retarget('w4');
+			throw new Error('decided');
+		});
+		vi.mocked(api.assistant.setModel).mockImplementationOnce(async () => {
+			await c.retarget('w5');
+			throw new Error('unknown');
+		});
+		expect(await c.ask('again')).toBe(false);
+		await c.decide(m, true);
+		await c.pickModel('x');
+		expect(c.error).toBe('');
 	});
 });
 

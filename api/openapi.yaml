@@ -6530,6 +6530,50 @@ paths:
       tags:
         - assistant
       x-apothecary-action: assistant:write
+  /api/assistant/sessions/{id}:
+    get:
+      description: 'What a page holding the session reads it again by when frames were lost: never another session about the same subject.'
+      operationId: getAssistantSession
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AssistantSessionView'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: 'One of one''s sessions by its id: the session, its messages, and whether it is answering now'
+      tags:
+        - assistant
+      x-apothecary-action: assistant:read
   /api/assistant/sessions/{id}/cancel:
     post:
       operationId: cancelAssistantTurn

@@ -71,6 +71,9 @@ export class Conversation {
 	liveRequest = $state<AssistantRequest | null>(null);
 	/** The message whose request is being decided. */
 	deciding = $state<number | null>(null);
+	/** A session is being opened (the first, a fresh one, another
+	 *  workshop's): nothing is asked or decided until it is the one shown. */
+	switching = $state(false);
 
 	#pageState: () => unknown;
 	#fill: FillHook | undefined;
@@ -99,11 +102,14 @@ export class Conversation {
 		return this.status?.pages[this.kind];
 	}
 
-	/** The status, then the session (a new one when fresh). */
+	/** The status, then the session (a new one when fresh). Until it is in,
+	 *  the conversation is switching: the session shown so far takes no
+	 *  question, so none goes to a session about to be replaced. */
 	async load(opts: { fresh?: boolean } = {}): Promise<void> {
 		const n = ++this.#loads;
 		this.loadError = '';
 		this.error = '';
+		this.switching = true;
 		try {
 			const status = await api.assistant.status(this.workshop || undefined);
 			if (n !== this.#loads) return;
@@ -116,9 +122,12 @@ export class Conversation {
 			this.session = open.session;
 			this.messages = open.messages;
 			this.busy = open.busy;
+			this.liveRequest = null;
 			this.#idle();
 		} catch (e) {
 			if (n === this.#loads) this.loadError = errorMessage(e);
+		} finally {
+			if (n === this.#loads) this.switching = false;
 		}
 	}
 
@@ -190,32 +199,40 @@ export class Conversation {
 		}
 	}
 
+	/** The session held, read again: never another about its subject (a
+	 *  fresh one, or one another tab opened since). */
 	async reopen(): Promise<void> {
 		const s = this.session;
 		if (!s) return;
 		try {
-			const open = await api.assistant.open(this.kind, s.subject, this.workshop || undefined);
+			const open = await api.assistant.session(s.id);
+			// Another session came in meanwhile: this answer is not its.
+			if (this.session?.id !== s.id) return;
+			this.session = open.session;
 			this.messages = open.messages;
 			this.busy = open.busy;
 			this.liveRequest = null;
 			this.#idle();
 		} catch (e) {
-			this.error = errorMessage(e);
+			if (this.session?.id === s.id) this.error = errorMessage(e);
 		}
 	}
 
 	/** Ask, with the page as it stands. false: nothing was asked. */
 	async ask(text: string): Promise<boolean> {
 		const q = text.trim();
-		if (!q || !this.session || this.busy) return false;
+		if (!q || !this.session || this.busy || this.switching) return false;
+		const id = this.session.id;
 		this.error = '';
 		this.#fill?.ask();
 		this.busy = true;
 		try {
-			const m = await api.assistant.send(this.session.id, q, this.#pageState());
-			if (!this.messages.some((x) => x.seq === m.seq)) this.messages = [...this.messages, m];
+			const m = await api.assistant.send(id, q, this.#pageState());
+			if (this.session?.id === id && !this.messages.some((x) => x.seq === m.seq))
+				this.messages = [...this.messages, m];
 			return true;
 		} catch (e) {
+			if (this.session?.id !== id) return false;
 			this.busy = false;
 			this.#fill?.answered();
 			this.error = errorMessage(e);
@@ -239,28 +256,30 @@ export class Conversation {
 
 	/** The person's answer to a request: confirmed, its acts run as them. */
 	async decide(m: AssistantMessage, confirm: boolean): Promise<void> {
-		if (!this.session || this.deciding !== null) return;
+		if (!this.session || this.deciding !== null || this.switching) return;
+		const id = this.session.id;
 		this.deciding = m.seq;
 		this.error = '';
 		try {
-			this.#replace(
-				confirm
-					? await api.assistant.confirm(this.session.id, m.seq)
-					: await api.assistant.decline(this.session.id, m.seq)
-			);
+			const out = confirm
+				? await api.assistant.confirm(id, m.seq)
+				: await api.assistant.decline(id, m.seq);
+			if (this.session?.id === id) this.#replace(out);
 		} catch (e) {
-			this.error = errorMessage(e);
+			if (this.session?.id === id) this.error = errorMessage(e);
 		} finally {
 			this.deciding = null;
 		}
 	}
 
 	async pickModel(model: string): Promise<void> {
-		if (!this.session) return;
+		if (!this.session || this.switching) return;
+		const id = this.session.id;
 		try {
-			this.session = await api.assistant.setModel(this.session.id, model);
+			const s = await api.assistant.setModel(id, model);
+			if (this.session?.id === id) this.session = s;
 		} catch (e) {
-			this.error = errorMessage(e);
+			if (this.session?.id === id) this.error = errorMessage(e);
 		}
 	}
 

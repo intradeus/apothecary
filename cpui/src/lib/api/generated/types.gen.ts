@@ -3233,6 +3233,48 @@ export type OpenAssistantSessionResponses = {
 export type OpenAssistantSessionResponse =
 	OpenAssistantSessionResponses[keyof OpenAssistantSessionResponses];
 
+export type GetAssistantSessionData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/assistant/sessions/{id}';
+};
+
+export type GetAssistantSessionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetAssistantSessionResponses = {
+	/**
+	 * OK
+	 */
+	200: AssistantSessionView;
+};
+
+export type GetAssistantSessionResponse =
+	GetAssistantSessionResponses[keyof GetAssistantSessionResponses];
+
 export type CancelAssistantTurnData = {
 	body?: never;
 	path: {

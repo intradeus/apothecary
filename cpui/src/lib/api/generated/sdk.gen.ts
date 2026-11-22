@@ -197,6 +197,9 @@ import type {
 	GetAssistantData,
 	GetAssistantErrors,
 	GetAssistantResponses,
+	GetAssistantSessionData,
+	GetAssistantSessionErrors,
+	GetAssistantSessionResponses,
 	GetAttachmentLimitsData,
 	GetAttachmentLimitsErrors,
 	GetAttachmentLimitsResponses,
@@ -1257,6 +1260,35 @@ export const openAssistantSession = <ThrowOnError extends boolean = false>(
 			'Content-Type': 'application/json',
 			...options.headers
 		}
+	});
+
+/**
+ * One of one's sessions by its id: the session, its messages, and whether it is answering now
+ *
+ * What a page holding the session reads it again by when frames were lost: never another session about the same subject.
+ */
+export const getAssistantSession = <ThrowOnError extends boolean = false>(
+	options: Options<GetAssistantSessionData, ThrowOnError>
+): RequestResult<GetAssistantSessionResponses, GetAssistantSessionErrors, ThrowOnError> =>
+	(options.client ?? client).get<
+		GetAssistantSessionResponses,
+		GetAssistantSessionErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/assistant/sessions/{id}',
+		...options
 	});
 
 /**

@@ -61,8 +61,14 @@
 	<div class="gd island col">
 		<div class="head row nowrap">
 			<h2>{t('assistant.title')}</h2>
-			<button type="button" class="btn-sm" onclick={() => convo.load({ fresh: true })}
-				>{t('assistant.newConversation')}</button
+			<!-- Not while an answer is written: its turn would go on unseen;
+			     Stop ends it first. -->
+			<button
+				type="button"
+				class="btn-sm"
+				onclick={() => convo.load({ fresh: true })}
+				disabled={convo.busy || convo.switching}
+				aria-busy={convo.switching}>{t('assistant.newConversation')}</button
 			>
 			<button
 				type="button"

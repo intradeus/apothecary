@@ -53,18 +53,31 @@
 	let landed = $state(false);
 	let draft = $state('');
 
-	const hook: FillHook = {
-		get asking() {
-			return guard.asking;
-		},
-		ask: () => guard.ask(),
-		answered: () => guard.answered(),
-		offer(fill) {
-			const ok = guard.offer(fill);
-			if (ok) landed = true;
-			return ok;
-		}
-	};
+	/** What one conversation fills the page through: the page's guard as it
+	 *  was when the conversation began, until it ends. An ended one's late
+	 *  frames ask nothing of the page: they fill nothing, nor end a newer
+	 *  conversation's question. */
+	function hookFor(g: PageGuard): FillHook & { end(): void } {
+		let ended = false;
+		return {
+			get asking() {
+				return !ended && g.asking;
+			},
+			ask: () => g.ask(),
+			answered() {
+				if (!ended) g.answered();
+			},
+			offer(fill) {
+				const ok = g.offer(fill);
+				if (ok) landed = true;
+				return ok;
+			},
+			end() {
+				g.answered();
+				ended = true;
+			}
+		};
+	}
 
 	// Each opening is its own conversation: a fresh session, nothing of the
 	// last one's answers, an empty question.
@@ -72,26 +85,37 @@
 		if (open) untrack(() => (draft = ''));
 	});
 
-	// The conversation is the opening's and the workshop's: a workshop
-	// chosen in the open modal starts a fresh one that reads its
+	// The conversation is the opening's, the page's and the workshop's: a
+	// workshop chosen in the open modal starts a fresh one that reads its
 	// repositories, keeping the question typed so far. The picker is hidden
 	// while an answer brews; a workshop changed from outside then stops it,
-	// as closing does. Closing stops the answer and drops a late fill.
+	// as closing does. So does another page in the same component (Back to
+	// another skill): the old page's session never asks with the new page,
+	// nor fills it. Closing stops the answer and drops a late fill.
 	$effect(() => {
 		if (!open) return;
 		const ws = workshop;
-		const c = untrack(() => {
-			const c = new Conversation({ kind, subject, workshop: ws, pageState, fill: hook });
+		const k = kind;
+		const subj = subject;
+		const { c, hook } = untrack(() => {
+			const hook = hookFor(guard);
+			const c = new Conversation({
+				kind: k,
+				subject: subj,
+				workshop: ws,
+				pageState: () => pageState(),
+				fill: hook
+			});
 			convo = c;
 			landed = false;
-			return c;
+			return { c, hook };
 		});
 		void c.load({ fresh: true });
 		c.connect();
 		return () => {
 			if (c.busy) void c.cancel();
 			c.disconnect();
-			guard.answered();
+			hook.end();
 		};
 	});
 

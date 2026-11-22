@@ -375,6 +375,18 @@ func (svc *Service) session(ctx context.Context, person, id string) (Session, er
 	return s, nil
 }
 
+// Reopen is one of a person's sessions as it stands, by its id, and its
+// messages: the session a page holds, never another about the same
+// subject opened since.
+func (svc *Service) Reopen(ctx context.Context, person, id string) (Session, []Message, error) {
+	s, err := svc.session(ctx, person, id)
+	if err != nil {
+		return Session{}, nil, err
+	}
+	msgs, err := svc.Store.AssistantMessages(ctx, s.ID, 0)
+	return s, msgs, err
+}
+
 // Messages are a session's, after a sequence.
 func (svc *Service) Messages(ctx context.Context, person, id string, after int64) ([]Message, error) {
 	if _, err := svc.session(ctx, person, id); err != nil {

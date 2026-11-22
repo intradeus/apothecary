@@ -138,6 +138,18 @@ func (s *Server) openAssistantSession(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, AssistantSessionView{Session: sess, Messages: msgs, Busy: s.Assistant.Busy(sess.ID)})
 }
 
+func (s *Server) getAssistantSession(w http.ResponseWriter, r *http.Request) {
+	sess, msgs, err := s.Assistant.Reopen(r.Context(), auth.UserID(r.Context()), r.PathValue("id"))
+	if err != nil {
+		writeErr(w, assistantStatus(err), err.Error())
+		return
+	}
+	if msgs == nil {
+		msgs = []assistant.Message{}
+	}
+	writeJSON(w, http.StatusOK, AssistantSessionView{Session: sess, Messages: msgs, Busy: s.Assistant.Busy(sess.ID)})
+}
+
 func (s *Server) listAssistantMessages(w http.ResponseWriter, r *http.Request) {
 	var after int64
 	if q := r.URL.Query().Get("after"); q != "" {
@@ -477,6 +489,10 @@ func (s *Server) assistantRoutes() []Route {
 			Summary: "Open the session about a subject: one's latest about it, or a new one",
 			Doc:     "kind is flow, ticket, skill, run, dashboard (a page's session, which fills it) or general (the assistant button's, which acts by requests); subject the flow's name, the ticket's key, the skill's id, the run's id, the dashboard's id, or a draft id before the first save. A flow's, a ticket's or a run's session names its workshop. fresh opens a new session even when one exists.",
 			Handler: s.openAssistantSession, Body: AssistantOpenRequest{}, Returns: AssistantSessionView{}, Enabled: haveAssistant, Action: authz.AssistantWrite},
+		{Method: "GET", Path: "/api/assistant/sessions/{id}", ID: "getAssistantSession", Tag: tagAssistant,
+			Summary: "One of one's sessions by its id: the session, its messages, and whether it is answering now",
+			Doc:     "What a page holding the session reads it again by when frames were lost: never another session about the same subject.",
+			Handler: s.getAssistantSession, Returns: AssistantSessionView{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantRead},
 		{Method: "GET", Path: "/api/assistant/sessions/{id}/messages", ID: "listAssistantMessages", Tag: tagAssistant,
 			Summary: "A session's messages, after a sequence",
 			Query:   []Param{{Name: "after", Doc: "the last sequence already held", Type: "integer"}},

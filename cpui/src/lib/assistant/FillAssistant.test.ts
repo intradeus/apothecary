@@ -260,6 +260,46 @@ describe('FillAssistant', () => {
 		expect(p.guard.changed).toEqual([]);
 	});
 
+	it('drops the old page’s conversation when another page takes the component', async () => {
+		vi.mocked(api.assistant.open)
+			.mockResolvedValueOnce({ session: session('s1'), messages: [], busy: false })
+			.mockResolvedValueOnce({
+				session: { ...session('s2'), subject: 'T-7' },
+				messages: [],
+				busy: false
+			});
+		const p = setup();
+		await screen.findByText('Turn my notes into a ticket.');
+		await userEvent.type(textbox(), 'go{Enter}');
+		frame({ kind: 'state', busy: true });
+		await screen.findByText('Brewing your ticket…');
+		const old = push;
+		// Back to another ticket: the same component, another subject and page.
+		const other = { title: '', goal: 'the other ticket', changeType: 'feat', typeId: '' };
+		await p.rerender({ subject: 'T-7', pageState: () => ({ ...other }) });
+		expect(api.assistant.cancel).toHaveBeenCalledWith('s1');
+		await waitFor(() =>
+			expect(api.assistant.open).toHaveBeenLastCalledWith('ticket', 'T-7', 'w1', { fresh: true })
+		);
+		await screen.findByText('Turn my notes into a ticket.');
+		await userEvent.type(textbox(), 'tidy it{Enter}');
+		expect(api.assistant.send).toHaveBeenLastCalledWith('s2', 'tidy it', other);
+		expect(p.guard.asking).toBe(true);
+		// The old session's late answer neither fills the new page nor ends
+		// its question.
+		old({ seq: 5, sessionId: 's1', kind: 'state', busy: false } as AssistantFrame);
+		old({
+			seq: 6,
+			sessionId: 's1',
+			kind: 'fill',
+			page: 'ticket',
+			subject: 'draft-1',
+			fill: { title: 'the old ticket' }
+		} as AssistantFrame);
+		expect(p.form().title).toBe('');
+		expect(p.guard.asking).toBe(true);
+	});
+
 	it('stays open after a fill that belongs elsewhere, to hand it off', async () => {
 		const guard = new HandoffGuard(runFill);
 		const handoff = createRawSnippet(() => ({

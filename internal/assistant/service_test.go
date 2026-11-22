@@ -531,6 +531,10 @@ func TestOpenAndOwnership(t *testing.T) {
 	if latest, _, _ := w.svc.Open(ctx, "u1", KindFlow, "w1", "builder", false); latest.ID != d.ID {
 		t.Errorf("a plain open after fresh ones = %s, want %s", latest.ID, d.ID)
 	}
+	// Reopen is the session asked for, not the subject's latest.
+	if old, _, err := w.svc.Reopen(ctx, "u1", a.ID); err != nil || old.ID != a.ID {
+		t.Errorf("reopen the first session = %s, %v", old.ID, err)
+	}
 	for name, args := range map[string][3]string{
 		"a bad kind":              {"widget", "w1", "x"},
 		"no subject":              {"flow", "w1", " "},
@@ -547,6 +551,7 @@ func TestOpenAndOwnership(t *testing.T) {
 	// Another person reaches none of it.
 	for name, err := range map[string]error{
 		"messages": func() error { _, err := w.svc.Messages(ctx, "u2", a.ID, 0); return err }(),
+		"reopen":   func() error { _, _, err := w.svc.Reopen(ctx, "u2", a.ID); return err }(),
 		"send":     func() error { _, err := w.svc.Send(ctx, "u2", a.ID, "hi", nil); return err }(),
 		"model":    func() error { _, err := w.svc.SetModel(ctx, "u2", a.ID, "x"); return err }(),
 		"cancel":   w.svc.Cancel(ctx, "u2", a.ID),

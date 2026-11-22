@@ -109,6 +109,12 @@ func TestAssistantSessionsArePersonal(t *testing.T) {
 	if fresh.Session.ID == view.Session.ID || len(fresh.Messages) != 0 {
 		t.Errorf("a fresh open = %+v", fresh.Session)
 	}
+	// By its id: the session held, not the subject's latest.
+	byID := decode[AssistantSessionView](t, x.expect(t, "the first session by its id", nil, "GET", "/api/assistant/sessions/"+view.Session.ID, nil, 200))
+	if byID.Session.ID != view.Session.ID || byID.Messages == nil || byID.Busy {
+		t.Errorf("the session by its id = %+v", byID)
+	}
+	x.expect(t, "a session not there", nil, "GET", "/api/assistant/sessions/nope", nil, 404)
 	// Another's workshop is not there; a bad kind is refused.
 	x.expect(t, "another's workshop", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "flow", Workshop: "prj-bob", Subject: "x"}, 404)
 	x.expect(t, "a bad kind", nil, "POST", "/api/assistant/sessions", AssistantOpenRequest{Kind: "widget", Workshop: testProject, Subject: "x"}, 400)
@@ -124,6 +130,7 @@ func TestAssistantSessionsArePersonal(t *testing.T) {
 
 	// Bob reaches none of my session: not there at all.
 	for _, c := range []struct{ method, path string }{
+		{"GET", "/api/assistant/sessions/" + id},
 		{"GET", "/api/assistant/sessions/" + id + "/messages"},
 		{"POST", "/api/assistant/sessions/" + id + "/messages"},
 		{"PUT", "/api/assistant/sessions/" + id + "/model"},

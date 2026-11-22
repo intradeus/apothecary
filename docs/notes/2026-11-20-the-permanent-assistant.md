@@ -51,6 +51,18 @@ each doing one job.
   settings and skillsets apply, and a draft's session never needs moving to
   what it was saved as: `Rebind` and `PUT …/sessions/{id}/subject` are
   removed.
+- **A conversation holds one session at a time.** With fresh sessions,
+  several about one subject are normal, so the latest is no longer the one
+  a page holds. After a stream gap the conversation reads its own session
+  again by id (`GET /api/assistant/sessions/{id}`, `Service.Reopen`), not
+  through `open`. While a session opens (the first, *New conversation*,
+  another workshop's) the conversation is `switching`: it sends no
+  question, decision or model, and the panel disables them; an answer the
+  old session gives after the switch is dropped. *New conversation* waits
+  while an answer is written (Stop ends it first). A fill modal's
+  conversation is its page's kind, subject and workshop: another page in
+  the same component (Back to another skill) ends it, cancelling its answer,
+  and its late frames neither fill the new page nor end its question.
 - **The drawer is an overlay.** It is `Sheet` (fixed, portalled, over a
   scrim) with a `quick` slide of about 200 ms instead of the spring. The
   button floats at the viewport's top right; only the page headers'
@@ -92,7 +104,7 @@ each doing one job.
 ## Tests that hold it
 
 - `internal/assistant`: `TestOnlyTheGeneralPageActs`,
-  `TestAPageRequestsNothing`, `TestOpenAndOwnership` (fresh),
+  `TestAPageRequestsNothing`, `TestOpenAndOwnership` (fresh, reopen by id),
   `TestSkillsetsArePinnedAtOpen`, `TestATurnInstallsItsSkills`, `TestWarm`,
   `TestProfilesHaveASkillsDirectory`; the store contract round-trips the
   skillsets.
@@ -100,8 +112,10 @@ each doing one job.
   `TestAssistantRequestConfirmed` (a general session's `start_run`,
   confirmed, starts the run; declined, runs nothing),
   `TestAssistantWarm`, `TestAssistantChoiceSkillsets`,
-  `TestAssistantSessionsArePersonal` (fresh, the subject route gone).
-- CPUI: `conversation.svelte.test.ts`, `GlobalAssistant.test.ts`,
-  `AssistantPanel.test.ts` (an older conversation after a harness switch),
-  `FillAssistant.test.ts`, `FillButton.test.ts`, `Brewing.test.ts`, the
+  `TestAssistantSessionsArePersonal` (fresh, by id, the subject route gone).
+- CPUI: `conversation.svelte.test.ts` (a gap rereads the session held, not
+  a newer one; switching sessions), `GlobalAssistant.test.ts` (no question
+  while *New conversation* opens), `AssistantPanel.test.ts` (an older
+  conversation after a harness switch), `FillAssistant.test.ts` (another
+  page under the open modal), `FillButton.test.ts`, `Brewing.test.ts`, the
   fill pages' tests and `routes/system/assistant/page.test.ts`.

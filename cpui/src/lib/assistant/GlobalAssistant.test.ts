@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { goto } from '$app/navigation';
 import { page } from '$app/state';
 import { api } from '$lib/api';
-import type { AssistantFrame, AssistantStatus } from '$lib/domain';
+import type {
+	AssistantFrame,
+	AssistantMessage,
+	AssistantSession,
+	AssistantStatus
+} from '$lib/domain';
 import { drawer } from './drawer.svelte';
 import GlobalAssistant from './GlobalAssistant.svelte';
 
@@ -156,6 +161,59 @@ describe('GlobalAssistant', () => {
 			fresh: true
 		});
 		await waitFor(() => expect(screen.queryByText('Hello there.')).not.toBeInTheDocument());
+	});
+
+	it('takes no question while the new conversation opens', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({ pages: { general: { presets: ['Retry the failed run'], repos: false } } })
+		);
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session: session(),
+			messages: [],
+			busy: false
+		});
+		render(GlobalAssistant);
+		await userEvent.click(button());
+		await screen.findByText('Retry the failed run');
+		const opening = Promise.withResolvers<{
+			session: AssistantSession;
+			messages: AssistantMessage[];
+			busy: boolean;
+		}>();
+		vi.mocked(api.assistant.open).mockReturnValueOnce(opening.promise);
+		await userEvent.click(screen.getByRole('button', { name: 'New conversation' }));
+		await waitFor(() => expect(api.assistant.open).toHaveBeenCalledTimes(2));
+		// Neither the textbox, a preset, nor the button again: all wait.
+		expect(screen.getByRole('textbox')).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'Retry the failed run' })).toBeDisabled();
+		expect(screen.getByRole('button', { name: 'New conversation' })).toBeDisabled();
+		await userEvent.click(screen.getByRole('button', { name: 'Retry the failed run' }));
+		expect(api.assistant.send).not.toHaveBeenCalled();
+		opening.resolve({ session: session('s2'), messages: [], busy: false });
+		await waitFor(() => expect(screen.getByRole('textbox')).toBeEnabled());
+		vi.mocked(api.assistant.send).mockResolvedValue({
+			...message(1, 'go', 's2'),
+			role: 'person'
+		});
+		await userEvent.type(screen.getByRole('textbox'), 'go{Enter}');
+		expect(api.assistant.send).toHaveBeenCalledWith('s2', 'go', { page: '/w/p1/runs' });
+	});
+
+	it('starts no new conversation while an answer is written', async () => {
+		vi.mocked(api.assistant.open).mockResolvedValue({
+			session: session(),
+			messages: [],
+			busy: true
+		});
+		render(GlobalAssistant);
+		await userEvent.click(button());
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'New conversation' })).toBeDisabled()
+		);
+		push({ kind: 'state', seq: 2, sessionId: 's1', busy: false });
+		await waitFor(() =>
+			expect(screen.getByRole('button', { name: 'New conversation' })).toBeEnabled()
+		);
 	});
 
 	it('goes to the assistant’s settings, closing the drawer', async () => {

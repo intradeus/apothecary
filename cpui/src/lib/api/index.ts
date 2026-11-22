@@ -461,6 +461,18 @@ export const runs = {
 
 // --- the assistant (the global drawer, and the fill modal on a page) ------------
 
+/** A session, its messages, and whether it is answering now. */
+type AssistantSessionView = {
+	session: AssistantSession;
+	messages: AssistantMessage[];
+	busy: boolean;
+};
+const toSessionView = (w: Wire.AssistantSessionView): AssistantSessionView => ({
+	session: map.toAssistantSession(w.session),
+	messages: many(w.messages, map.toAssistantMessage),
+	busy: w.busy
+});
+
 export const assistant = {
 	/** Whether it can run (and why not), on what, the pod, and a workshop's
 	 *  repositories as their last fetch left them. */
@@ -492,23 +504,23 @@ export const assistant = {
 		subject: string,
 		workshop?: string,
 		opts: { fresh?: boolean } = {}
-	): Promise<{ session: AssistantSession; messages: AssistantMessage[]; busy: boolean }> => {
-		const w = await unwrap(
-			gen.openAssistantSession({
-				body: {
-					kind,
-					subject,
-					workshop_id: workshop || undefined,
-					fresh: opts.fresh || undefined
-				}
-			})
-		);
-		return {
-			session: map.toAssistantSession(w.session),
-			messages: many(w.messages, map.toAssistantMessage),
-			busy: w.busy
-		};
-	},
+	): Promise<AssistantSessionView> =>
+		toSessionView(
+			await unwrap(
+				gen.openAssistantSession({
+					body: {
+						kind,
+						subject,
+						workshop_id: workshop || undefined,
+						fresh: opts.fresh || undefined
+					}
+				})
+			)
+		),
+	/** One's session by its id, as open answers it: the one held, never
+	 *  another about the same subject. */
+	session: async (id: string): Promise<AssistantSessionView> =>
+		toSessionView(await unwrap(gen.getAssistantSession({ path: { id } }))),
 	/** Start one's pod ahead of a question being typed: answers at once. */
 	warm: () => unwrapVoid(gen.warmAssistant()),
 	messages: async (id: string, after = 0): Promise<AssistantMessage[]> =>
