@@ -14,7 +14,7 @@
 #                                      `down all` removes it too)
 #
 # KATA_TARBALL names a local copy of the release; otherwise it is downloaded
-# (about 1 GB). Either way its sha256 must be the one pinned here.
+# (about 1 GB). Either way its sha256 must be the one pinned in kata.env.
 #
 # What the node adds to k3s (docs/sandbox-runtimes-plan.md, phase 5):
 #   - containerd: a `kata` runtime, Kata's Rust shim with Cloud Hypervisor,
@@ -26,16 +26,16 @@
 #   - the `kata` RuntimeClass, with the VM's own overhead.
 set -euo pipefail
 
-KATA_VERSION=4.4.0
-KATA_SHA256=ccbc0cbc591089d0c57012b78da64b23ef43e0bac0f869dc7bfebe8588c33986
-K3S_IMAGE=rancher/k3s:v1.36.4-k3s1
+HERE=$(cd "$(dirname "$0")" && pwd)
+# shellcheck source=deploy/kata/kata.env
+. "$HERE/kata.env" # KATA_VERSION, KATA_SHA256, K3S_IMAGE
 HELPER_IMAGE=alpine:3.21
 
 NODE=apo-kata-node
 NET=apo-kata
 K3S_VOL=apo-kata-k3s
 OPT_VOL=apo-kata-opt-$KATA_VERSION
-ROOT=$(cd "$(dirname "$0")/../.." && pwd)
+ROOT=$(cd "$HERE/../.." && pwd)
 KUBECONFIG_OUT=$ROOT/deploy/.kata-kubeconfig
 
 say() { echo "kata rig: $*" >&2; }
@@ -48,6 +48,7 @@ die() {
 unpack() {
   if docker volume inspect "$OPT_VOL" >/dev/null 2>&1 &&
     docker run --rm -v "$OPT_VOL":/x "$HELPER_IMAGE" test -x /x/opt/kata/runtime-rs/bin/containerd-shim-kata-v2; then
+    configure
     return
   fi
   command -v zstd >/dev/null || die "zstd is needed to unpack the Kata release"
@@ -64,21 +65,16 @@ unpack() {
   docker volume create "$OPT_VOL" >/dev/null
   zstd -dc "$tarball" | docker run --rm -i -v "$OPT_VOL":/x "$HELPER_IMAGE" tar -x -C /x
   [ -z "$tmp" ] || rm -rf "$tmp"
-  # The configuration the node's runtime entry names: the release's Cloud
-  # Hypervisor one, edited as phase 5 lists.
-  docker run --rm -v "$OPT_VOL":/x "$HELPER_IMAGE" sh -euc '
-    d=/x/opt/kata/share/defaults/kata-containers/runtime-rs
-    sed -e "s/^reclaim_guest_freed_memory = .*/reclaim_guest_freed_memory = true/" \
-        -e "s/^emptydir_mode = .*/emptydir_mode = \"block-plain\"/" \
-        -e "s/^mem_agent_enable = .*/mem_agent_enable = true/" \
-        -e "s/^memcg_period_secs = .*/memcg_period_secs = 30/" \
-        -e "s/^compact_period_secs = .*/compact_period_secs = 30/" \
-        -e "s/^static_sandbox_resource_mgmt = .*/static_sandbox_resource_mgmt = true/" \
-        "$d/configuration-clh-runtime-rs.toml" > "$d/configuration-apothecary.toml"
-    for k in "reclaim_guest_freed_memory = true" "emptydir_mode = \"block-plain\"" "mem_agent_enable = true" \
-             "memcg_period_secs = 30" "compact_period_secs = 30" "static_sandbox_resource_mgmt = true"; do
-      grep -qx "$k" "$d/configuration-apothecary.toml" || { echo "configuration: no line $k" >&2; exit 1; }
-    done'
+  configure
+}
+
+# The configuration the node's runtime entry names: the release's Cloud
+# Hypervisor one, edited as phase 5 lists. Written on every `up`, so an edit
+# to configure.sh reaches a volume unpacked before it; over stdin, as the
+# script's path may not be one the docker daemon sees.
+configure() {
+  docker run --rm -i -v "$OPT_VOL":/x "$HELPER_IMAGE" \
+    sh -s /x/opt/kata/share/defaults/kata-containers/runtime-rs <"$HERE/configure.sh"
 }
 
 containerd_template() {

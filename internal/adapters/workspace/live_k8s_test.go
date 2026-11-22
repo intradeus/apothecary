@@ -22,6 +22,11 @@ package workspace
 //     kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
 //     its sandboxes are sized, on emptyDir disks, and tunnel through
 //     wireguard-go (the stock guest kernel has no WireGuard).
+//   - APOTHECARY_LIVE_NESTED_K8S=<k3s image>: also start a Kubernetes node
+//     inside the sandbox and a user-namespaced pod on it (liveNestedKubernetes),
+//     what this repository's own sandbox suites need. Only for a runtime that
+//     gives both (privileged, kata); task sandbox:test:kata sets it, and a
+//     kata run without it skips through livetest.
 //
 // The test runs OUTSIDE the cluster, like an engine on a laptop: it reaches
 // pods through kubectl port-forward. Pods cannot reach a docker host's own
@@ -440,6 +445,11 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
 	}
+	// Nested Kubernetes, before a sleep replaces the pod.
+	nestedImage := os.Getenv("APOTHECARY_LIVE_NESTED_K8S")
+	if caps := runtime.Capabilities(); nestedImage != "" && caps.NestedKubernetes && caps.UserNamespaces {
+		liveNestedKubernetes(ctx, t, a.host.(*k8sHost), name, nestedImage)
+	}
 	// Stop-on-idle: a sandbox on a claim sleeps and wakes; one on emptyDir
 	// storage (a VM runtime's) is refused, by design, and that refusal is
 	// what is checked — never a quiet pass over the part that did not run.
@@ -454,6 +464,70 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	} else {
 		liveSleepWake(ctx, t, a, c, env, spec)
 	}
+	// Last, so a skip cuts nothing else short: under kata the nested check
+	// is the point of the suite (what the runtime is chosen for).
+	if vm && nestedImage == "" {
+		livetest.Skip(t, "APOTHECARY_LIVE_NESTED_K8S unset: a kata sandbox's nested Kubernetes went unchecked (task sandbox:test:kata sets it)")
+	}
+}
+
+// liveNestedKubernetes is what this repository's own sandbox suites ask of
+// a sandbox (task sandbox:test:k8s inside it): a Kubernetes node on the
+// sandbox's docker daemon, and on it a pod with a user namespace of its own
+// (hostUsers: false, the assistant pod's shape), mapped wherever the nested
+// kubelet picks in the 32-bit id space. Under sysbox that pod cannot start
+// (the sandbox owns 65536 ids); a runtime that claims UserNamespaces must
+// run it. The node's images come through the run's gateway (Docker Hub is
+// among the egress defaults).
+func liveNestedKubernetes(ctx context.Context, t *testing.T, h *k8sHost, name, image string) {
+	t.Helper()
+	const script = `set -eu
+docker rm -f apo-nested >/dev/null 2>&1 || true
+docker run -d --name apo-nested --privileged --tmpfs /run --tmpfs /var/run "$1" \
+  server --disable=traefik,metrics-server,servicelb,local-storage,coredns >/dev/null
+k() { docker exec -i apo-nested kubectl "$@"; }
+i=0
+until k get nodes 2>/dev/null | grep -q ' Ready'; do
+  i=$((i + 1)); [ "$i" -lt 150 ] || { echo "the nested node is not Ready"; docker logs --tail 40 apo-nested; exit 1; }
+  sleep 2
+done
+echo "nested node Ready after $((i * 2))s"
+i=0
+until k apply -f - >/dev/null 2>&1 <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata: {name: userns, namespace: default}
+spec:
+  hostUsers: false
+  restartPolicy: Never
+  containers:
+    - name: c
+      image: busybox:1.37
+      command: [cat, /proc/self/uid_map]
+EOF
+do
+  i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the pod was never accepted"; exit 1; }
+  sleep 2
+done
+k wait --for=jsonpath='{.status.phase}'=Succeeded pod/userns --timeout=300s >/dev/null ||
+  { k describe pod userns | tail -n 25; exit 1; }
+echo "uid_map: $(k logs userns)"
+docker rm -f apo-nested >/dev/null
+`
+	start := time.Now()
+	out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script, "sh", image}, nil, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("nested Kubernetes in the sandbox (exit %d, %v):\n%s%s", code, err, out, stderr)
+	}
+	// The pod's first mapping: inside id 0 at an outside id the nested
+	// kubelet chose, never the sandbox's own 0.
+	var inside, outside, count uint64
+	line := strings.TrimSpace(string(out)[strings.LastIndex(string(out), "uid_map:")+len("uid_map:"):])
+	if _, err := fmt.Sscan(line, &inside, &outside, &count); err != nil || inside != 0 || outside == 0 {
+		t.Fatalf("the nested pod is not user-namespaced: %q (%v)", line, err)
+	}
+	t.Logf("nested Kubernetes: %s; the pod mapped 0 at %d (%d ids), %s in all",
+		strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0], outside, count, time.Since(start).Truncate(time.Second))
 }
 
 // liveSleepWake: the run sleeps (its pod deleted, its claim kept) and wakes

@@ -61,19 +61,32 @@ starting over. `--help` lists the options.
    them and every exec into them fails until their pods are replaced
    ([why](../../docs/kubernetes.md#cluster-requirements)). Restart those
    services yourself only with no run active.
+   - **Kata (with `--kata`):** a VM per sandbox, which workshops may then
+     choose beside sysbox. Needs amd64 and KVM (`/dev/kvm`: virtualization
+     on in the firmware, or nested virtualization on a VM). Unpacks Kata's
+     static release, the version and checksum pinned in
+     `deploy/kata/kata.env` (about 1 GB), into `/opt/kata`, and writes
+     Apothecary's configuration beside the release's
+     (`deploy/kata/configure.sh`;
+     [what it sets](../../docs/kubernetes.md#installing-kata)). A rerun
+     skips the download when the pinned version is in place.
 4. **k3s.** Installs k3s from its release channel (default `stable`) and
    waits for the node. It refuses Kubernetes older than 1.33 (user
    namespaces for pods are on by default from 1.33) and containerd older
    than 2.0.5 (the first to run sysbox with them). The kubeconfig is
    `/etc/rancher/k3s/k3s.yaml`, readable by root only.
-5. **sysbox in k3s.** Adds a `sysbox-runc` runtime to k3s's containerd
-   (through the config template k3s reads, so k3s keeps its own settings),
-   and creates the `sysbox-runc` RuntimeClass the chart's sandboxes use.
-6. **Smoke test.** Starts the same kind of pod every run's sandbox is:
+5. **The runtimes in k3s.** Adds a `sysbox-runc` runtime to k3s's
+   containerd (through the config template k3s reads, so k3s keeps its own
+   settings), and creates the `sysbox-runc` RuntimeClass the chart's
+   sandboxes use. With `--kata`, also a `kata` runtime and RuntimeClass,
+   with the VM's own CPU and memory as the class's overhead.
+6. **Smoke tests.** Starts the same kind of pod every run's sandbox is:
    `docker:29-dind` under sysbox, with a user namespace of its own and no
-   privilege. It passes when the docker daemon inside answers. If it fails,
-   the script prints the pod's events and logs and stops: sandboxes would
-   fail the same way. `--cluster-only` stops here.
+   privilege. With `--kata`, a second one in a Kata VM: privileged inside
+   its VM, sized, its docker data on a disk of its own. Each passes when the
+   docker daemon inside answers. If one fails, the script prints the pod's
+   events and logs and stops: sandboxes would fail the same way.
+   `--cluster-only` stops here.
 7. **Apothecary.**
    - **Helm:** installs it if it is missing.
    - **HTTPS (with `--domain`):** installs cert-manager and a Let's Encrypt
@@ -84,7 +97,10 @@ starting over. `--help` lists the options.
      by root only. **Keep a copy:** the master key opens every secret
      Apothecary stores, and a new one cannot read them.
    - **The chart:** installs it from `oci://ghcr.io/intradeus/charts/apothecary`
-     with its defaults (sysbox sandboxes, the bundled Postgres).
+     with its defaults (sysbox sandboxes, the bundled Postgres); with
+     `--kata`, kata approved beside sysbox (`workspaces.runtimes`). Kata
+     sandboxes must be sized: set a default size in System → Limits before
+     a workshop chooses kata.
      - Without `--domain`, the UI is a LoadBalancer Service, which k3s
        publishes on port 8080 of the box.
      - With it, the UI is a Traefik ingress with the certificate.
@@ -100,4 +116,4 @@ starting over. `--help` lists the options.
 - **More nodes:** join k3s agents
   ([docs.k3s.io](https://docs.k3s.io/quick-start)), and run steps 2, 3 and 5
   on each. The RuntimeClass then needs a `scheduling.nodeSelector` naming the
-  nodes that have sysbox.
+  nodes that have sysbox (and the `kata` one, the nodes that have Kata).

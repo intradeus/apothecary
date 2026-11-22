@@ -149,6 +149,15 @@ itself, in a namespace of its own:
     `alb.ingress.kubernetes.io/target-type: ip`, because the engine's
     Service is ClusterIP.
   - Images can be mirrored to ECR with `image.overrides`.
+  - **Kata on EKS needs KVM on the sandbox nodes**, which ordinary EC2
+    instances do not expose: bare-metal instances (`*.metal`), or an
+    instance type that offers nested virtualization with it turned on (C8i,
+    M8i or R8i; in the launch template, or Karpenter's
+    `cpuOptions.nestedVirtualization`). amd64 only: the pinned Kata release
+    is amd64's, so no Graviton. On any other node a Kata sandbox never
+    starts. Not tried yet: check that a Kata pod reaches ClusterIP services
+    (sandboxes reach the engine and their gateway that way) before relying
+    on it.
 
 ## Sandbox runtimes
 
@@ -168,9 +177,13 @@ All three run docker inside, compose and k3d included.
 
 ### Installing Kata
 
-Kata is the cluster's to install; the chart does not. `deploy/kata/rig.sh`
-is a worked example (a throwaway k3s node in docker, what `task
-sandbox:test:kata` runs on). On a real node:
+Kata is the cluster's to install; the chart does not. On a one-node k3s
+box, `deploy/k3s/install.sh --kata` does steps 1 to 4 below and step 5's
+chart setting, and smoke-tests a Kata pod. `deploy/kata/rig.sh` is another
+worked example (a throwaway k3s node in docker, what `task
+sandbox:test:kata` and CI run on). Both take the release and its checksum
+from `deploy/kata/kata.env`, and step 2's edits from
+`deploy/kata/configure.sh`. On a real node by hand:
 
 1. Unpack Kata's static release (`kata-static-<version>-amd64.tar.zst`)
    into `/opt/kata`.
@@ -228,8 +241,8 @@ a Kata sandbox's two disks (checkout, inner docker) holds up to
 `storage_size`, enforced by the kubelet's eviction, so leave the node's disk
 room for that.
 
-**On EKS**, Kata needs instances with nested virtualisation or bare metal
-(`*.metal`); this has not been tried.
+**On EKS**, see [the EKS requirements](#cluster-requirements): Kata needs
+KVM on the sandbox nodes.
 
 ### Sizing
 

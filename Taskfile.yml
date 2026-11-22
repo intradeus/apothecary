@@ -788,9 +788,14 @@ tasks:
   # it is up (and leaves it); otherwise creates it and deletes it afterwards.
   # Without /dev/kvm the task refuses to start; the Go suite run by hand with
   # APOTHECARY_LIVE_RUNTIME=kata skips (a failure under APOTHECARY_LIVE_STRICT).
+  # Inside the Kata sandbox it also starts a Kubernetes node and a
+  # user-namespaced pod on it (APOTHECARY_LIVE_NESTED_K8S, the k3s of
+  # deploy/kata/kata.env): what `task sandbox:test:k8s` run inside the
+  # sandbox needs of it, without building this tree's images twice.
   sandbox:test:kata:
     deps: [pin:task, pin:kubectl]
-    desc: 'The Kubernetes provisioner with sandboxes under Kata, on a k3s node in docker (needs docker, /dev/kvm, zstd)'
+    desc: 'The Kubernetes provisioner with sandboxes under Kata, on a k3s node in docker, nested Kubernetes inside the sandbox included (needs docker, /dev/kvm, zstd) — CI: sandbox-test (kata)'
+    dotenv: ['deploy/kata/kata.env']
     vars:
       RIG_EXISTED:
         sh: docker container inspect apo-kata-node >/dev/null 2>&1 && echo yes || echo no
@@ -809,6 +814,7 @@ tasks:
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY=IfNotPresent
         APOTHECARY_LIVE_RUNTIME=kata
+        APOTHECARY_LIVE_NESTED_K8S=$K3S_IMAGE
         go test -tags live -count=1 -timeout 40m -run 'TestLiveK8sLifecycle$|TestLiveK8sRuntimeProbe' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
 
   k8s:import:

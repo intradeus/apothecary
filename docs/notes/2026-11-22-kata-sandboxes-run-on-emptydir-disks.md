@@ -92,11 +92,11 @@ costs one kubectl process, which is fine for a dev engine.
 ## Not done here
 
 - The chart does not install Kata's RuntimeClass: installing Kata is the
-  cluster's job. Also not done: `deploy/k3s/install.sh`'s Kata step, and EKS
-  with nested virtualisation (`docs/kubernetes.md`). These are phase 7 docs
-  and stay unverified.
-- CI: whether the runner exposes `/dev/kvm` is unchecked, so there is no
-  strict Kata job.
+  cluster's job. `deploy/k3s/install.sh --kata` does it on a k3s box, and
+  CI runs a strict Kata suite (both in the note
+  2026-11-22-kata-runs-in-ci-with-a-nested-cluster-inside-its-sandbox). EKS
+  with nested virtualisation is documented (`docs/kubernetes.md`) and
+  untried.
 - Kernel WireGuard in the guest needs a kernel built with it; the stock one
   tunnels through wireguard-go (phase 4).
 

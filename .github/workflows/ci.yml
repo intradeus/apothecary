@@ -21,7 +21,7 @@
 #                     chart and its README
 #   sandbox-images    the four images the sandbox suites run, built once into
 #                     the Actions cache
-#   sandbox-test      the harness and k8s suites, on those images
+#   sandbox-test      the harness, k8s and kata suites, on those images
 #   engine-image      the engine's image
 #
 # A job runs only when a change touches its side: go (everything but cpui/,
@@ -464,9 +464,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [harness, k8s]
+        suite: [harness, k8s, kata]
     runs-on: ubuntu-26.04
-    timeout-minutes: 40
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
@@ -476,14 +476,15 @@ jobs:
         with:
           version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The k8s suite holds its images twice at its peak (docker, then the
-      # k3d node: ≈15 GB), more than the runner has free, so the toolchains
-      # it never uses go. Deleting them takes about 1.5 minutes, so it runs
-      # in the background while the images load (which needs only half
-      # that), and the suite waits for it before the cluster starts. The
-      # harness suite (≈10 GB) fits as it is.
+      # The k8s and kata suites hold their images twice at their peak
+      # (docker, then the node: ≈15 GB; kata adds its 1 GB release, unpacked),
+      # more than the runner has free, so the toolchains they never use go.
+      # Deleting them takes about 1.5 minutes, so it runs in the background
+      # while the images load (which needs only half that), and the suite
+      # waits for it before the cluster starts. The harness suite (≈10 GB)
+      # fits as it is.
       - name: Free disk space, in the background
-        if: matrix.suite == 'k8s'
+        if: matrix.suite != 'harness'
         run: |
           df -h /
           # A background subshell outlives the step; the runner ends it with the job.
@@ -504,6 +505,14 @@ jobs:
           docker build -t "$PREFIX/live-model:local" internal/adapters/assistant/testdata/fakemodel
         env:
           IMAGES: sandbox shim tools egress-gw assistant
+          PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
+          CACHE: gha-read
+      # The kata suite runs workspace sandboxes only: no assistant.
+      - name: Load the images (kata)
+        if: matrix.suite == 'kata'
+        run: deploy/images.sh local
+        env:
+          IMAGES: sandbox shim tools egress-gw
           PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
           CACHE: gha-read
       # k3d and kubectl (pinned, as in the devcontainer), and the wireguard
@@ -528,8 +537,31 @@ jobs:
           sudo install -m 0755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
           kubectl version --client
           sudo modprobe wireguard
+      # The kata suite's node is k3s in one privileged container
+      # (deploy/kata/rig.sh), its sandboxes VMs on the runner's KVM: the
+      # runner is itself a VM, so this is nested virtualization, which
+      # GitHub's Linux runners expose as /dev/kvm. Its gateways run on the
+      # node, so on the runner's kernel: the wireguard module as for k8s.
+      # kubectl as the k8s suite pins it; no k3d.
+      - name: Kata prerequisites
+        if: matrix.suite == 'kata'
+        env:
+          KUBECTL_VERSION: v1.34.1 # .devcontainer/Dockerfile KUBECTL_VERSION
+          KUBECTL_SHA256: 7721f265e18709862655affba5343e85e1980639395d5754473dafaadcaa69e3
+        run: |
+          if [ ! -c /dev/kvm ]; then
+            echo "::error title=kata::this runner has no /dev/kvm: the kata suite needs KVM"
+            exit 1
+          fi
+          ls -l /dev/kvm
+          command -v zstd
+          curl -fsSL -o "$RUNNER_TEMP/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$KUBECTL_SHA256  $RUNNER_TEMP/kubectl" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
+          kubectl version --client
+          sudo modprobe wireguard
       - name: Wait for the disk to be freed
-        if: matrix.suite == 'k8s'
+        if: matrix.suite != 'harness'
         timeout-minutes: 5
         run: |
           until [ -f "$RUNNER_TEMP/disk-freed" ]; do sleep 2; done

@@ -1,7 +1,11 @@
 # Plan: sandbox runtimes, sizes, Kata and stop-on-idle
 
-Status: proposed (2026-11-21). Nothing built. A spike ran on a bare-metal
-box (appendix A); its findings are what the phases rest on.
+Status: built (2026-11-22), phases 0 to 7, with the deviations recorded in
+the 2026-11-22 notes in `docs/notes/`. Phase 5's install step is
+`deploy/k3s/install.sh --kata`. Its tests are CI's strict `kata` suite, with
+a nested cluster checked inside the Kata sandbox in place of the whole
+`sandbox:test:k8s`. EKS is documented and untried. A spike ran on a
+bare-metal box (appendix A); its findings are what the phases rest on.
 Owner: the agent implementing it. Read `AGENTS.md` first; every rule there
 applies (conventional commits, no model ids, `task fmt`, `task check`, new
 numbered migrations only, a note in `docs/notes/` with each deviation).
