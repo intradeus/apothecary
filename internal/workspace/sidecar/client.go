@@ -256,6 +256,16 @@ func (c *Client) Stop(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/agent/stop", struct{}{}, nil)
 }
 
+// StopProc stops one agent process (StartResponse.Proc), leaving the others
+// running. A process already gone is not an error.
+func (c *Client) StopProc(ctx context.Context, proc string) error {
+	err := c.do(ctx, http.MethodPost, "/agent/stop", map[string]string{"proc": proc}, nil)
+	if IsStatus(err, http.StatusNotFound) && !IsNoRoute(err) {
+		return nil
+	}
+	return err
+}
+
 type Status struct {
 	Boot     string             `json:"boot"`
 	Running  bool               `json:"running"`
