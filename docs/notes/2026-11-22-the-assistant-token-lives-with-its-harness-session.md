@@ -33,13 +33,19 @@ its header today: one more component, no narrower holder.
   engine restart (the secret is held in memory only), or when less than
   half its life is left. `answer` no longer revokes it.
 - **A replacement reaches a live session by a restart.** When `token`
-  mints a new one and the shim answers the session as already live
-  (`loaded: false`), `run` stops that session's harness process
-  (`sidecar.Client.StopProc`, `/agent/stop` naming the process; each
-  session has its own, confined to its home), starts it again and opens
-  the session again: it is loaded with the new header, its context kept.
-  This costs a `session/load` at most every half `tokenTTL` of use, and
-  after an engine restart.
+  hands out one no harness session has taken yet and the shim answers the
+  session as already live (`loaded: false`), `run` stops that session's
+  harness process (`sidecar.Client.StopProc`, `/agent/stop` naming the
+  process; each session has its own, confined to its home), starts it
+  again and opens the session again: it is loaded with the new header, its
+  context kept. This costs a `session/load` at most every half `tokenTTL`
+  of use, and after an engine restart.
+- **"Taken" is recorded, not inferred from the mint.** The mint revokes
+  the old token before the turn reaches the harness; a turn failing in
+  between (the face's URL, the pod's files, the harness start) would leave
+  the live session holding the revoked header. So the live token carries
+  `installed`, set only once a session was opened or loaded with it (or
+  answered live holding it); until then each turn treats it as new.
 - **Fill is a turn's**, as request already was: outside a turn it answers
   "no question is being answered". Between turns the token keeps its read
   actions (one workshop, read only), held by the session's idle, confined
@@ -54,6 +60,9 @@ its header today: one more component, no narrower holder.
   between turns), `TestTokenRenewedRestartsTheLiveHarness` (an aged token
   and an engine restart each stop the process once, load the session with
   the new bearer, revoke the old token, and give no instructions again),
+  `TestATokenNotInstalledIsInstalledNextTurn` (a turn failing after the
+  mint: the next question restarts the live session with the replacement
+  before prompting it, the one after does not restart it),
   `TestTokenIsRemintedWhenOld`.
 - `internal/workspace/sidecar`: `TestAgentCallsShapeTheirRequests` (stop
   one process; one already gone is no error).

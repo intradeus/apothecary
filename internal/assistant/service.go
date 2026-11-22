@@ -126,6 +126,10 @@ type Service struct {
 type liveToken struct {
 	id, secret string
 	until      time.Time
+	// installed: a harness session took it (opened or loaded with it). A
+	// turn that fails between the mint and the session leaves it unset,
+	// and the next turn installs it then.
+	installed bool
 }
 
 // turn is one answer in flight.
@@ -545,9 +549,10 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	sess, err := cl.Session(ctx, req)
 	if err == nil && fresh && req.SessionID != "" && sess.SessionID == req.SessionID && !sess.Loaded {
 		// The harness session is live in its process, which holds the MCP
-		// servers it was opened with: the token just replaced. A session
-		// takes its servers only when opened, so the process starts again
-		// and the session is loaded with the new token, its context kept.
+		// servers it was opened with: a token since replaced (this turn or
+		// a failed one before it). A session takes its servers only when
+		// opened, so the process starts again and the session is loaded
+		// with the new token, its context kept.
 		svc.status(person, s.ID, "restarting the harness")
 		if err := cl.StopProc(ctx, st.Proc); err != nil {
 			return "", 0, fmt.Errorf("restart the harness: %w", err)
@@ -568,6 +573,8 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	if err != nil {
 		return "", 0, fmt.Errorf("open the harness session: %w", err)
 	}
+	// The session was opened or loaded with tok, or is live holding it.
+	svc.installed(s.ID, s.TokenID)
 	if sess.SessionID != s.HarnessSession {
 		first = first || !sess.Loaded
 	}
@@ -694,15 +701,15 @@ func (svc *Service) Token(ctx context.Context, person, id string) (string, error
 // too little life left, or the engine restarted, the secret being held in
 // memory alone): the face's read actions in its workshop, and its
 // session's fill. It lives with the harness session it is handed to, across
-// turns, until replaced; fresh reports one minted now, which a harness
-// session still live does not hold yet.
+// turns, until replaced; fresh reports one no harness session has taken
+// yet (installed), which a harness session still live does not hold.
 func (svc *Service) token(ctx context.Context, s *Session) (secret string, fresh bool, err error) {
 	svc.mu.Lock()
 	svc.init()
 	lt, ok := svc.tokens[s.ID]
 	svc.mu.Unlock()
 	if ok && lt.id == s.TokenID && time.Until(lt.until) > tokenTTL/2 {
-		return lt.secret, false, nil
+		return lt.secret, !lt.installed, nil
 	}
 	actions := slices.Clone(svc.FaceActions)
 	if s.Kind == KindSkill && s.Workshop == "" {
@@ -728,6 +735,16 @@ func (svc *Service) token(ctx context.Context, s *Session) (secret string, fresh
 	svc.mu.Unlock()
 	_, err = svc.edit(ctx, s.ID, func(x *Session) { x.TokenID = id })
 	return secret, true, err
+}
+
+// installed records that the session's harness session took its token id.
+func (svc *Service) installed(sessionID, tokenID string) {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	if lt, ok := svc.tokens[sessionID]; ok && lt.id == tokenID {
+		lt.installed = true
+		svc.tokens[sessionID] = lt
+	}
 }
 
 // FillTool is what the MCP face shows a session's token for its fill tool:

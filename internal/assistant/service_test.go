@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -606,6 +607,72 @@ func TestTokenRenewedRestartsTheLiveHarness(t *testing.T) {
 	}
 }
 
+// A turn that fails after minting the replacement (here the face's URL)
+// leaves the live harness session holding the revoked token: the next
+// question still restarts its process and loads it with the replacement
+// before prompting it, and the one after leaves it be.
+func TestATokenNotInstalledIsInstalledNextTurn(t *testing.T) {
+	w := newWorld(t, "claude-code")
+	ctx := context.Background()
+	s, _, err := w.svc.Open(ctx, "u1", KindTicket, "w1", "draft-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "hello", nil); err != nil {
+		t.Fatal(err)
+	}
+	answered(t, w.svc, s.ID, 2)
+	var failed atomic.Bool
+	w.svc.FaceURL = func(context.Context) (string, error) {
+		if failed.CompareAndSwap(false, true) {
+			return "", errors.New("no face")
+		}
+		return "http://engine:8080/mcp", nil
+	}
+	w.svc.mu.Lock()
+	lt := w.svc.tokens[s.ID]
+	lt.until = time.Now().Add(time.Minute)
+	w.svc.tokens[s.ID] = lt
+	w.svc.mu.Unlock()
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "and then", nil); err != nil {
+		t.Fatal(err)
+	}
+	answered(t, w.svc, s.ID, 4)
+	if all, _ := w.svc.Messages(ctx, "u1", s.ID, 0); all[3].Error == "" {
+		t.Fatalf("the failed turn = %+v", all[3])
+	}
+	w.tokens.mu.Lock()
+	revoked := slices.Clone(w.tokens.revoked)
+	w.tokens.mu.Unlock()
+	if !slices.Equal(revoked, []string{"tok-1"}) {
+		t.Fatalf("revoked %v, want tok-1 replaced", revoked)
+	}
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "again", nil); err != nil {
+		t.Fatal(err)
+	}
+	answered(t, w.svc, s.ID, 6)
+	w.host.mu.Lock()
+	stops, prompts := slices.Clone(w.host.stops), len(w.host.prompts)
+	held, prompt := fmt.Sprint(w.host.live["p1"]["h-1"]), w.host.prompts[len(w.host.prompts)-1]
+	w.host.mu.Unlock()
+	if !slices.Equal(stops, []string{"p1"}) || !strings.Contains(held, "Bearer apo_secret-2") || prompts != 2 {
+		t.Errorf("the next question: stops %v, held %s, %d prompts", stops, held, prompts)
+	}
+	if strings.Contains(prompt, "You are the Apothecary assistant") {
+		t.Errorf("the context is lost, the instructions given again: %q", prompt)
+	}
+	if _, err := w.svc.Send(ctx, "u1", s.ID, "and more", nil); err != nil {
+		t.Fatal(err)
+	}
+	answered(t, w.svc, s.ID, 8)
+	w.host.mu.Lock()
+	stops = slices.Clone(w.host.stops)
+	w.host.mu.Unlock()
+	if len(stops) != 1 {
+		t.Errorf("an installed token restarts the harness again: stops %v", stops)
+	}
+}
+
 func TestOpenAndOwnership(t *testing.T) {
 	w := newWorld(t, "opencode")
 	ctx := context.Background()
@@ -781,8 +848,12 @@ func TestTokenIsRemintedWhenOld(t *testing.T) {
 	if err != nil || !fresh || tok != "apo_secret-1" || !slices.Equal(w.tokens.grants[0], []string{"skill:read", FillAction}) || w.tokens.scopes[0] != nil {
 		t.Fatalf("skill token = %s %v %v %v %v", tok, fresh, err, w.tokens.grants, w.tokens.scopes)
 	}
+	if again, fresh, _ := w.svc.token(ctx, &s); again != tok || !fresh {
+		t.Errorf("a live token no harness session took = %s, fresh %v", again, fresh)
+	}
+	w.svc.installed(s.ID, s.TokenID)
 	if again, fresh, _ := w.svc.token(ctx, &s); again != tok || fresh {
-		t.Errorf("a live token again = %s, fresh %v", again, fresh)
+		t.Errorf("a live token installed = %s, fresh %v", again, fresh)
 	}
 	sid, schema, ok := w.svc.FillTool(ctx, s.TokenID)
 	if !ok || sid != s.ID || schema["required"] == nil {
