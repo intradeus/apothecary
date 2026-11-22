@@ -141,7 +141,9 @@
 				baseBranch: branch.trim(),
 				changeType,
 				typeId: typeId || undefined,
-				attachmentIds
+				attachmentIds,
+				// An assistant's fill still on the form makes this its version.
+				assisted: guard.changed.length > 0
 			};
 			const saved = init
 				? await api.tickets.update(project.id, init.key, draft)

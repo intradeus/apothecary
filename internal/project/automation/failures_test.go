@@ -429,7 +429,7 @@ func TestStartCarriesTheTicketsAttachments(t *testing.T) {
 	if _, err := h.conf.UpdateProject(ctx, p.ID, p); err != nil {
 		t.Fatal(err)
 	}
-	tk, err := h.w.Tickets.Create(ctx, confstore.Ticket{UserID: owner, Title: "Nightly", Goal: "g"}, owner, []string{up.ID})
+	tk, err := h.w.Tickets.Create(ctx, confstore.Ticket{UserID: owner, Title: "Nightly", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, []string{up.ID})
 	if err != nil {
 		t.Fatal(err)
 	}

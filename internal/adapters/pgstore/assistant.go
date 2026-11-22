@@ -12,7 +12,7 @@ import (
 	"apothecary/internal/assistant"
 )
 
-// The assistant's rows (migrations 0013, 0016, 0017): sessions, their
+// The assistant's rows (migrations 0013, 0016, 0018): sessions, their
 // messages, persons' choices. A session's turns are serialized by the
 // service, so the next seq is read in the statement that takes it, as the
 // Ask pane's are.

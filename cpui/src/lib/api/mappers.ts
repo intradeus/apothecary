@@ -31,7 +31,7 @@ import type {
 	UserRole
 } from '$lib/domain';
 import type { Credential, Notice, ProviderInfo, SignInPending } from '$lib/domain';
-import { ASSISTANT_KINDS, asChangeType, MEMBER_ROLES } from '$lib/domain';
+import { ASSISTANT_KINDS, asChangeType, MEMBER_ROLES, VERSION_AUTHOR_KINDS } from '$lib/domain';
 import type {
 	Skill,
 	SkillDetail,
@@ -53,6 +53,8 @@ import type {
 	Catalog,
 	CatalogField,
 	Dashboard,
+	DashboardVersion,
+	DashboardVersionSummary,
 	DrillRun,
 	FilterOp,
 	Grain,
@@ -156,6 +158,9 @@ import type {
 	TicketRecord,
 	TicketRow,
 	TicketSourceRef,
+	TicketVersion,
+	TicketVersionSummary,
+	VersionAuthor,
 	CommentOrigin,
 	TrackerStatus,
 	TrackerStatusList,
@@ -799,6 +804,48 @@ export function toTicketComment(w: Wire.TicketComment): TicketComment {
 		runId: w.run_id || undefined,
 		createdAt: w.created_at,
 		updatedAt: w.updated_at
+	};
+}
+
+/** Who made a version; an unknown kind reads as a person's edit. */
+export function toVersionAuthor(w: {
+	author_kind?: string;
+	author_id?: string;
+	author_handle?: string;
+}): VersionAuthor {
+	return {
+		kind: oneOf(VERSION_AUTHOR_KINDS, w.author_kind, 'user'),
+		id: w.author_id ?? '',
+		...(w.author_handle ? { handle: w.author_handle } : {})
+	};
+}
+
+export function toTicketVersionSummary(w: Wire.TicketVersionSummary): TicketVersionSummary {
+	return {
+		seq: w.seq,
+		title: w.title,
+		author: toVersionAuthor(w),
+		...(w.restored_from ? { restoredFrom: w.restored_from } : {}),
+		createdAt: w.created_at,
+		changed: list(w.changed),
+		oldest: !!w.oldest
+	};
+}
+
+export function toTicketVersion(w: Wire.TicketVersionView): TicketVersion {
+	return {
+		seq: w.seq ?? 0,
+		title: w.title ?? '',
+		author: toVersionAuthor(w),
+		...(w.restored_from ? { restoredFrom: w.restored_from } : {}),
+		createdAt: w.created_at ?? '',
+		changed: list(w.changed),
+		oldest: !!w.oldest,
+		goal: w.goal ?? '',
+		baseBranch: w.base_branch ?? '',
+		changeType: asChangeType(w.change_type),
+		typeId: w.type_id ?? '',
+		labels: list(w.labels)
 	};
 }
 
@@ -1816,6 +1863,33 @@ export function toDashboard(w: Wire.Dashboard): Dashboard {
 		panels: list(w.panels).map(toPanel),
 		createdAt: w.created_at,
 		updatedAt: w.updated_at
+	};
+}
+
+export function toDashboardVersionSummary(
+	w: Wire.DashboardVersionSummary
+): DashboardVersionSummary {
+	return {
+		seq: w.seq,
+		name: w.name,
+		author: toVersionAuthor(w),
+		...(w.restored_from ? { restoredFrom: w.restored_from } : {}),
+		createdAt: w.created_at,
+		changed: w.changed ?? [],
+		...(w.panel_changes ? { panelChanges: { ...w.panel_changes } } : {}),
+		oldest: w.oldest ?? false
+	};
+}
+
+export function toDashboardVersion(w: Wire.DashboardVersionView): DashboardVersion {
+	return {
+		seq: w.seq ?? 0,
+		name: w.name ?? '',
+		filters: list(w.filters),
+		panels: list(w.panels).map(toPanel),
+		author: toVersionAuthor(w),
+		...(w.restored_from ? { restoredFrom: w.restored_from } : {}),
+		createdAt: w.created_at ?? ''
 	};
 }
 

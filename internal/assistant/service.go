@@ -137,6 +137,10 @@ type Service struct {
 type liveToken struct {
 	id, secret string
 	until      time.Time
+	// installed: a harness session took it (opened or loaded with it). A
+	// turn that fails between the mint and the session leaves it unset,
+	// and the next turn installs it then.
+	installed bool
 }
 
 // turn is one answer in flight.
@@ -483,23 +487,11 @@ func (svc *Service) answer(ctx context.Context, t *turn, s Session, text string,
 	said, cost, err := svc.run(ctx, t, &s, red, text, pageContext, first)
 	sctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	// The session's token goes with its turn: a process left running in the
-	// pod fills nothing after it.
-	svc.mu.Lock()
-	lt, minted := svc.tokens[s.ID]
-	delete(svc.tokens, s.ID)
-	svc.mu.Unlock()
-	if minted {
-		if rerr := svc.Tokens.Revoke(sctx, person, lt.id); rerr != nil {
-			svc.log().Warn("assistant: revoke a turn's token", "session", s.ID, "err", rerr)
-		}
-	}
+	// The session's token stays with its harness session (token): its
+	// process, idle in the pod, reads through it on the next turn.
 	// What the turn learnt, onto the session as it is now: a model changed
 	// while it answered stays.
 	if _, serr := svc.edit(sctx, s.ID, func(x *Session) {
-		if minted && x.TokenID == lt.id {
-			x.TokenID = ""
-		}
 		x.HarnessSession = s.HarnessSession
 		if x.Integration == "" {
 			x.Integration = s.Integration
@@ -570,7 +562,7 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 			return "", 0, err
 		}
 	}
-	tok, err := svc.token(ctx, s)
+	tok, fresh, err := svc.token(ctx, s)
 	if err != nil {
 		return "", 0, err
 	}
@@ -602,8 +594,9 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	}
 	cl := sidecar.NewWithHeader(ah.Dialer, assistantport.AgentHostTokenHeader, ah.Token)
 	svc.status(person, s.ID, "starting the harness")
-	st, err := cl.Start(ctx, sidecar.StartRequest{Argv: start.Argv, Env: start.Env, Cwd: start.Cwd, Confine: &sidecar.Confine{
-		Read: start.Confine.Read, Write: start.Confine.Write, Exec: start.Confine.Exec, Devices: start.Confine.Devices}})
+	startReq := sidecar.StartRequest{Argv: start.Argv, Env: start.Env, Cwd: start.Cwd, Confine: &sidecar.Confine{
+		Read: start.Confine.Read, Write: start.Confine.Write, Exec: start.Confine.Exec, Devices: start.Confine.Devices}}
+	st, err := cl.Start(ctx, startReq)
 	if err != nil {
 		return "", 0, fmt.Errorf("start the harness: %w", err)
 	}
@@ -616,6 +609,22 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	}
 	req := sidecar.SessionRequest{SessionID: s.HarnessSession, Proc: st.Proc, Cwd: start.Cwd, Mode: prof.mode, Model: s.Model, MCPServers: servers}
 	sess, err := cl.Session(ctx, req)
+	if err == nil && fresh && req.SessionID != "" && sess.SessionID == req.SessionID && !sess.Loaded {
+		// The harness session is live in its process, which holds the MCP
+		// servers it was opened with: a token since replaced (this turn or
+		// a failed one before it). A session takes its servers only when
+		// opened, so the process starts again and the session is loaded
+		// with the new token, its context kept.
+		svc.status(person, s.ID, "restarting the harness")
+		if err := cl.StopProc(ctx, st.Proc); err != nil {
+			return "", 0, fmt.Errorf("restart the harness: %w", err)
+		}
+		if st, err = cl.Start(ctx, startReq); err != nil {
+			return "", 0, fmt.Errorf("start the harness: %w", err)
+		}
+		req.Proc = st.Proc
+		sess, err = cl.Session(ctx, req)
+	}
 	if err != nil && req.SessionID != "" {
 		// The harness lost the session (its state went with a volume, or a
 		// version moved on): a new one, the instructions given again.
@@ -626,6 +635,8 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	if err != nil {
 		return "", 0, fmt.Errorf("open the harness session: %w", err)
 	}
+	// The session was opened or loaded with tok, or is live holding it.
+	svc.installed(s.ID, s.TokenID)
 	if sess.SessionID != s.HarnessSession {
 		first = first || !sess.Loaded
 	}
@@ -779,25 +790,29 @@ func (svc *Service) prompt(page Page, s *Session, repos []assistantport.Repo, te
 }
 
 // Token is a person's session's live token on the MCP face, minted when it
-// has none: what its turn hands the harness.
+// has none: what its harness session is opened with.
 func (svc *Service) Token(ctx context.Context, person, id string) (string, error) {
 	s, err := svc.session(ctx, person, id)
 	if err != nil {
 		return "", err
 	}
-	return svc.token(ctx, &s)
+	tok, _, err := svc.token(ctx, &s)
+	return tok, err
 }
 
-// token is the session's token on the MCP face for a turn, minted when it has
-// none (or too little life left): the face's read actions in its
-// workshop, and its session's fill.
-func (svc *Service) token(ctx context.Context, s *Session) (string, error) {
+// token is the session's token on the MCP face, minted when it has none (or
+// too little life left, or the engine restarted, the secret being held in
+// memory alone): the face's read actions in its workshop, and its
+// session's fill. It lives with the harness session it is handed to, across
+// turns, until replaced; fresh reports one no harness session has taken
+// yet (installed), which a harness session still live does not hold.
+func (svc *Service) token(ctx context.Context, s *Session) (secret string, fresh bool, err error) {
 	svc.mu.Lock()
 	svc.init()
 	lt, ok := svc.tokens[s.ID]
 	svc.mu.Unlock()
 	if ok && lt.id == s.TokenID && time.Until(lt.until) > tokenTTL/2 {
-		return lt.secret, nil
+		return lt.secret, !lt.installed, nil
 	}
 	actions := slices.Clone(svc.FaceActions)
 	if s.Kind == KindSkill && s.Workshop == "" {
@@ -810,7 +825,7 @@ func (svc *Service) token(ctx context.Context, s *Session) (string, error) {
 	}
 	id, secret, err := svc.Tokens.Mint(ctx, s.UserID, "Assistant session "+s.ID, actions, workshops, tokenTTL)
 	if err != nil {
-		return "", fmt.Errorf("the session's token: %w", err)
+		return "", false, fmt.Errorf("the session's token: %w", err)
 	}
 	if s.TokenID != "" {
 		if err := svc.Tokens.Revoke(ctx, s.UserID, s.TokenID); err != nil {
@@ -822,7 +837,17 @@ func (svc *Service) token(ctx context.Context, s *Session) (string, error) {
 	svc.tokens[s.ID] = liveToken{id: id, secret: secret, until: time.Now().Add(tokenTTL)}
 	svc.mu.Unlock()
 	_, err = svc.edit(ctx, s.ID, func(x *Session) { x.TokenID = id })
-	return secret, err
+	return secret, true, err
+}
+
+// installed records that the session's harness session took its token id.
+func (svc *Service) installed(sessionID, tokenID string) {
+	svc.mu.Lock()
+	defer svc.mu.Unlock()
+	if lt, ok := svc.tokens[sessionID]; ok && lt.id == tokenID {
+		lt.installed = true
+		svc.tokens[sessionID] = lt
+	}
 }
 
 // FillTool is what the MCP face shows a session's token for its fill and
@@ -850,8 +875,9 @@ func (svc *Service) FillTool(ctx context.Context, tokenID string) (sessionID str
 }
 
 // Fill is the fill tool: checked against its page, then sent to the
-// person's page, once. Only the session's own token fills it. The
-// errors are the agent's to correct; nothing is stored.
+// person's page, once. Only the session's own token fills it, while its
+// question is being answered. The errors are the agent's to correct;
+// nothing is stored.
 func (svc *Service) Fill(ctx context.Context, tokenID, person, sessionID string, raw json.RawMessage) ([]string, error) {
 	s, err := svc.session(ctx, person, sessionID)
 	if err != nil {
@@ -860,24 +886,26 @@ func (svc *Service) Fill(ctx context.Context, tokenID, person, sessionID string,
 	if tokenID == "" || s.TokenID != tokenID {
 		return nil, ErrNotYours
 	}
-	out, errs := pages[s.Kind].Check(ctx, svc.Checks, person, s.Workshop, raw)
-	if len(errs) > 0 {
-		return errs, nil
-	}
-	// The session's token lives for its turn (answer revokes it), so a fill
-	// comes while one is in flight, whose secrets it must not carry.
+	// The token outlives the turn (token); the person's page takes a fill
+	// only from the answer they wait for.
 	svc.mu.Lock()
 	svc.init()
 	t := svc.turns[sessionID]
 	svc.mu.Unlock()
-	if t != nil {
-		if t.red.holds(string(raw)) || t.red.holds(string(out)) {
-			return []string{"the fill holds a credential of this session (a key, a token, a login): never put one in a page"}, nil
-		}
-		svc.mu.Lock()
-		t.fill = out
-		svc.mu.Unlock()
+	if t == nil {
+		return []string{"no question is being answered: fill only while answering one"}, nil
 	}
+	out, errs := pages[s.Kind].Check(ctx, svc.Checks, person, s.Workshop, raw)
+	if len(errs) > 0 {
+		return errs, nil
+	}
+	// The turn's secrets stay out of a page.
+	if t.red.holds(string(raw)) || t.red.holds(string(out)) {
+		return []string{"the fill holds a credential of this session (a key, a token, a login): never put one in a page"}, nil
+	}
+	svc.mu.Lock()
+	t.fill = out
+	svc.mu.Unlock()
 	svc.hub.publish(person, Frame{Kind: "fill", Session: sessionID, Fill: out, Subject: s.Subject, Page: s.Kind})
 	return nil, nil
 }

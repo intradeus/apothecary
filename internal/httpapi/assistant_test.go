@@ -34,8 +34,38 @@ type apiHarnesses struct{}
 func (apiHarnesses) Integrations(context.Context, string) ([]assistant.Integration, error) {
 	return []assistant.Integration{{ID: "int-1", Name: "mine", Kind: "claude-code"}}, nil
 }
-func (apiHarnesses) Open(context.Context, string, string, envport.EnvProvisioner) (assistant.Harness, error) {
-	return nil, errors.New("no harness in these tests")
+
+// Open waits for the question to be stopped: a turn held in flight
+// (asking), there being no harness in these tests.
+func (apiHarnesses) Open(ctx context.Context, _, _ string, _ envport.EnvProvisioner) (assistant.Harness, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// homePods is a pod as far as a turn reads one before its harness: the
+// session's home.
+type homePods struct{ assistantport.Pods }
+
+func (homePods) Home(id string) string { return "/state/" + id }
+
+// asking holds a question open on a session, the turn its fill needs, until
+// the test ends.
+func (x *env) asking(t *testing.T, id string) {
+	t.Helper()
+	svc := x.srv.Assistant
+	x.expect(t, "a choice", nil, "PUT", "/api/assistant/choice", AssistantChoiceRequest{Integration: "int-1", Model: "acme/one"}, 200)
+	svc.Pods = homePods{}
+	x.expect(t, "a question", nil, "POST", "/api/assistant/sessions/"+id+"/messages", AssistantMessageRequest{Text: "hi"}, http.StatusAccepted)
+	t.Cleanup(func() {
+		if err := svc.Cancel(context.Background(), testUser, id); err != nil {
+			t.Error(err)
+		}
+		for deadline := time.Now().Add(5 * time.Second); svc.Busy(id); time.Sleep(5 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				t.Fatal("the question never stopped")
+			}
+		}
+	})
 }
 
 // apiWorkshops lets a person read a workshop they own.
@@ -157,6 +187,7 @@ func TestAssistantFillIsTheSessionsTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	session := bearer(secret)
+	x.asking(t, ticket.ID)
 
 	// My full token lists no fill; the session's lists it, bound.
 	if names := x.mcpToolNames(t, nil); strings.Contains(strings.Join(names, " "), "fill") {
@@ -223,6 +254,10 @@ func TestAssistantFillIsTheSessionsTokens(t *testing.T) {
 
 func TestAssistantStream(t *testing.T) {
 	x := newAssistantEnv(t)
+	// A question in flight, asked before the stream opens.
+	view := decode[AssistantSessionView](t, x.expect(t, "open", nil, "POST", "/api/assistant/sessions",
+		AssistantOpenRequest{Kind: "skill", Subject: "skill-1"}, 200))
+	x.asking(t, view.Session.ID)
 	req, err := http.NewRequest("GET", x.ts.URL+"/api/assistant/stream", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -237,9 +272,6 @@ func TestAssistantStream(t *testing.T) {
 	if res.Header.Get("Content-Type") != "text/event-stream" {
 		t.Fatalf("content type = %q", res.Header.Get("Content-Type"))
 	}
-	// A refresh with nothing to fetch still reports, on the stream.
-	view := decode[AssistantSessionView](t, x.expect(t, "open", nil, "POST", "/api/assistant/sessions",
-		AssistantOpenRequest{Kind: "skill", Subject: "skill-1"}, 200))
 	secret, err := x.srv.Assistant.Token(context.Background(), testUser, view.Session.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -539,6 +571,13 @@ func TestAssistantWarm(t *testing.T) {
 	plain.expect(t, "no assistant", nil, "POST", "/api/assistant/warm", nil, 404)
 }
 
+// apiNoHarness opens no harness, at once: a status lists no models.
+type apiNoHarness struct{ apiHarnesses }
+
+func (apiNoHarness) Open(context.Context, string, string, envport.EnvProvisioner) (assistant.Harness, error) {
+	return nil, errors.New("no harness in these tests")
+}
+
 // A choice names one's own skillsets: they are saved and the status shows
 // them; another's is refused.
 func TestAssistantChoiceSkillsets(t *testing.T) {
@@ -547,6 +586,7 @@ func TestAssistantChoiceSkillsets(t *testing.T) {
 	skl.serve(t, x)
 	x.srv.Assistant.Skills = skl.lib
 	x.srv.Assistant.Pods = apiPods{}
+	x.srv.Assistant.Harnesses = apiNoHarness{}
 	bob := x.addUser(t, "bob", false)
 	setOf := func(who string, hdr map[string]string) string {
 		t.Helper()

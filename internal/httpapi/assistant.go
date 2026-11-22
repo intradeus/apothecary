@@ -22,6 +22,7 @@ import (
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
 	"apothecary/internal/assistant"
+	"apothecary/internal/project/confstore"
 	"apothecary/internal/skills"
 )
 
@@ -392,8 +393,9 @@ func (s *Server) decideAssistantRequest(confirm bool) http.HandlerFunc {
 				return http.StatusBadRequest, err.Error()
 			}
 			// As the person: their session's cookie (with what proved it
-			// same-origin) or their own token.
-			res, status := s.runTool(ctx, r, &t, args, "Authorization", "Cookie", "Origin", "Referer", "Sec-Fetch-Site", "User-Agent")
+			// same-origin) or their own token. What it writes is the
+			// assistant's, saved by them: the versions it makes say so.
+			res, status := s.runTool(confstore.WithAssistedChange(ctx), r, &t, args, "Authorization", "Cookie", "Origin", "Referer", "Sec-Fetch-Site", "User-Agent")
 			if status == 0 {
 				status = http.StatusBadRequest
 			}
@@ -530,7 +532,7 @@ func (s *Server) assistantRoutes() []Route {
 			Doc: "Only the session's own token, while its question is answered. Each act's tool must be a write tool and its arguments must fit its input; ok false with the errors otherwise. " +
 				"The person confirms or declines in the panel; the session's next prompt says what came of it.",
 			Handler: s.requestAssistantActs, Body: AssistantActsRequest{}, Returns: AssistantFillResult{}, Enabled: haveAssistant, Scope: ScopeAssistant, Action: authz.AssistantFill,
-			Tool: &Tool{Name: "request", Doc: "Ask the person to confirm acts on the platform: filing tickets, starting or steering runs, saving flows, skills, automations or dashboards. Each act is one of the platform's write tools (create_ticket, update_ticket, start_run, pause_run, resume_run, retry_run, abort_run, create_flow, update_flow, create_automation, update_automation, create_skill, update_skill, create_skillset, update_skillset, create_dashboard, update_dashboard, create_scorecard, update_scorecard) with the arguments that tool takes. why is one line for the person. Nothing runs until they confirm; their next message says what came of it. Answers ok, or the errors to correct (a wrong argument names the tool's input).",
+			Tool: &Tool{Name: "request", Doc: "Ask the person to confirm acts on the platform: filing tickets, starting or steering runs, saving flows, skills, automations or dashboards. Each act is one of the platform's write tools (create_ticket, update_ticket, restore_ticket_version, start_run, pause_run, resume_run, retry_run, abort_run, create_flow, update_flow, create_automation, update_automation, create_skill, update_skill, create_skillset, update_skillset, create_dashboard, update_dashboard, restore_dashboard_version, create_scorecard, update_scorecard, restore_scorecard_version) with the arguments that tool takes. why is one line for the person. Nothing runs until they confirm; their next message says what came of it. Answers ok, or the errors to correct (a wrong argument names the tool's input).",
 				Args: map[string]string{"id": "Your session's id."}}},
 		{Method: "POST", Path: "/api/assistant/sessions/{id}/messages/{seq}/confirm", ID: "confirmAssistantRequest", Tag: tagAssistant,
 			Summary: "Run the acts an answer asked for, in order, as the caller, until one fails",

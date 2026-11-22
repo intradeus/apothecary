@@ -903,7 +903,8 @@ func purposesOf(a authz.Action, reads []authz.Action) []string {
 
 // The path parameters most tools share, described once for a model.
 const (
-	argWorkshop = "The workshop's id, from list_workshops."
-	argTicket   = "The ticket's key, from list_tickets."
-	argFlow     = "The flow's name, from list_flows."
+	argWorkshop      = "The workshop's id, from list_workshops."
+	argTicket        = "The ticket's key, from list_tickets."
+	argTicketVersion = "The version's number (seq), from list_ticket_versions."
+	argFlow          = "The flow's name, from list_flows."
 )

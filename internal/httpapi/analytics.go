@@ -5,10 +5,20 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"apothecary/internal/account/auth"
 	"apothecary/internal/account/authz"
 	"apothecary/internal/analytics"
+	"apothecary/internal/project/confstore"
+)
+
+// Tool argument docs for the dashboard and scorecard version tools.
+const (
+	argDashboard        = "The dashboard's id, from list_dashboards."
+	argDashboardVersion = "The version's seq, from list_dashboard_versions."
+	argScorecard        = "The scorecard's id, from list_scorecards."
+	argScorecardVersion = "The version's seq, from list_scorecard_versions."
 )
 
 // Run analytics (TODO 23): queries over the runs of every workshop the caller
@@ -36,7 +46,7 @@ func analyticsErr(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, analytics.ErrNotFound):
 		writeErr(w, http.StatusNotFound, err.Error())
-	case errors.Is(err, analytics.ErrReadOnly):
+	case errors.Is(err, analytics.ErrReadOnly), errors.Is(err, analytics.ErrConflict):
 		writeErr(w, http.StatusConflict, err.Error())
 	case errors.Is(err, analytics.ErrTimeout):
 		writeErr(w, http.StatusUnprocessableEntity, "query took longer than 5s; narrow the time range")
@@ -129,12 +139,35 @@ func (s *Server) listDashboards(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, ds)
 }
 
+// DashboardBody is a dashboard as written: assisted says an assistant drew
+// it (its version is the assistant's, on the caller's behalf).
+type DashboardBody struct {
+	analytics.DashboardInput
+	Assisted bool `json:"assisted,omitempty"`
+}
+
+// ScorecardBody is a scorecard as written; assisted as DashboardBody's.
+type ScorecardBody struct {
+	analytics.ScorecardInput
+	Assisted bool `json:"assisted,omitempty"`
+}
+
+// analyticsChange is who a write is by: the caller, or an assistant on
+// their behalf when the body or the request says so.
+func analyticsChange(ctx context.Context, assisted bool) analytics.Change {
+	kind := analytics.AuthorUser
+	if assisted || confstore.AssistedChange(ctx) {
+		kind = analytics.AuthorAssistant
+	}
+	return analytics.Change{Kind: kind, AuthorID: auth.UserID(ctx)}
+}
+
 func (s *Server) createDashboard(w http.ResponseWriter, r *http.Request) {
-	var in analytics.DashboardInput
+	var in DashboardBody
 	if !readJSON(w, r, &in) {
 		return
 	}
-	d, err := s.Analytics.CreateDashboard(r.Context(), auth.UserID(r.Context()), in)
+	d, err := s.Analytics.CreateDashboard(r.Context(), auth.UserID(r.Context()), in.DashboardInput, analyticsChange(r.Context(), in.Assisted))
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -152,11 +185,11 @@ func (s *Server) getDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateDashboard(w http.ResponseWriter, r *http.Request) {
-	var in analytics.DashboardInput
+	var in DashboardBody
 	if !readJSON(w, r, &in) {
 		return
 	}
-	d, err := s.Analytics.UpdateDashboard(r.Context(), r.PathValue("id"), in)
+	d, err := s.Analytics.UpdateDashboard(r.Context(), r.PathValue("id"), in.DashboardInput, analyticsChange(r.Context(), in.Assisted))
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -182,11 +215,11 @@ func (s *Server) listScorecards(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) createScorecard(w http.ResponseWriter, r *http.Request) {
-	var in analytics.ScorecardInput
+	var in ScorecardBody
 	if !readJSON(w, r, &in) {
 		return
 	}
-	c, err := s.Analytics.CreateScorecard(r.Context(), auth.UserID(r.Context()), in)
+	c, err := s.Analytics.CreateScorecard(r.Context(), auth.UserID(r.Context()), in.ScorecardInput, analyticsChange(r.Context(), in.Assisted))
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -204,11 +237,11 @@ func (s *Server) getScorecard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateScorecard(w http.ResponseWriter, r *http.Request) {
-	var in analytics.ScorecardInput
+	var in ScorecardBody
 	if !readJSON(w, r, &in) {
 		return
 	}
-	c, err := s.Analytics.UpdateScorecard(r.Context(), r.PathValue("id"), in)
+	c, err := s.Analytics.UpdateScorecard(r.Context(), r.PathValue("id"), in.ScorecardInput, analyticsChange(r.Context(), in.Assisted))
 	if err != nil {
 		analyticsErr(w, err)
 		return
@@ -222,6 +255,132 @@ func (s *Server) deleteScorecard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// DashboardVersionSummary is one kept version of a dashboard, as a history
+// lists it: what changed against the version before it, not the content.
+type DashboardVersionSummary struct {
+	Seq          int                     `json:"seq"`
+	Name         string                  `json:"name"`
+	AuthorKind   analytics.AuthorKind    `json:"author_kind"`
+	AuthorID     string                  `json:"author_id"`
+	AuthorHandle string                  `json:"author_handle,omitempty"`
+	RestoredFrom int                     `json:"restored_from,omitempty"`
+	CreatedAt    time.Time               `json:"created_at"`
+	Changed      []string                `json:"changed,omitempty"`
+	PanelChanges *analytics.PanelChanges `json:"panel_changes,omitempty"`
+	Oldest       bool                    `json:"oldest,omitempty"`
+}
+
+// DashboardVersionView is one kept version of a dashboard, its content
+// whole.
+type DashboardVersionView struct {
+	analytics.DashboardVersion
+	AuthorHandle string `json:"author_handle,omitempty"`
+}
+
+// ScorecardVersionSummary is one kept version of a scorecard, as a history
+// lists it.
+type ScorecardVersionSummary struct {
+	Seq          int                  `json:"seq"`
+	Name         string               `json:"name"`
+	AuthorKind   analytics.AuthorKind `json:"author_kind"`
+	AuthorID     string               `json:"author_id"`
+	AuthorHandle string               `json:"author_handle,omitempty"`
+	RestoredFrom int                  `json:"restored_from,omitempty"`
+	CreatedAt    time.Time            `json:"created_at"`
+	Changed      []string             `json:"changed,omitempty"`
+	Oldest       bool                 `json:"oldest,omitempty"`
+}
+
+// ScorecardVersionView is one kept version of a scorecard, its terms whole.
+type ScorecardVersionView struct {
+	analytics.ScorecardVersion
+	AuthorHandle string `json:"author_handle,omitempty"`
+}
+
+func (s *Server) listDashboardVersions(w http.ResponseWriter, r *http.Request) {
+	vs, err := s.Analytics.DashboardVersions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		analyticsErr(w, err)
+		return
+	}
+	handles := s.authorHandles()
+	out := make([]DashboardVersionSummary, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, DashboardVersionSummary{Seq: v.Seq, Name: v.Name, AuthorKind: v.Kind, AuthorID: v.AuthorID,
+			AuthorHandle: handles.of(r.Context(), string(v.Kind), v.AuthorID), RestoredFrom: v.RestoredFrom, CreatedAt: v.CreatedAt,
+			Changed: v.Changed, PanelChanges: v.PanelChanges, Oldest: v.Oldest})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) getDashboardVersion(w http.ResponseWriter, r *http.Request) {
+	seq, ok := versionSeq(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.Analytics.DashboardVersion(r.Context(), r.PathValue("id"), seq)
+	if err != nil {
+		analyticsErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, DashboardVersionView{DashboardVersion: v, AuthorHandle: s.authorHandles().of(r.Context(), string(v.Kind), v.AuthorID)})
+}
+
+func (s *Server) restoreDashboardVersion(w http.ResponseWriter, r *http.Request) {
+	seq, ok := versionSeq(w, r)
+	if !ok {
+		return
+	}
+	d, err := s.Analytics.RestoreDashboardVersion(r.Context(), r.PathValue("id"), seq, analyticsChange(r.Context(), false))
+	if err != nil {
+		analyticsErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, d)
+}
+
+func (s *Server) listScorecardVersions(w http.ResponseWriter, r *http.Request) {
+	vs, err := s.Analytics.ScorecardVersions(r.Context(), r.PathValue("id"))
+	if err != nil {
+		analyticsErr(w, err)
+		return
+	}
+	handles := s.authorHandles()
+	out := make([]ScorecardVersionSummary, 0, len(vs))
+	for _, v := range vs {
+		out = append(out, ScorecardVersionSummary{Seq: v.Seq, Name: v.Name, AuthorKind: v.Kind, AuthorID: v.AuthorID,
+			AuthorHandle: handles.of(r.Context(), string(v.Kind), v.AuthorID), RestoredFrom: v.RestoredFrom, CreatedAt: v.CreatedAt,
+			Changed: v.Changed, Oldest: v.Oldest})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+func (s *Server) getScorecardVersion(w http.ResponseWriter, r *http.Request) {
+	seq, ok := versionSeq(w, r)
+	if !ok {
+		return
+	}
+	v, err := s.Analytics.ScorecardVersion(r.Context(), r.PathValue("id"), seq)
+	if err != nil {
+		analyticsErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ScorecardVersionView{ScorecardVersion: v, AuthorHandle: s.authorHandles().of(r.Context(), string(v.Kind), v.AuthorID)})
+}
+
+func (s *Server) restoreScorecardVersion(w http.ResponseWriter, r *http.Request) {
+	seq, ok := versionSeq(w, r)
+	if !ok {
+		return
+	}
+	c, err := s.Analytics.RestoreScorecardVersion(r.Context(), r.PathValue("id"), seq, analyticsChange(r.Context(), false))
+	if err != nil {
+		analyticsErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, c)
 }
 
 func (s *Server) analyticsRoutes() []Route {
@@ -250,35 +409,63 @@ func (s *Server) analyticsRoutes() []Route {
 			Tool: &Tool{Name: "list_dashboards", Doc: "The built-in dashboards, then one's own: their names and ids.", Args: map[string]string{}}},
 		{Method: "POST", Path: "/api/analytics/dashboards", ID: "createDashboard", Tag: tagAnalytics,
 			Summary: "Create a dashboard",
-			Handler: s.createDashboard, Body: analytics.DashboardInput{}, Returns: analytics.Dashboard{}, Status: http.StatusCreated, Enabled: haveAnalytics, Action: authz.AnalyticsWrite,
+			Handler: s.createDashboard, Body: DashboardBody{}, Returns: analytics.Dashboard{}, Status: http.StatusCreated, Enabled: haveAnalytics, Action: authz.AnalyticsWrite,
 			Tool: &Tool{Name: "create_dashboard", Doc: "Create a dashboard: its name, filters and panels, each a query naming the catalog's grains, dimensions and measures (get_analytics_catalog).", Args: map[string]string{}}},
 		{Method: "GET", Path: "/api/analytics/dashboards/{id}", ID: "getDashboard", Tag: tagAnalytics,
 			Summary: "One dashboard", Handler: s.getDashboard, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsRead,
 			Tool: &Tool{Name: "get_dashboard", Doc: "One dashboard: its filters and panels, each a query over the analytics catalog.", Args: map[string]string{"id": "The dashboard's id, from list_dashboards."}}},
 		{Method: "PUT", Path: "/api/analytics/dashboards/{id}", ID: "updateDashboard", Tag: tagAnalytics,
 			Summary: "Replace a dashboard's name, filters and panels (409 on a built-in)",
-			Handler: s.updateDashboard, Body: analytics.DashboardInput{}, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsWrite,
+			Handler: s.updateDashboard, Body: DashboardBody{}, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsWrite,
 			Tool: &Tool{Name: "update_dashboard", Doc: "Replace one's dashboard's name, filters and panels. A built-in one is refused.", Args: map[string]string{"id": "The dashboard's id, from list_dashboards."}}},
 		{Method: "DELETE", Path: "/api/analytics/dashboards/{id}", ID: "deleteDashboard", Tag: tagAnalytics,
 			Summary: "Delete a dashboard (409 on a built-in)",
 			Handler: s.deleteDashboard, Status: http.StatusNoContent, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsWrite},
+		{Method: "GET", Path: "/api/analytics/dashboards/{id}/versions", ID: "listDashboardVersions", Tag: tagAnalytics,
+			Summary: "A dashboard's kept versions, newest first (a built-in has none)",
+			Doc:     "The newest 100 saves that changed its name, filters or panels, each with what changed against the one before it.",
+			Handler: s.listDashboardVersions, Returns: []DashboardVersionSummary{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsRead,
+			Tool: &Tool{Name: "list_dashboard_versions", Doc: "A dashboard's kept versions, newest first: who saved each, when, and what changed (name, filters, panels added, removed or changed). A built-in one has none.", Args: map[string]string{"id": argDashboard}}},
+		{Method: "GET", Path: "/api/analytics/dashboards/{id}/versions/{seq}", ID: "getDashboardVersion", Tag: tagAnalytics,
+			Summary: "One kept version of a dashboard",
+			Handler: s.getDashboardVersion, Returns: DashboardVersionView{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsRead,
+			Tool: &Tool{Name: "get_dashboard_version", Doc: "One kept version of a dashboard: its name, filters and panels as that save left them.", Args: map[string]string{"id": argDashboard, "seq": argDashboardVersion}}},
+		{Method: "POST", Path: "/api/analytics/dashboards/{id}/versions/{seq}/restore", ID: "restoreDashboardVersion", Tag: tagAnalytics,
+			Summary: "Restore a dashboard's kept version (409 on a built-in, 400 when the catalog no longer allows it)",
+			Doc:     "Saves the version's name, filters and panels as the current ones: a new version; history is never rewritten.",
+			Handler: s.restoreDashboardVersion, Returns: analytics.Dashboard{}, Enabled: haveAnalytics, Scope: ScopeDashboard, Action: authz.AnalyticsWrite,
+			Tool: &Tool{Name: "restore_dashboard_version", Doc: "Restore one's dashboard to a kept version: its name, filters and panels become current again, as a new version. A built-in one is refused.", Args: map[string]string{"id": argDashboard, "seq": argDashboardVersion}}},
 		{Method: "GET", Path: "/api/analytics/scorecards", ID: "listScorecards", Tag: tagAnalytics,
 			Summary: "The built-in scorecards, then one's own",
 			Handler: s.listScorecards, Returns: []analytics.Scorecard{}, Enabled: haveAnalytics, Action: authz.AnalyticsRead,
 			Tool: &Tool{Name: "list_scorecards", Doc: "The built-in scorecards, then one's own: their names and ids.", Args: map[string]string{}}},
 		{Method: "POST", Path: "/api/analytics/scorecards", ID: "createScorecard", Tag: tagAnalytics,
 			Summary: "Create a scorecard",
-			Handler: s.createScorecard, Body: analytics.ScorecardInput{}, Returns: analytics.Scorecard{}, Status: http.StatusCreated, Enabled: haveAnalytics, Action: authz.AnalyticsWrite,
+			Handler: s.createScorecard, Body: ScorecardBody{}, Returns: analytics.Scorecard{}, Status: http.StatusCreated, Enabled: haveAnalytics, Action: authz.AnalyticsWrite,
 			Tool: &Tool{Name: "create_scorecard", Doc: "Create a scorecard: its name and terms over the analytics catalog's measures (get_analytics_catalog).", Args: map[string]string{}}},
 		{Method: "GET", Path: "/api/analytics/scorecards/{id}", ID: "getScorecard", Tag: tagAnalytics,
 			Summary: "One scorecard", Handler: s.getScorecard, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsRead,
 			Tool: &Tool{Name: "get_scorecard", Doc: "One scorecard: its terms, each a measure with its weight and target.", Args: map[string]string{"id": "The scorecard's id, from list_scorecards."}}},
 		{Method: "PUT", Path: "/api/analytics/scorecards/{id}", ID: "updateScorecard", Tag: tagAnalytics,
 			Summary: "Replace a scorecard's name and terms (409 on a built-in)",
-			Handler: s.updateScorecard, Body: analytics.ScorecardInput{}, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsWrite,
+			Handler: s.updateScorecard, Body: ScorecardBody{}, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsWrite,
 			Tool: &Tool{Name: "update_scorecard", Doc: "Replace one's scorecard's name and terms. A built-in one is refused.", Args: map[string]string{"id": "The scorecard's id, from list_scorecards."}}},
 		{Method: "DELETE", Path: "/api/analytics/scorecards/{id}", ID: "deleteScorecard", Tag: tagAnalytics,
 			Summary: "Delete a scorecard (409 on a built-in)",
 			Handler: s.deleteScorecard, Status: http.StatusNoContent, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsWrite},
+		{Method: "GET", Path: "/api/analytics/scorecards/{id}/versions", ID: "listScorecardVersions", Tag: tagAnalytics,
+			Summary: "A scorecard's kept versions, newest first (a built-in has none)",
+			Doc:     "The newest 100 saves that changed its name or terms, each with what changed against the one before it.",
+			Handler: s.listScorecardVersions, Returns: []ScorecardVersionSummary{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsRead,
+			Tool: &Tool{Name: "list_scorecard_versions", Doc: "A scorecard's kept versions, newest first: who saved each, when, and what changed (name, terms). A built-in one has none.", Args: map[string]string{"id": argScorecard}}},
+		{Method: "GET", Path: "/api/analytics/scorecards/{id}/versions/{seq}", ID: "getScorecardVersion", Tag: tagAnalytics,
+			Summary: "One kept version of a scorecard",
+			Handler: s.getScorecardVersion, Returns: ScorecardVersionView{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsRead,
+			Tool: &Tool{Name: "get_scorecard_version", Doc: "One kept version of a scorecard: its name and terms as that save left them.", Args: map[string]string{"id": argScorecard, "seq": argScorecardVersion}}},
+		{Method: "POST", Path: "/api/analytics/scorecards/{id}/versions/{seq}/restore", ID: "restoreScorecardVersion", Tag: tagAnalytics,
+			Summary: "Restore a scorecard's kept version (409 on a built-in, 400 when the catalog no longer allows it)",
+			Doc:     "Saves the version's name and terms as the current ones: a new version; history is never rewritten.",
+			Handler: s.restoreScorecardVersion, Returns: analytics.Scorecard{}, Enabled: haveAnalytics, Scope: ScopeScorecard, Action: authz.AnalyticsWrite,
+			Tool: &Tool{Name: "restore_scorecard_version", Doc: "Restore one's scorecard to a kept version: its name and terms become current again, as a new version. A built-in one is refused.", Args: map[string]string{"id": argScorecard, "seq": argScorecardVersion}}},
 	}
 }

@@ -626,6 +626,31 @@ describe('what each call sends', () => {
 			expect(add).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1' }, body: { body: 'hi' } });
 		});
 
+		it('sends an assistant’s fill as assisted, and nothing otherwise', async () => {
+			const fn = reply('updateWorkshopTicket', answer(detail));
+			await tickets.update('p', 'K-1', { title: 'T', goal: 'G', assisted: true });
+			expect(fn.mock.lastCall?.[0].body).toMatchObject({ assisted: true });
+			await tickets.update('p', 'K-1', { title: 'T', goal: 'G', assisted: false });
+			expect(fn.mock.lastCall?.[0].body).not.toHaveProperty('assisted');
+		});
+
+		it('lists, reads and restores its versions by seq', async () => {
+			const list = reply(
+				'listWorkshopTicketVersions',
+				answer([{ seq: 2, title: 'T', author_kind: 'run', author_id: 'r', created_at: 'a' }])
+			);
+			await expect(tickets.versions('p', 'K-1')).resolves.toMatchObject([
+				{ seq: 2, author: { kind: 'run', id: 'r' } }
+			]);
+			expect(list).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1' } });
+			const one = reply('getWorkshopTicketVersion', answer({ seq: 1, goal: 'g' }));
+			await expect(tickets.version('p', 'K-1', 1)).resolves.toMatchObject({ seq: 1, goal: 'g' });
+			expect(one).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1', seq: '1' } });
+			const restore = reply('restoreWorkshopTicketVersion', answer(detail));
+			await expect(tickets.restore('p', 'K-1', 1)).resolves.toMatchObject({ key: 'K-1' });
+			expect(restore).toHaveBeenCalledWith({ path: { id: 'p', key: 'K-1', seq: '1' } });
+		});
+
 		it('reads its comments, from the tracker now only when asked', async () => {
 			const fn = reply('listWorkshopTicketComments', answer([]));
 			await tickets.comments('p', 'K-1');
@@ -1175,6 +1200,37 @@ describe('what each call sends', () => {
 			const get = reply('getDashboard', answer({ id: 'd', panels: null }));
 			await expect(analytics.dashboards.get('d')).resolves.toMatchObject({ panels: [] });
 			expect(get).toHaveBeenCalledWith({ path: { id: 'd' } });
+		});
+
+		it('marks a save holding the assistant’s fill as assisted', async () => {
+			const draft: DashboardDraft = { name: 'Mine', filters: [], panels: [] };
+			const create = reply('createDashboard', answer({ id: 'd' }));
+			await analytics.dashboards.create(draft, true);
+			expect(create).toHaveBeenCalledWith({ body: { assisted: true, ...draft } });
+			const update = reply('updateDashboard', answer({ id: 'd' }));
+			await analytics.dashboards.update('d', draft, false);
+			expect(update).toHaveBeenCalledWith({ path: { id: 'd' }, body: draft });
+		});
+
+		it('reads a dashboard’s versions and one version, and restores one', async () => {
+			const list = reply(
+				'listDashboardVersions',
+				answer([{ seq: 2, name: 'Mine', author_kind: 'user', author_id: 'u', created_at: 'T' }])
+			);
+			await expect(analytics.dashboards.versions('d')).resolves.toMatchObject([{ seq: 2 }]);
+			expect(list).toHaveBeenCalledWith({ path: { id: 'd' } });
+			reply('listDashboardVersions', answer(null));
+			await expect(analytics.dashboards.versions('d')).resolves.toEqual([]);
+			const one = reply('getDashboardVersion', answer({ seq: 1, name: 'Old', panels: null }));
+			await expect(analytics.dashboards.version('d', 1)).resolves.toMatchObject({
+				seq: 1,
+				name: 'Old',
+				panels: []
+			});
+			expect(one).toHaveBeenCalledWith({ path: { id: 'd', seq: '1' } });
+			const restore = reply('restoreDashboardVersion', answer({ id: 'd', name: 'Old' }));
+			await expect(analytics.dashboards.restore('d', 1)).resolves.toMatchObject({ name: 'Old' });
+			expect(restore).toHaveBeenCalledWith({ path: { id: 'd', seq: '1' } });
 		});
 
 		it('saves a scorecard’s terms', async () => {

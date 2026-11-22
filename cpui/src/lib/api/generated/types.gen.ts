@@ -554,10 +554,40 @@ export type Dashboard = {
 	user_id: string;
 };
 
-export type DashboardInput = {
-	filters: Array<string> | null;
+export type DashboardBody = {
+	assisted?: boolean;
+	filters?: Array<string> | null;
+	name?: string;
+	panels?: Array<Panel> | null;
+};
+
+export type DashboardVersionSummary = {
+	author_handle?: string;
+	author_id: string;
+	author_kind: string;
+	changed?: Array<string>;
+	created_at: string;
 	name: string;
-	panels: Array<Panel> | null;
+	oldest?: boolean;
+	panel_changes?: PanelChanges;
+	restored_from?: number;
+	seq: number;
+};
+
+export type DashboardVersionView = {
+	author_handle?: string;
+	author_id?: string;
+	author_kind?: string;
+	changed?: Array<string>;
+	created_at?: string;
+	dashboard_id?: string;
+	filters?: Array<string> | null;
+	name?: string;
+	oldest?: boolean;
+	panel_changes?: PanelChanges;
+	panels?: Array<Panel> | null;
+	restored_from?: number;
+	seq?: number;
 };
 
 export type DocAsk = {
@@ -1242,6 +1272,13 @@ export type Panel = {
 	width: number;
 };
 
+export type PanelChanges = {
+	added: number;
+	changed: number;
+	removed: number;
+	reordered?: boolean;
+};
+
 export type Param = {
 	default: string;
 	default_ref?: string;
@@ -1788,15 +1825,42 @@ export type Scorecard = {
 	user_id: string;
 };
 
-export type ScorecardInput = {
-	name: string;
-	terms: Array<ScorecardTerm> | null;
+export type ScorecardBody = {
+	assisted?: boolean;
+	name?: string;
+	terms?: Array<ScorecardTerm> | null;
 };
 
 export type ScorecardTerm = {
 	direction: string;
 	measure: AnalyticsMeasure;
 	weight: number;
+};
+
+export type ScorecardVersionSummary = {
+	author_handle?: string;
+	author_id: string;
+	author_kind: string;
+	changed?: Array<string>;
+	created_at: string;
+	name: string;
+	oldest?: boolean;
+	restored_from?: number;
+	seq: number;
+};
+
+export type ScorecardVersionView = {
+	author_handle?: string;
+	author_id?: string;
+	author_kind?: string;
+	changed?: Array<string>;
+	created_at?: string;
+	name?: string;
+	oldest?: boolean;
+	restored_from?: number;
+	scorecard_id?: string;
+	seq?: number;
+	terms?: Array<ScorecardTerm> | null;
 };
 
 export type SendMessageRequest = {
@@ -2177,6 +2241,7 @@ export type TicketRecord = {
 };
 
 export type TicketRequest = {
+	assisted?: boolean;
 	attachment_ids: Array<string> | null;
 	base_branch: string;
 	change_type: string;
@@ -2221,6 +2286,36 @@ export type TicketSourceView = {
 
 export type TicketStatusRequest = {
 	status: string;
+};
+
+export type TicketVersionSummary = {
+	author_handle?: string;
+	author_id?: string;
+	author_kind?: string;
+	changed?: Array<string>;
+	created_at: string;
+	oldest?: boolean;
+	restored_from?: number;
+	seq: number;
+	title: string;
+};
+
+export type TicketVersionView = {
+	author_handle?: string;
+	author_id?: string;
+	author_kind?: string;
+	base_branch?: string;
+	change_type?: string;
+	changed?: Array<string>;
+	created_at?: string;
+	goal?: string;
+	labels?: Array<string>;
+	oldest?: boolean;
+	restored_from?: number;
+	seq?: number;
+	ticket_id?: string;
+	title?: string;
+	type_id?: string;
 };
 
 export type Token = {
@@ -2582,7 +2677,7 @@ export type ListDashboardsResponses = {
 export type ListDashboardsResponse = ListDashboardsResponses[keyof ListDashboardsResponses];
 
 export type CreateDashboardData = {
-	body: DashboardInput;
+	body: DashboardBody;
 	path?: never;
 	query?: never;
 	url: '/api/analytics/dashboards';
@@ -2707,7 +2802,7 @@ export type GetDashboardResponses = {
 export type GetDashboardResponse = GetDashboardResponses[keyof GetDashboardResponses];
 
 export type UpdateDashboardData = {
-	body: DashboardInput;
+	body: DashboardBody;
 	path: {
 		id: string;
 	};
@@ -2750,6 +2845,138 @@ export type UpdateDashboardResponses = {
 };
 
 export type UpdateDashboardResponse = UpdateDashboardResponses[keyof UpdateDashboardResponses];
+
+export type ListDashboardVersionsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/dashboards/{id}/versions';
+};
+
+export type ListDashboardVersionsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListDashboardVersionsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<DashboardVersionSummary> | null;
+};
+
+export type ListDashboardVersionsResponse =
+	ListDashboardVersionsResponses[keyof ListDashboardVersionsResponses];
+
+export type GetDashboardVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/analytics/dashboards/{id}/versions/{seq}';
+};
+
+export type GetDashboardVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetDashboardVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: DashboardVersionView;
+};
+
+export type GetDashboardVersionResponse =
+	GetDashboardVersionResponses[keyof GetDashboardVersionResponses];
+
+export type RestoreDashboardVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/analytics/dashboards/{id}/versions/{seq}/restore';
+};
+
+export type RestoreDashboardVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RestoreDashboardVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: Dashboard;
+};
+
+export type RestoreDashboardVersionResponse =
+	RestoreDashboardVersionResponses[keyof RestoreDashboardVersionResponses];
 
 export type DrillAnalyticsData = {
 	body: AnalyticsDrillRequest;
@@ -2865,7 +3092,7 @@ export type ListScorecardsResponses = {
 export type ListScorecardsResponse = ListScorecardsResponses[keyof ListScorecardsResponses];
 
 export type CreateScorecardData = {
-	body: ScorecardInput;
+	body: ScorecardBody;
 	path?: never;
 	query?: never;
 	url: '/api/analytics/scorecards';
@@ -2990,7 +3217,7 @@ export type GetScorecardResponses = {
 export type GetScorecardResponse = GetScorecardResponses[keyof GetScorecardResponses];
 
 export type UpdateScorecardData = {
-	body: ScorecardInput;
+	body: ScorecardBody;
 	path: {
 		id: string;
 	};
@@ -3033,6 +3260,138 @@ export type UpdateScorecardResponses = {
 };
 
 export type UpdateScorecardResponse = UpdateScorecardResponses[keyof UpdateScorecardResponses];
+
+export type ListScorecardVersionsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/analytics/scorecards/{id}/versions';
+};
+
+export type ListScorecardVersionsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListScorecardVersionsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<ScorecardVersionSummary> | null;
+};
+
+export type ListScorecardVersionsResponse =
+	ListScorecardVersionsResponses[keyof ListScorecardVersionsResponses];
+
+export type GetScorecardVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/analytics/scorecards/{id}/versions/{seq}';
+};
+
+export type GetScorecardVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetScorecardVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: ScorecardVersionView;
+};
+
+export type GetScorecardVersionResponse =
+	GetScorecardVersionResponses[keyof GetScorecardVersionResponses];
+
+export type RestoreScorecardVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/analytics/scorecards/{id}/versions/{seq}/restore';
+};
+
+export type RestoreScorecardVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RestoreScorecardVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: Scorecard;
+};
+
+export type RestoreScorecardVersionResponse =
+	RestoreScorecardVersionResponses[keyof RestoreScorecardVersionResponses];
 
 export type AnalyticsValuesData = {
 	body: AnalyticsValuesRequest;
@@ -8906,6 +9265,141 @@ export type SetWorkshopTicketStatusResponses = {
 
 export type SetWorkshopTicketStatusResponse =
 	SetWorkshopTicketStatusResponses[keyof SetWorkshopTicketStatusResponses];
+
+export type ListWorkshopTicketVersionsData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/versions';
+};
+
+export type ListWorkshopTicketVersionsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListWorkshopTicketVersionsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<TicketVersionSummary> | null;
+};
+
+export type ListWorkshopTicketVersionsResponse =
+	ListWorkshopTicketVersionsResponses[keyof ListWorkshopTicketVersionsResponses];
+
+export type GetWorkshopTicketVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/versions/{seq}';
+};
+
+export type GetWorkshopTicketVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type GetWorkshopTicketVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketVersionView;
+};
+
+export type GetWorkshopTicketVersionResponse =
+	GetWorkshopTicketVersionResponses[keyof GetWorkshopTicketVersionResponses];
+
+export type RestoreWorkshopTicketVersionData = {
+	body?: never;
+	path: {
+		id: string;
+		key: string;
+		seq: string;
+	};
+	query?: never;
+	url: '/api/projects/{id}/tickets/{key}/versions/{seq}/restore';
+};
+
+export type RestoreWorkshopTicketVersionErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type RestoreWorkshopTicketVersionResponses = {
+	/**
+	 * OK
+	 */
+	200: TicketDetail;
+};
+
+export type RestoreWorkshopTicketVersionResponse =
+	RestoreWorkshopTicketVersionResponses[keyof RestoreWorkshopTicketVersionResponses];
 
 export type ListProvidersData = {
 	body?: never;

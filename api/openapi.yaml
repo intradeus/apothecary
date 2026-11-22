@@ -1282,8 +1282,10 @@ components:
         - updated_at
         - user_id
       type: object
-    DashboardInput:
+    DashboardBody:
       properties:
+        assisted:
+          type: boolean
         filters:
           items:
             type: string
@@ -1296,10 +1298,76 @@ components:
             $ref: '#/components/schemas/Panel'
           nullable: true
           type: array
+      type: object
+    DashboardVersionSummary:
+      properties:
+        author_handle:
+          type: string
+        author_id:
+          type: string
+        author_kind:
+          type: string
+        changed:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        oldest:
+          type: boolean
+        panel_changes:
+          $ref: '#/components/schemas/PanelChanges'
+        restored_from:
+          type: integer
+        seq:
+          type: integer
       required:
-        - filters
+        - author_id
+        - author_kind
+        - created_at
         - name
-        - panels
+        - seq
+      type: object
+    DashboardVersionView:
+      properties:
+        author_handle:
+          type: string
+        author_id:
+          type: string
+        author_kind:
+          type: string
+        changed:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        dashboard_id:
+          type: string
+        filters:
+          items:
+            type: string
+          nullable: true
+          type: array
+        name:
+          type: string
+        oldest:
+          type: boolean
+        panel_changes:
+          $ref: '#/components/schemas/PanelChanges'
+        panels:
+          items:
+            $ref: '#/components/schemas/Panel'
+          nullable: true
+          type: array
+        restored_from:
+          type: integer
+        seq:
+          type: integer
       type: object
     DocAsk:
       properties:
@@ -2815,6 +2883,21 @@ components:
         - viz
         - width
       type: object
+    PanelChanges:
+      properties:
+        added:
+          type: integer
+        changed:
+          type: integer
+        removed:
+          type: integer
+        reordered:
+          type: boolean
+      required:
+        - added
+        - changed
+        - removed
+      type: object
     Param:
       properties:
         default:
@@ -4066,8 +4149,10 @@ components:
         - updated_at
         - user_id
       type: object
-    ScorecardInput:
+    ScorecardBody:
       properties:
+        assisted:
+          type: boolean
         name:
           type: string
         terms:
@@ -4075,9 +4160,6 @@ components:
             $ref: '#/components/schemas/ScorecardTerm'
           nullable: true
           type: array
-      required:
-        - name
-        - terms
       type: object
     ScorecardTerm:
       properties:
@@ -4092,6 +4174,67 @@ components:
         - direction
         - measure
         - weight
+      type: object
+    ScorecardVersionSummary:
+      properties:
+        author_handle:
+          type: string
+        author_id:
+          type: string
+        author_kind:
+          type: string
+        changed:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        oldest:
+          type: boolean
+        restored_from:
+          type: integer
+        seq:
+          type: integer
+      required:
+        - author_id
+        - author_kind
+        - created_at
+        - name
+        - seq
+      type: object
+    ScorecardVersionView:
+      properties:
+        author_handle:
+          type: string
+        author_id:
+          type: string
+        author_kind:
+          type: string
+        changed:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        name:
+          type: string
+        oldest:
+          type: boolean
+        restored_from:
+          type: integer
+        scorecard_id:
+          type: string
+        seq:
+          type: integer
+        terms:
+          items:
+            $ref: '#/components/schemas/ScorecardTerm'
+          nullable: true
+          type: array
       type: object
     SendMessageRequest:
       properties:
@@ -4979,6 +5122,8 @@ components:
       type: object
     TicketRequest:
       properties:
+        assisted:
+          type: boolean
         attachment_ids:
           items:
             type: string
@@ -5096,6 +5241,72 @@ components:
           type: string
       required:
         - status
+      type: object
+    TicketVersionSummary:
+      properties:
+        author_handle:
+          type: string
+        author_id:
+          type: string
+        author_kind:
+          type: string
+        changed:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        oldest:
+          type: boolean
+        restored_from:
+          type: integer
+        seq:
+          type: integer
+        title:
+          type: string
+      required:
+        - created_at
+        - seq
+        - title
+      type: object
+    TicketVersionView:
+      properties:
+        author_handle:
+          type: string
+        author_id:
+          type: string
+        author_kind:
+          type: string
+        base_branch:
+          type: string
+        change_type:
+          type: string
+        changed:
+          items:
+            type: string
+          type: array
+        created_at:
+          format: date-time
+          type: string
+        goal:
+          type: string
+        labels:
+          items:
+            type: string
+          type: array
+        oldest:
+          type: boolean
+        restored_from:
+          type: integer
+        seq:
+          type: integer
+        ticket_id:
+          type: string
+        title:
+          type: string
+        type_id:
+          type: string
       type: object
     Token:
       properties:
@@ -5833,7 +6044,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DashboardInput'
+              $ref: '#/components/schemas/DashboardBody'
         required: true
       responses:
         "201":
@@ -5966,7 +6177,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/DashboardInput'
+              $ref: '#/components/schemas/DashboardBody'
         required: true
       responses:
         "200":
@@ -6003,6 +6214,154 @@ paths:
         - session: []
         - personalToken: []
       summary: Replace a dashboard's name, filters and panels (409 on a built-in)
+      tags:
+        - analytics
+      x-apothecary-action: analytics:write
+  /api/analytics/dashboards/{id}/versions:
+    get:
+      description: The newest 100 saves that changed its name, filters or panels, each with what changed against the one before it.
+      operationId: listDashboardVersions
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/DashboardVersionSummary'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A dashboard's kept versions, newest first (a built-in has none)
+      tags:
+        - analytics
+      x-apothecary-action: analytics:read
+  /api/analytics/dashboards/{id}/versions/{seq}:
+    get:
+      operationId: getDashboardVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardVersionView'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One kept version of a dashboard
+      tags:
+        - analytics
+      x-apothecary-action: analytics:read
+  /api/analytics/dashboards/{id}/versions/{seq}/restore:
+    post:
+      description: 'Saves the version''s name, filters and panels as the current ones: a new version; history is never rewritten.'
+      operationId: restoreDashboardVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Dashboard'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Restore a dashboard's kept version (409 on a built-in, 400 when the catalog no longer allows it)
       tags:
         - analytics
       x-apothecary-action: analytics:write
@@ -6138,7 +6497,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ScorecardInput'
+              $ref: '#/components/schemas/ScorecardBody'
         required: true
       responses:
         "201":
@@ -6271,7 +6630,7 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ScorecardInput'
+              $ref: '#/components/schemas/ScorecardBody'
         required: true
       responses:
         "200":
@@ -6308,6 +6667,154 @@ paths:
         - session: []
         - personalToken: []
       summary: Replace a scorecard's name and terms (409 on a built-in)
+      tags:
+        - analytics
+      x-apothecary-action: analytics:write
+  /api/analytics/scorecards/{id}/versions:
+    get:
+      description: The newest 100 saves that changed its name or terms, each with what changed against the one before it.
+      operationId: listScorecardVersions
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/ScorecardVersionSummary'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A scorecard's kept versions, newest first (a built-in has none)
+      tags:
+        - analytics
+      x-apothecary-action: analytics:read
+  /api/analytics/scorecards/{id}/versions/{seq}:
+    get:
+      operationId: getScorecardVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ScorecardVersionView'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One kept version of a scorecard
+      tags:
+        - analytics
+      x-apothecary-action: analytics:read
+  /api/analytics/scorecards/{id}/versions/{seq}/restore:
+    post:
+      description: 'Saves the version''s name and terms as the current ones: a new version; history is never rewritten.'
+      operationId: restoreScorecardVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scorecard'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Restore a scorecard's kept version (409 on a built-in, 400 when the catalog no longer allows it)
       tags:
         - analytics
       x-apothecary-action: analytics:write
@@ -12706,6 +13213,169 @@ paths:
         - session: []
         - personalToken: []
       summary: Move a ticket to a status of its tracker, by name
+      tags:
+        - tickets
+      x-apothecary-action: ticket:write
+  /api/projects/{id}/tickets/{key}/versions:
+    get:
+      description: 'Each save that changed its title, goal, base branch, change type, type or labels made a version: who made it (a person, an assistant''s work a person saved, a run, or its tracker''s sync), when, and the fields that changed from the version before. The newest 100 are kept. A remote issue without a record has none.'
+      operationId: listWorkshopTicketVersions
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: key
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TicketVersionSummary'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: A ticket's history, newest first
+      tags:
+        - tickets
+      x-apothecary-action: ticket:read
+  /api/projects/{id}/tickets/{key}/versions/{seq}:
+    get:
+      operationId: getWorkshopTicketVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: key
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketVersionView'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: One version of a ticket, in full
+      tags:
+        - tickets
+      x-apothecary-action: ticket:read
+  /api/projects/{id}/tickets/{key}/versions/{seq}/restore:
+    post:
+      description: Its content becomes the version's again, saved as a new version (history is never rewritten); content equal to the version already changes nothing. A type no longer on the tracker gives way to its change type's. A remote issue's content is its tracker's (400).
+      operationId: restoreWorkshopTicketVersion
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: key
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: seq
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: Restore an old version of a ticket
       tags:
         - tickets
       x-apothecary-action: ticket:write

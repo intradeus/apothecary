@@ -130,6 +130,25 @@ func TestAgentCallsShapeTheirRequests(t *testing.T) {
 			t.Errorf("request = %s %s", rec.method, rec.path)
 		}
 	})
+	t.Run("stop one process", func(t *testing.T) {
+		c, rec := recording(t, "")
+		if err := c.StopProc(ctx, "p1"); err != nil {
+			t.Fatal(err)
+		}
+		if rec.method != "POST" || rec.path != "/agent/stop" || rec.body != `{"proc":"p1"}` {
+			t.Errorf("request = %s %s %s", rec.method, rec.path, rec.body)
+		}
+		gone := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(w, `{"error":"no agent process p1"}`)
+		})
+		if err := gone.StopProc(ctx, "p1"); err != nil {
+			t.Errorf("a process already gone = %v", err)
+		}
+		if err := serve(t, http.NotFound).StopProc(ctx, "p1"); !IsNoRoute(err) {
+			t.Errorf("a sidecar without the route = %v", err)
+		}
+	})
 	t.Run("status", func(t *testing.T) {
 		c, rec := recording(t, `{"boot":"b","running":true,"last_seq":7,"sessions":{"s":0.5},"turns":[{"id":"t1","session":"s"}],"procs":["p"]}`)
 		st, err := c.Status(ctx)

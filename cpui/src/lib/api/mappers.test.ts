@@ -1040,6 +1040,77 @@ describe('tickets', () => {
 		expect(map.toTicketComment({ ...c, origin: 'bot' }).origin).toBe('remote');
 	});
 
+	it('reads a ticket version and its author; an unknown kind is a person’s edit', () => {
+		expect(
+			map.toTicketVersionSummary({
+				seq: 3,
+				title: 'T',
+				author_kind: 'assistant',
+				author_id: 'u',
+				author_handle: 'ann',
+				restored_from: 1,
+				created_at: 'a',
+				changed: ['title'],
+				oldest: true
+			})
+		).toEqual({
+			seq: 3,
+			title: 'T',
+			author: { kind: 'assistant', id: 'u', handle: 'ann' },
+			restoredFrom: 1,
+			createdAt: 'a',
+			changed: ['title'],
+			oldest: true
+		});
+		expect(map.toTicketVersionSummary({ seq: 1, title: 'T', created_at: 'a' })).toEqual({
+			seq: 1,
+			title: 'T',
+			author: { kind: 'user', id: '' },
+			createdAt: 'a',
+			changed: [],
+			oldest: false
+		});
+		expect(map.toVersionAuthor({ author_kind: 'robot', author_id: 'x' }).kind).toBe('user');
+		expect(
+			map.toTicketVersion({
+				seq: 2,
+				title: 'T',
+				goal: 'G',
+				base_branch: 'b',
+				change_type: 'fix',
+				type_id: 'y',
+				labels: ['l'],
+				author_kind: 'sync',
+				author_id: 's',
+				restored_from: 1,
+				created_at: 'a'
+			})
+		).toEqual({
+			seq: 2,
+			title: 'T',
+			goal: 'G',
+			baseBranch: 'b',
+			changeType: 'fix',
+			typeId: 'y',
+			labels: ['l'],
+			author: { kind: 'sync', id: 's' },
+			restoredFrom: 1,
+			createdAt: 'a',
+			changed: [],
+			oldest: false
+		});
+		expect(map.toTicketVersion({})).toMatchObject({
+			seq: 0,
+			title: '',
+			goal: '',
+			baseBranch: '',
+			changeType: 'feat',
+			typeId: '',
+			labels: [],
+			createdAt: ''
+		});
+	});
+
 	it('reads a ticket’s files: uploaded here and the remote issue’s own', () => {
 		expect(
 			map.toTicketAttachments(
@@ -2369,6 +2440,67 @@ describe('analytics', () => {
 		expect(
 			map.toDashboard(wire<Wire.Dashboard>({ id: 'd', user_id: 'u', filters: null, panels: null }))
 		).toMatchObject({ userId: 'u', filters: [], panels: [] });
+	});
+
+	it('reads a dashboard’s version summary and a version, absent parts as none', () => {
+		expect(
+			map.toDashboardVersionSummary(
+				wire<Wire.DashboardVersionSummary>({
+					seq: 3,
+					name: 'Mine',
+					author_kind: 'assistant',
+					author_id: 'u',
+					author_handle: 'lu',
+					restored_from: 1,
+					created_at: AT,
+					changed: ['panels'],
+					panel_changes: { added: 1, removed: 2, changed: 3, reordered: true },
+					oldest: true
+				})
+			)
+		).toEqual({
+			seq: 3,
+			name: 'Mine',
+			author: { kind: 'assistant', id: 'u', handle: 'lu' },
+			restoredFrom: 1,
+			createdAt: AT,
+			changed: ['panels'],
+			panelChanges: { added: 1, removed: 2, changed: 3, reordered: true },
+			oldest: true
+		});
+		expect(
+			map.toDashboardVersionSummary(
+				wire<Wire.DashboardVersionSummary>({ seq: 1, name: 'M', created_at: AT })
+			)
+		).toMatchObject({ changed: [], oldest: false });
+		const v = map.toDashboardVersion(
+			wire<Wire.DashboardVersionView>({
+				seq: 2,
+				name: 'Old',
+				filters: ['flow_name'],
+				panels: [{ id: 'p', title: 'T', viz: 'bar', width: 3, query: { grain: 'runs' } }],
+				author_kind: 'user',
+				author_id: 'u',
+				restored_from: 1,
+				created_at: AT
+			})
+		);
+		expect(v).toMatchObject({
+			seq: 2,
+			name: 'Old',
+			filters: ['flow_name'],
+			restoredFrom: 1,
+			createdAt: AT,
+			author: { kind: 'user', id: 'u' }
+		});
+		expect(v.panels[0]).toMatchObject({ id: 'p', viz: 'bar', width: 3 });
+		expect(map.toDashboardVersion(wire<Wire.DashboardVersionView>({}))).toMatchObject({
+			seq: 0,
+			name: '',
+			filters: [],
+			panels: [],
+			createdAt: ''
+		});
 	});
 
 	it('reads a scorecard, an unknown direction as lower', () => {

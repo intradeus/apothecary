@@ -766,7 +766,7 @@ func TestTicketTracker(t *testing.T) {
 	b.reg.RegisterTicketSource(sharedSource{src: src})
 	b.r.Live = tickets.NewLive(b.svc, b.r)
 
-	mine, err := b.svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: "Mine"})
+	mine, err := b.svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: "Mine"}, confstore.Change{Kind: confstore.AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}

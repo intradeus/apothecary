@@ -101,7 +101,7 @@ func trackers(t *testing.T, open opener) {
 		trackerLists(t, s)
 		k := ticket("k1", "i9", "u1", 1)
 		k.StatusID = "st1"
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		keep := []confstore.TrackerStatus{{ID: "st2", RemoteID: "2", Name: "Done", IsDone: true}}
 		is(t, "no replacement", s.ReplaceTrackerStatuses(ctx, "i9", keep, nil), confstore.ErrReferenced)
 		same(t, "after the refusal", statusIDs(t, s, "i9"), []string{"st1", "st2"})
@@ -174,13 +174,90 @@ func trackers(t *testing.T, open opener) {
 		same(t, "a new row is its own remote", saved[1].RemoteID, saved[1].ID)
 	})
 
+	t.Run("a remote tracker's types take only their change type", func(t *testing.T) {
+		s := seeded(t, open)
+		svc := service(t, s)
+		remote := remoteTracker(t, svc, "u1", "jira")
+		cur, err := svc.EnsureRemoteTypes(ctx, remote.ID, []trackerport.RemoteType{{ID: "10", Name: "Bug"}, {ID: "11", Name: "Story"}})
+		ok(t, err)
+		edit := slices.Clone(cur)
+		edit[0].ChangeType, edit[0].Name = "hotfix", "Renamed"
+		saved, err := svc.PutTrackerTypes(ctx, remote.ID, edit, nil)
+		ok(t, err)
+		same(t, "names stay the tracker's", ids(saved, func(r confstore.TrackerType) string { return r.Name }), []string{"Bug", "Story"})
+		same(t, "change types", ids(saved, func(r confstore.TrackerType) string { return string(r.ChangeType) }),
+			[]string{"hotfix", string(cur[1].ChangeType)})
+
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, edit, map[string]string{cur[1].ID: cur[0].ID})
+		is(t, "a deletion", err, confstore.ErrInvalid)
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, edit[:1], nil)
+		is(t, "one left out", err, confstore.ErrInvalid)
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, []confstore.TrackerType{edit[0], edit[0]}, nil)
+		is(t, "one sent twice", err, confstore.ErrInvalid)
+		stranger := edit[1]
+		stranger.ID = "not-stored"
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, []confstore.TrackerType{edit[0], stranger}, nil)
+		is(t, "one not stored", err, confstore.ErrInvalid)
+		edit[1].ChangeType = "refactorish"
+		_, err = svc.PutTrackerTypes(ctx, remote.ID, edit, nil)
+		is(t, "an unknown change type", err, confstore.ErrInvalid)
+		_, err = svc.PutTrackerTypes(ctx, "ghost", nil, nil)
+		if err == nil {
+			t.Error("a missing integration's types were saved")
+		}
+	})
+
+	t.Run("the internal tracker's types are the user's", func(t *testing.T) {
+		s := seeded(t, open)
+		svc := service(t, s)
+		in, err := svc.InternalTracker(ctx, "u1")
+		ok(t, err)
+		cur, err := svc.TrackerTypes(ctx, in.ID)
+		ok(t, err)
+		if len(cur) < 2 {
+			t.Fatalf("seeded types = %+v", cur)
+		}
+		keep := cur[0]
+		keep.Name = " Feature "
+		replace := map[string]string{}
+		for _, gone := range cur[1:] {
+			replace[gone.ID] = keep.ID
+		}
+		saved, err := svc.PutTrackerTypes(ctx, in.ID,
+			[]confstore.TrackerType{{Name: "Spike", ChangeType: trackerport.ChangeChore}, keep}, replace)
+		ok(t, err)
+		same(t, "names", ids(saved, func(r confstore.TrackerType) string { return r.Name }), []string{"Spike", "Feature"})
+		same(t, "a new row is its own remote", saved[0].RemoteID, saved[0].ID)
+		same(t, "the kept one", saved[1].ID, keep.ID)
+
+		spike := saved[0]
+		for _, c := range []struct {
+			name    string
+			rows    []confstore.TrackerType
+			replace map[string]string
+		}{
+			{"no name", []confstore.TrackerType{{Name: " ", ChangeType: trackerport.ChangeFix}}, nil},
+			{"a name twice", []confstore.TrackerType{spike, {Name: "spike", ChangeType: trackerport.ChangeFix}}, nil},
+			{"another tracker's id", []confstore.TrackerType{{ID: "ghost", Name: "Ghost", ChangeType: trackerport.ChangeFix}}, nil},
+			{"one listed twice", []confstore.TrackerType{spike, {ID: spike.ID, Name: "Other", ChangeType: trackerport.ChangeFix}}, nil},
+			{"a replacement for a kept one", []confstore.TrackerType{spike}, map[string]string{spike.ID: spike.ID}},
+			{"a replacement that goes too", []confstore.TrackerType{spike}, map[string]string{keep.ID: keep.ID}},
+		} {
+			_, err := svc.PutTrackerTypes(ctx, in.ID, c.rows, c.replace)
+			is(t, c.name, err, confstore.ErrInvalid)
+		}
+		got, err := svc.TrackerTypes(ctx, in.ID)
+		ok(t, err)
+		same(t, "after the refusals", ids(got, func(r confstore.TrackerType) string { return r.Name }), []string{"Spike", "Feature"})
+	})
+
 	t.Run("an internal ticket is its tracker's own issue", func(t *testing.T) {
 		s := seeded(t, open)
 		svc := service(t, s)
 		in, err := svc.InternalTracker(ctx, "u1")
 		ok(t, err)
 		k, err := svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: " Fix it ", ChangeType: "fix",
-			SourceID: "ghost", SourceKind: "jira", SourceKey: "X-1", RemoteID: "r", SourceURL: "u", SourceType: "Bug"})
+			SourceID: "ghost", SourceKind: "jira", SourceKey: "X-1", RemoteID: "r", SourceURL: "u", SourceType: "Bug"}, confstore.Change{Kind: confstore.AuthorUser})
 		ok(t, err)
 		k = s.ticket(k.ID)
 		same(t, "source", []string{k.SourceID, k.SourceKind, k.RemoteID, k.SourceKey, k.SourceURL, k.SourceType},
@@ -247,13 +324,13 @@ func trackers(t *testing.T, open opener) {
 		remote := remoteTracker(t, svc, "u1", "jira")
 		k, _, err := svc.RecordTicket(ctx, remote.ID, confstore.TicketSeen{RemoteID: "1", Key: "P-1", Title: "Remote"}, "")
 		ok(t, err)
-		upd, err := svc.UpdateTicket(ctx, k.ID, confstore.Ticket{Title: "Mine", Goal: "g", BaseBranch: " feat/x ", Labels: []string{"l"}})
+		upd, err := svc.UpdateTicket(ctx, k.ID, confstore.Ticket{Title: "Mine", Goal: "g", BaseBranch: " feat/x ", Labels: []string{"l"}}, confstore.Change{Kind: confstore.AuthorUser})
 		ok(t, err)
 		same(t, "base branch", upd.BaseBranch, "feat/x")
 		same(t, "the rest", []string{upd.Title, upd.Goal}, []string{"Remote", ""})
 		same(t, "stored", s.ticket(k.ID).BaseBranch, "feat/x")
 		is(t, "status", svc.SetTicketStatus(ctx, k.ID, "any", confstore.ChangedByUser), confstore.ErrInvalid)
-		_, err = svc.SetTicketLabels(ctx, k.ID, []string{"x"}, false)
+		_, err = svc.SetTicketLabels(ctx, k.ID, []string{"x"}, false, confstore.Change{Kind: confstore.AuthorUser})
 		is(t, "labels", err, confstore.ErrInvalid)
 		is(t, "link", svc.AddTicketLink(ctx, k.ID, trackerport.TicketLink{URL: "https://example.test"}), confstore.ErrInvalid)
 		_, _, err = svc.AddTicketComment(ctx, confstore.TicketComment{TicketID: k.ID, Body: "hi", Origin: confstore.CommentUser})

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -401,12 +402,17 @@ func ticketWriteErr(id string, err error) error {
 	return err
 }
 
-func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
+func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket, c confstore.Change) error {
 	labels := t.Labels
 	if labels == nil {
 		labels = []string{}
 	}
-	_, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	_, err = tx.Exec(ctx, `
 		INSERT INTO tickets (id, title, goal, base_branch,
 			source_id, source_kind, source_key, source_url, automation_id, created_at, updated_at, user_id,
 			change_type, source_type, status_id, type_id, labels, remote_id,
@@ -421,7 +427,13 @@ func (s *Store) UpsertTicket(ctx context.Context, t confstore.Ticket) error {
 		t.SourceID, t.SourceKind, t.SourceKey, t.SourceURL, t.AutomationID, t.CreatedAt, t.UpdatedAt, t.UserID,
 		t.ChangeType, t.SourceType, t.StatusID, t.TypeID, labels, t.RemoteID,
 		t.StatusChangedAt, t.StatusChangedBy)
-	return ticketWriteErr(t.ID, err)
+	if err != nil {
+		return ticketWriteErr(t.ID, err)
+	}
+	if err := appendTicketVersion(ctx, tx, t.ID, c, t.UpdatedAt); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *Store) GetTicket(ctx context.Context, id string) (confstore.Ticket, error) {
@@ -442,6 +454,76 @@ func (s *Store) DeleteTicket(ctx context.Context, id string) error {
 		return fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
 	}
 	return nil
+}
+
+// --- ticket versions --------------------------------------------------------
+
+// appendTicketVersionSQL appends a version of ticket $1's stored content,
+// made by ($2, $3, restored from $4) at $5, when it differs from the latest
+// version. The row write before it holds the ticket's row lock, so two
+// writers take their seqs one after the other; the primary key is the last
+// line of defence.
+const appendTicketVersionSQL = `
+	INSERT INTO ticket_versions (ticket_id, seq, title, goal, base_branch, change_type, type_id, labels,
+		author_kind, author_id, restored_from, created_at)
+	SELECT t.id, COALESCE(l.seq, 0) + 1, t.title, t.goal, t.base_branch, t.change_type, COALESCE(t.type_id, ''), t.labels,
+		$2, $3, NULLIF($4::integer, 0), $5
+	  FROM tickets t
+	  LEFT JOIN LATERAL (SELECT * FROM ticket_versions v WHERE v.ticket_id = t.id ORDER BY v.seq DESC LIMIT 1) l ON true
+	 WHERE t.id = $1
+	   AND (l.seq IS NULL OR (l.title, l.goal, l.base_branch, l.change_type, l.type_id, ARRAY(SELECT unnest(l.labels) ORDER BY 1))
+	        IS DISTINCT FROM (t.title, t.goal, t.base_branch, t.change_type, COALESCE(t.type_id, ''), ARRAY(SELECT unnest(t.labels) ORDER BY 1)))`
+
+// appendTicketVersion runs appendTicketVersionSQL in tx, then keeps the
+// newest confstore.MaxTicketVersions.
+func appendTicketVersion(ctx context.Context, tx pgx.Tx, id string, c confstore.Change, at time.Time) error {
+	tag, err := tx.Exec(ctx, appendTicketVersionSQL, id, string(c.Kind), c.AuthorID, c.RestoredFrom, at)
+	var pg *pgconn.PgError
+	switch {
+	case isUnique(err):
+		return fmt.Errorf("ticket %s changed meanwhile; reload and try again: %w", id, confstore.ErrConflict)
+	case errors.As(err, &pg) && pg.Code == "23514":
+		return fmt.Errorf("ticket %s: author kind %q: %w", id, c.Kind, confstore.ErrInvalid)
+	case err != nil:
+		return err
+	case tag.RowsAffected() == 0:
+		return nil
+	}
+	_, err = tx.Exec(ctx, `DELETE FROM ticket_versions WHERE ticket_id = $1
+		AND seq <= (SELECT max(seq) FROM ticket_versions WHERE ticket_id = $1) - $2`, id, confstore.MaxTicketVersions)
+	return err
+}
+
+const ticketVersionCols = `ticket_id, seq, title, goal, base_branch, change_type, type_id, labels, ` +
+	`author_kind, author_id, COALESCE(restored_from, 0), created_at`
+
+func scanTicketVersion(row pgx.Row) (confstore.TicketVersion, error) {
+	var v confstore.TicketVersion
+	err := row.Scan(&v.TicketID, &v.Seq, &v.Title, &v.Goal, &v.BaseBranch, &v.ChangeType, &v.TypeID, &v.Labels,
+		&v.Kind, &v.AuthorID, &v.RestoredFrom, &v.CreatedAt)
+	if len(v.Labels) == 0 {
+		v.Labels = nil
+	}
+	return v, err
+}
+
+func (s *Store) ListTicketVersions(ctx context.Context, ticketID string) ([]confstore.TicketVersion, error) {
+	rows, err := s.pool.Query(ctx, `SELECT `+ticketVersionCols+` FROM ticket_versions
+		WHERE ticket_id=$1 ORDER BY seq DESC`, ticketID)
+	out, err := collect(rows, err, scanTicketVersion)
+	if err != nil || len(out) > 0 {
+		return out, err
+	}
+	return nil, s.ticketExists(ctx, ticketID)
+}
+
+func (s *Store) GetTicketVersion(ctx context.Context, ticketID string, seq int) (confstore.TicketVersion, error) {
+	v, err := scanTicketVersion(s.pool.QueryRow(ctx, `SELECT `+ticketVersionCols+` FROM ticket_versions
+		WHERE ticket_id=$1 AND seq=$2`, ticketID, seq))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return v, fmt.Errorf("ticket version %s/%d: %w", ticketID, seq, confstore.ErrNotFound)
+	}
+	return v, err
 }
 
 // --- flows ------------------------------------------------------------------

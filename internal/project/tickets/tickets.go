@@ -56,34 +56,43 @@ func (f *Factory) log() *slog.Logger {
 }
 
 // Create writes a ticket on its owner's internal tracker (in.UserID: the
-// workshop owner) and claims by's uploads for the TICKET rather than any run
-// (by: the person writing it, who need not be its owner).
+// workshop owner) and claims the uploads of c's author for the TICKET rather
+// than any run (c.AuthorID: the person writing it, who need not be its
+// owner; c is its first version's author too).
 // It lands in the tracker's first status and the type of its change type,
 // unless given others (confstore validates them). A base branch not given
 // stays empty: each run names it by its own workshop's branch format.
-func (f *Factory) Create(ctx context.Context, in confstore.Ticket, by string, attachmentIDs []string) (confstore.Ticket, error) {
+func (f *Factory) Create(ctx context.Context, in confstore.Ticket, c confstore.Change, attachmentIDs []string) (confstore.Ticket, error) {
 	in.ChangeType = normalType(in.ChangeType)
 	if in.ChangeType == "" {
 		in.ChangeType = trackerport.ChangeFeat
 	}
-	t, err := f.Conf.CreateTicket(ctx, in)
+	t, err := f.Conf.CreateTicket(ctx, in, c)
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t, by, attachmentIDs)
+	f.claim(ctx, t, c.AuthorID, attachmentIDs)
 	return t, nil
 }
 
-// Update saves an edit and claims by's newly-attached uploads (already-claimed
-// ids are a no-op, so re-sending the full list is safe). A record takes only
-// its base branch.
-func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket, by string, attachmentIDs []string) (confstore.Ticket, error) {
-	t, err := f.Conf.UpdateTicket(ctx, id, upd)
+// Update saves an edit — a version made by c when the content changes — and
+// claims the newly-attached uploads of c's author (already-claimed ids are a
+// no-op, so re-sending the full list is safe). A record takes only its base
+// branch.
+func (f *Factory) Update(ctx context.Context, id string, upd confstore.Ticket, c confstore.Change, attachmentIDs []string) (confstore.Ticket, error) {
+	t, err := f.Conf.UpdateTicket(ctx, id, upd, c)
 	if err != nil {
 		return confstore.Ticket{}, err
 	}
-	f.claim(ctx, t, by, attachmentIDs)
+	f.claim(ctx, t, c.AuthorID, attachmentIDs)
 	return t, nil
+}
+
+// Restore makes an internal ticket's content its version seq's again, as a
+// new version by c (confstore.Service.RestoreTicketVersion); a remote
+// record's is its tracker's (ErrInvalid).
+func (f *Factory) Restore(ctx context.Context, id string, seq int, c confstore.Change) (confstore.Ticket, error) {
+	return f.Conf.RestoreTicketVersion(ctx, id, seq, c)
 }
 
 // Delete removes the ticket AND its attachment rows — the fix for the old

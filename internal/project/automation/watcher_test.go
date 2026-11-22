@@ -547,7 +547,7 @@ func TestCronRefusesATicketTheWorkshopNoLongerShows(t *testing.T) {
 	}
 	theirs := tk
 	theirs.UserID = "someone-else"
-	if err := h.conf.DB().UpsertTicket(ctx, theirs); err != nil {
+	if err := h.conf.DB().UpsertTicket(ctx, theirs, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.AddDate(0, 0, 1)
@@ -557,7 +557,7 @@ func TestCronRefusesATicketTheWorkshopNoLongerShows(t *testing.T) {
 	}
 
 	// The workshop's own ticket again: the next slot fires.
-	if err := h.conf.DB().UpsertTicket(ctx, tk); err != nil {
+	if err := h.conf.DB().UpsertTicket(ctx, tk, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		t.Fatal(err)
 	}
 	h.now = h.now.AddDate(0, 0, 1)

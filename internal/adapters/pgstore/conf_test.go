@@ -75,7 +75,7 @@ func TestAutomationRoundtripAndCascade(t *testing.T) {
 	}
 	tk := confstore.Ticket{ID: "tk1", Title: "T", AutomationID: "au1", CreatedAt: now, UpdatedAt: now,
 		ChangeType: trackerport.ChangeFix, SourceType: "Bug", SourceID: "int1", SourceKind: "jira", RemoteID: "10001"}
-	if err := s.UpsertTicket(ctx, tk); err != nil {
+	if err := s.UpsertTicket(ctx, tk, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := s.GetTicket(ctx, "tk1"); err != nil || got.AutomationID != "au1" || got.ChangeType != trackerport.ChangeFix || got.SourceType != "Bug" {
@@ -387,7 +387,7 @@ func TestDeleteTicketSource(t *testing.T) {
 	}
 	tk := confstore.Ticket{ID: "tk1", Title: "T", SourceID: "jira1", SourceKind: "jira", RemoteID: "10001", SourceKey: "J-1",
 		TypeID: ty.ID, ChangeType: trackerport.ChangeFix, CreatedAt: now, UpdatedAt: now}
-	if err := s.UpsertTicket(ctx, tk); err != nil {
+	if err := s.UpsertTicket(ctx, tk, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.DeleteIntegration(ctx, "jira1"); !errors.Is(err, confstore.ErrReferenced) || !strings.Contains(err.Error(), "web") {

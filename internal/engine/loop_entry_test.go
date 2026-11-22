@@ -363,3 +363,35 @@ main:
 		t.Errorf("state = %s: %v", s, eventTypes(h.events(t, id)))
 	}
 }
+
+// A question an agent raised whose write failed is on no record, so the loop
+// stops there rather than wait on it; recovery runs the stage again.
+func TestAQuestionThatCouldNotBeRecordedStopsTheLoop(t *testing.T) {
+	store := &flakyStore{typ: event.TypePingRaised}
+	store.left.Store(1)
+	h := newHarnessOn(t, func(m *event.MemStore) event.Store { store.Store = m; return store }, mustFlow(t, askFlowDoc))
+	runIDCh := make(chan string, 1)
+	var calls atomic.Int32
+	h.runner.RunFunc = func(_ context.Context, _ fake.RunCall) (agentport.AgentResult, error) {
+		if calls.Add(1) == 1 {
+			_, _ = h.e.RaisePing(<-runIDCh, "clarification", "one endpoint or two?", "", nil, nil)
+		}
+		return agentport.AgentResult{TurnsUsed: 1, Session: "sess-1"}, nil
+	}
+	id, err := h.e.CreateRun(context.Background(), runinput.Ticket{Title: "T"}, "ask", testProject)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runIDCh <- id
+	h.e.Wait(id)
+	if _, ok := findPayload[*event.PingRaised](h.events(t, id)); ok {
+		t.Fatal("a refused write reached the log")
+	}
+	if err := h.e.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.e.Wait(id)
+	if s := h.view(t, id).State; s != run.Completed || calls.Load() != 2 {
+		t.Errorf("state = %s after %d invocations: %v", s, calls.Load(), eventTypes(h.events(t, id)))
+	}
+}

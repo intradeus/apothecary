@@ -90,7 +90,7 @@ each doing one job.
   never used is reaped by the idle sweep.
 - **Settings in the System hub.** `/system/assistant` holds the harness,
   the model and the skillsets (`assistant_choices.skillsets`, migration
-  `0017_assistant_skillsets`); the drawer's settings button leads there.
+  `0018_assistant_skillsets`); the drawer's settings button leads there.
   A choice names the person's own skillsets only. A new session pins them
   (`assistant_sessions.skillsets`), resolving each ref on its own and
   leaving out one deleted since; every turn installs the pinned skills into

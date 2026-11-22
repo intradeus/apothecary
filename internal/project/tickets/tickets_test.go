@@ -214,7 +214,7 @@ func TestCreateWritesAnInternalTicket(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, owner, []string{up.ID})
+	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, []string{up.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,12 +243,12 @@ func TestTicketFilesAreTheWritersUploads(t *testing.T) {
 		return a
 	}
 	mine, owners := save("collab", "mine.md"), save(owner, "owners.md")
-	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, "collab", []string{mine.ID, owners.ID})
+	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: "collab"}, []string{mine.ID, owners.ID})
 	if err != nil {
 		t.Fatal(err)
 	}
 	later := save("collab", "later.md")
-	if _, err := w.f.Update(ctx, tk.ID, confstore.Ticket{Title: "T", Goal: "g"}, "collab", []string{mine.ID, later.ID}); err != nil {
+	if _, err := w.f.Update(ctx, tk.ID, confstore.Ticket{Title: "T", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: "collab"}, []string{mine.ID, later.ID}); err != nil {
 		t.Fatal(err)
 	}
 	if tk.UserID != owner {
@@ -268,11 +268,11 @@ func TestTicketFilesAreTheWritersUploads(t *testing.T) {
 // is refused.
 func TestChangeTypeIsValidated(t *testing.T) {
 	w := newWorld(t, devSource())
-	_, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Title: "T", Goal: "g", ChangeType: "bugfix"}, owner, nil)
+	_, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Title: "T", Goal: "g", ChangeType: "bugfix"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 	if !errors.Is(err, confstore.ErrInvalid) {
 		t.Errorf("err = %v, want invalid", err)
 	}
-	tk, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Title: "Crash", Goal: "g", ChangeType: "FIX"}, owner, nil)
+	tk, err := w.f.Create(context.Background(), confstore.Ticket{UserID: owner, Title: "Crash", Goal: "g", ChangeType: "FIX"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 	if err != nil || tk.ChangeType != trackerport.ChangeFix {
 		t.Errorf("ticket = %+v (%v)", tk, err)
 	}
@@ -314,7 +314,7 @@ func TestRecordIsOncePerIssue(t *testing.T) {
 func TestUpdateOfARecordTakesTheBaseBranch(t *testing.T) {
 	w := newWorld(t, devSource())
 	rec := w.record(t)
-	upd, err := w.f.Update(context.Background(), rec.ID, confstore.Ticket{Title: "renamed", BaseBranch: "feat/elsewhere"}, owner, nil)
+	upd, err := w.f.Update(context.Background(), rec.ID, confstore.Ticket{Title: "renamed", BaseBranch: "feat/elsewhere"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
