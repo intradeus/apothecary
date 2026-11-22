@@ -38,6 +38,8 @@ func RunContract(t *testing.T, open func(t *testing.T) Fixture) {
 	t.Run("a ticket counts in every workshop that ran it", func(t *testing.T) { runTicketAcrossWorkshops(t, open(t)) })
 	t.Run("dashboards", func(t *testing.T) { runDashboards(t, open(t)) })
 	t.Run("scorecards", func(t *testing.T) { runScorecards(t, open(t)) })
+	t.Run("dashboard versions", func(t *testing.T) { runDashboardVersions(t, open(t)) })
+	t.Run("scorecard versions", func(t *testing.T) { runScorecardVersions(t, open(t)) })
 }
 
 // The seeded people: alice has three runs on one ticket (an abandoned
@@ -458,10 +460,10 @@ func runDashboards(t *testing.T, f Fixture) {
 			Measures: []analytics.MeasureRef{{Field: "cost_usd", Agg: analytics.AggSum}},
 			Time:     analytics.TimeRange{Bucket: analytics.BucketWeek}}}},
 		CreatedAt: at(0), UpdatedAt: at(0)}
-	if err := st.PutDashboard(ctx, d); err != nil {
+	if err := st.PutDashboard(ctx, d, byAlice); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.PutDashboard(ctx, analytics.Dashboard{ID: "d2", UserID: bob, Name: "His", CreatedAt: at(1), UpdatedAt: at(1)}); err != nil {
+	if err := st.PutDashboard(ctx, analytics.Dashboard{ID: "d2", UserID: bob, Name: "His", CreatedAt: at(1), UpdatedAt: at(1)}, byAlice); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetDashboard(ctx, "d1")
@@ -476,7 +478,7 @@ func runDashboards(t *testing.T, f Fixture) {
 		t.Errorf("nobody's = %+v", list)
 	}
 	// A replace keeps the owner and the creation time, whatever it is handed.
-	if err := st.PutDashboard(ctx, analytics.Dashboard{ID: "d1", UserID: bob, Name: "Renamed", CreatedAt: at(5), UpdatedAt: at(6)}); err != nil {
+	if err := st.PutDashboard(ctx, analytics.Dashboard{ID: "d1", UserID: bob, Name: "Renamed", CreatedAt: at(5), UpdatedAt: at(6)}, byAlice); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.GetDashboard(ctx, "d1")
@@ -512,7 +514,7 @@ func runScorecards(t *testing.T, f Fixture) {
 		{Measure: analytics.MeasureRef{Field: "cost_usd", Agg: analytics.AggMedian}, Direction: analytics.DirLower, Weight: 0.7},
 		{Measure: analytics.MeasureRef{Field: "success_rate"}, Direction: analytics.DirHigher, Weight: 0.3},
 	}, CreatedAt: at(0), UpdatedAt: at(0)}
-	if err := st.PutScorecard(ctx, sc); err != nil {
+	if err := st.PutScorecard(ctx, sc, byAlice); err != nil {
 		t.Fatal(err)
 	}
 	got, err := st.GetScorecard(ctx, "s1")
@@ -525,7 +527,7 @@ func runScorecards(t *testing.T, f Fixture) {
 	if list, _ := st.ListScorecards(ctx, bob); len(list) != 0 {
 		t.Errorf("bob's = %+v", list)
 	}
-	if err := st.PutScorecard(ctx, analytics.Scorecard{ID: "s1", UserID: bob, Name: "Renamed", CreatedAt: at(5), UpdatedAt: at(6)}); err != nil {
+	if err := st.PutScorecard(ctx, analytics.Scorecard{ID: "s1", UserID: bob, Name: "Renamed", CreatedAt: at(5), UpdatedAt: at(6)}, byAlice); err != nil {
 		t.Fatal(err)
 	}
 	got, _ = st.GetScorecard(ctx, "s1")
@@ -537,5 +539,157 @@ func runScorecards(t *testing.T, f Fixture) {
 	}
 	if _, err := st.GetScorecard(ctx, "s1"); !errors.Is(err, analytics.ErrNotFound) {
 		t.Errorf("deleted = %v", err)
+	}
+}
+
+var byAlice = analytics.Change{Kind: analytics.AuthorUser, AuthorID: alice}
+
+func seqs[V any](vs []V, seq func(V) int) []int {
+	out := make([]int, len(vs))
+	for i, v := range vs {
+		out[i] = seq(v)
+	}
+	return out
+}
+
+func dashSeq(v analytics.DashboardVersion) int { return v.Seq }
+func cardSeq(v analytics.ScorecardVersion) int { return v.Seq }
+
+func runDashboardVersions(t *testing.T, f Fixture) {
+	ctx := context.Background()
+	st := f.Store
+	n := 0
+	s := &analytics.Service{Store: st, NewID: func() string { return "d1" }, Clock: func() time.Time { n++; return at(n % 60) }}
+	if _, err := st.ListDashboardVersions(ctx, "nope"); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("missing list = %v", err)
+	}
+	in := analytics.DashboardInput{Name: "Mine", Filters: []string{"flow_name"}, Panels: []analytics.Panel{{ID: "p1", Title: "Spend", Viz: "bar", Width: 6,
+		Query: analytics.Query{Grain: analytics.GrainRuns, GroupBy: []string{"flow_name"}, Measures: []analytics.MeasureRef{{Field: "cost_usd", Agg: analytics.AggSum}}}}}}
+	if _, err := s.CreateDashboard(ctx, alice, in, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	// The same content again (and once more, round-tripped through the
+	// store, as jsonb hands it back) is no version.
+	if _, err := s.UpdateDashboard(ctx, "d1", in, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := st.GetDashboard(ctx, "d1")
+	if err := st.PutDashboard(ctx, cur, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	if vs, err := st.ListDashboardVersions(ctx, "d1"); err != nil || len(vs) != 1 {
+		t.Fatalf("identical saves = %+v, %v", vs, err)
+	}
+	renamed := in
+	renamed.Name = "Renamed"
+	assistant := analytics.Change{Kind: analytics.AuthorAssistant, AuthorID: alice}
+	if _, err := s.UpdateDashboard(ctx, "d1", renamed, assistant); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.ListDashboardVersions(ctx, "d1")
+	if err != nil || !slices.Equal(seqs(vs, dashSeq), []int{2, 1}) || vs[0].Name != "Renamed" || vs[0].Kind != analytics.AuthorAssistant || vs[1].Kind != analytics.AuthorUser || vs[1].AuthorID != alice {
+		t.Fatalf("two saves = %+v, %v", vs, err)
+	}
+	v1, err := st.GetDashboardVersion(ctx, "d1", 1)
+	if err != nil || v1.Name != "Mine" || len(v1.Panels) != 1 || v1.Panels[0].Title != "Spend" || !slices.Equal(v1.Filters, in.Filters) {
+		t.Errorf("version 1 = %+v, %v", v1, err)
+	}
+	if _, err := st.GetDashboardVersion(ctx, "d1", 9); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("missing seq = %v", err)
+	}
+	// A restore is a new version equal to the old content.
+	if _, err := s.RestoreDashboardVersion(ctx, "d1", 1, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	v3, err := st.GetDashboardVersion(ctx, "d1", 3)
+	if err != nil || v3.Name != "Mine" || v3.RestoredFrom != 1 || len(v3.Panels) != 1 {
+		t.Errorf("restored = %+v, %v", v3, err)
+	}
+	if got, _ := st.GetDashboard(ctx, "d1"); got.Name != "Mine" {
+		t.Errorf("after restore = %+v", got)
+	}
+	// 101 more changes keep the newest 100; seqs are never reused.
+	for i := range 101 {
+		next := in
+		next.Name = fmt.Sprintf("n%d", i)
+		if _, err := s.UpdateDashboard(ctx, "d1", next, byAlice); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vs, err = st.ListDashboardVersions(ctx, "d1")
+	if err != nil || len(vs) != 100 || vs[0].Seq != 104 || vs[99].Seq != 5 {
+		t.Fatalf("pruned = %d versions (%v), %v", len(vs), seqs(vs, dashSeq), err)
+	}
+	if _, err := st.GetDashboardVersion(ctx, "d1", 1); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("pruned oldest = %v", err)
+	}
+	if err := st.DeleteDashboard(ctx, "d1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetDashboardVersion(ctx, "d1", 104); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("deleted dashboard's version = %v", err)
+	}
+	if _, err := st.ListDashboardVersions(ctx, "d1"); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("deleted dashboard's list = %v", err)
+	}
+}
+
+func runScorecardVersions(t *testing.T, f Fixture) {
+	ctx := context.Background()
+	st := f.Store
+	s := &analytics.Service{Store: st, NewID: func() string { return "s1" }, Clock: func() time.Time { return at(1) }}
+	if _, err := st.ListScorecardVersions(ctx, "nope"); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("missing list = %v", err)
+	}
+	in := analytics.ScorecardInput{Name: "Cheap", Terms: []analytics.Term{
+		{Measure: analytics.MeasureRef{Field: "cost_usd", Agg: analytics.AggMedian}, Direction: analytics.DirLower, Weight: 1}}}
+	if _, err := s.CreateScorecard(ctx, alice, in, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.UpdateScorecard(ctx, "s1", in, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	cur, _ := st.GetScorecard(ctx, "s1")
+	if err := st.PutScorecard(ctx, cur, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	if vs, err := st.ListScorecardVersions(ctx, "s1"); err != nil || len(vs) != 1 {
+		t.Fatalf("identical saves = %+v, %v", vs, err)
+	}
+	heavier := analytics.ScorecardInput{Name: "Cheap", Terms: []analytics.Term{
+		{Measure: analytics.MeasureRef{Field: "cost_usd", Agg: analytics.AggMedian}, Direction: analytics.DirLower, Weight: 2}}}
+	if _, err := s.UpdateScorecard(ctx, "s1", heavier, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	vs, err := st.ListScorecardVersions(ctx, "s1")
+	if err != nil || !slices.Equal(seqs(vs, cardSeq), []int{2, 1}) || vs[0].Terms[0].Weight != 2 || vs[1].Terms[0].Weight != 1 {
+		t.Fatalf("two saves = %+v, %v", vs, err)
+	}
+	if _, err := st.GetScorecardVersion(ctx, "s1", 9); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("missing seq = %v", err)
+	}
+	if _, err := s.RestoreScorecardVersion(ctx, "s1", 1, byAlice); err != nil {
+		t.Fatal(err)
+	}
+	v3, err := st.GetScorecardVersion(ctx, "s1", 3)
+	if err != nil || v3.Terms[0].Weight != 1 || v3.RestoredFrom != 1 {
+		t.Errorf("restored = %+v, %v", v3, err)
+	}
+	for i := range 101 {
+		next := in
+		next.Name = fmt.Sprintf("n%d", i)
+		if _, err := s.UpdateScorecard(ctx, "s1", next, byAlice); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vs, err = st.ListScorecardVersions(ctx, "s1")
+	if err != nil || len(vs) != 100 || vs[0].Seq != 104 || vs[99].Seq != 5 {
+		t.Fatalf("pruned = %d versions (%v), %v", len(vs), seqs(vs, cardSeq), err)
+	}
+	if err := st.DeleteScorecard(ctx, "s1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.GetScorecardVersion(ctx, "s1", 104); !errors.Is(err, analytics.ErrNotFound) {
+		t.Errorf("deleted scorecard's version = %v", err)
 	}
 }

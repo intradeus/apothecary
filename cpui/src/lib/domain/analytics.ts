@@ -7,6 +7,7 @@
 // here is one the catalog listed; nothing is free-form SQL.
 
 import type { RunState } from './run';
+import type { VersionAuthor } from './ticket';
 
 export type Grain = 'runs' | 'attempts' | 'skillsets' | 'pings' | 'tickets';
 
@@ -215,3 +216,119 @@ export const measureKey = (m: MeasureRef): string => (m.agg ? `${m.field}/${m.ag
 
 /** Built-in dashboards and scorecards carry this id prefix. */
 export const isBuiltinId = (id: string): boolean => id.startsWith('builtin-');
+
+/** How many panels a version added, removed and changed against the one
+ *  before it; reordered: the panels both hold stand in another order. */
+export interface PanelChanges {
+	added: number;
+	removed: number;
+	changed: number;
+	reordered?: boolean;
+}
+
+/** One entry of a dashboard's history, newest first. */
+export interface DashboardVersionSummary {
+	seq: number;
+	name: string;
+	author: VersionAuthor;
+	/** The version this one restored. */
+	restoredFrom?: number;
+	createdAt: string;
+	/** What differs from the version before it: name, filters, panels. */
+	changed: string[];
+	panelChanges?: PanelChanges;
+	/** The oldest version kept: where the history begins. */
+	oldest: boolean;
+}
+
+/** One saved state of a dashboard, in full. */
+export interface DashboardVersion {
+	seq: number;
+	name: string;
+	filters: string[];
+	panels: Panel[];
+	author: VersionAuthor;
+	restoredFrom?: number;
+	createdAt: string;
+}
+
+export type PanelField = 'title' | 'query' | 'viz' | 'width';
+const PANEL_FIELDS: readonly PanelField[] = ['title', 'query', 'viz', 'width'];
+
+/** A panel kept under the same id with different content. */
+export interface PanelDiff {
+	id: string;
+	/** Its title in the version (the one shown). */
+	title: string;
+	fields: PanelField[];
+}
+
+/** A version against the current dashboard. "In version" is what a restore
+ *  brings back, "in current" what it takes away. */
+export interface DashboardComparison {
+	/** Set when the names differ. */
+	name?: { version: string; current: string };
+	filtersOnlyInVersion: string[];
+	filtersOnlyInCurrent: string[];
+	/** Set when the filters both hold stand in another order: the version's. */
+	filterOrder?: string[];
+	panelsOnlyInVersion: Panel[];
+	panelsOnlyInCurrent: Panel[];
+	panelsChanged: PanelDiff[];
+	/** Set when the panels both hold stand in another order: the version's. */
+	panelOrder?: Panel[];
+}
+
+const panelField = (a: Panel, b: Panel, f: PanelField): boolean =>
+	f === 'query' ? JSON.stringify(a.query) !== JSON.stringify(b.query) : a[f] !== b[f];
+
+/** The items of a both hold, in a's order, when b holds them in another. */
+function reordered<T>(a: T[], b: T[], key: (x: T) => string): T[] | undefined {
+	const inA = new Set(a.map(key));
+	const inB = new Set(b.map(key));
+	const keptA = a.filter((x) => inB.has(key(x)));
+	const keptB = b.filter((x) => inA.has(key(x)));
+	return keptA.some((x, i) => key(x) !== key(keptB[i])) ? keptA : undefined;
+}
+
+/** Compares a version with the current dashboard, panels by id. Order
+ *  counts: the grid and the filter bar show theirs in it. */
+export function compareDashboard(
+	version: Pick<DashboardVersion, 'name' | 'filters' | 'panels'>,
+	current: Pick<Dashboard, 'name' | 'filters' | 'panels'>
+): DashboardComparison {
+	const cur = new Map(current.panels.map((p) => [p.id, p]));
+	const ver = new Set(version.panels.map((p) => p.id));
+	const panelsChanged: PanelDiff[] = [];
+	for (const p of version.panels) {
+		const c = cur.get(p.id);
+		if (!c) continue;
+		const fields = PANEL_FIELDS.filter((f) => panelField(p, c, f));
+		if (fields.length) panelsChanged.push({ id: p.id, title: p.title, fields });
+	}
+	const filterOrder = reordered(version.filters, current.filters, (f) => f);
+	const panelOrder = reordered(version.panels, current.panels, (p) => p.id);
+	return {
+		...(version.name !== current.name
+			? { name: { version: version.name, current: current.name } }
+			: {}),
+		filtersOnlyInVersion: version.filters.filter((f) => !current.filters.includes(f)),
+		filtersOnlyInCurrent: current.filters.filter((f) => !version.filters.includes(f)),
+		...(filterOrder ? { filterOrder } : {}),
+		panelsOnlyInVersion: version.panels.filter((p) => !cur.has(p.id)),
+		panelsOnlyInCurrent: current.panels.filter((p) => !ver.has(p.id)),
+		panelsChanged,
+		...(panelOrder ? { panelOrder } : {})
+	};
+}
+
+/** True when the comparison found nothing. */
+export const sameDashboard = (c: DashboardComparison): boolean =>
+	!c.name &&
+	!c.filtersOnlyInVersion.length &&
+	!c.filtersOnlyInCurrent.length &&
+	!c.filterOrder &&
+	!c.panelsOnlyInVersion.length &&
+	!c.panelsOnlyInCurrent.length &&
+	!c.panelsChanged.length &&
+	!c.panelOrder;

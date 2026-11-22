@@ -297,12 +297,17 @@ func (s *Store) SetTicketStatus(ctx context.Context, id, statusID, by string, at
 	return nil
 }
 
-func (s *Store) SetTicketLabels(ctx context.Context, id string, labels []string, union bool, at time.Time) ([]string, error) {
+func (s *Store) SetTicketLabels(ctx context.Context, id string, labels []string, union bool, at time.Time, c confstore.Change) ([]string, error) {
 	if labels == nil {
 		labels = []string{}
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
 	var out []string
-	err := s.pool.QueryRow(ctx, `
+	err = tx.QueryRow(ctx, `
 		UPDATE tickets SET updated_at=$4, labels = CASE WHEN $3 THEN
 				ARRAY(SELECT l FROM unnest(labels || $2::text[]) WITH ORDINALITY AS u(l, n) GROUP BY l ORDER BY min(n))
 			ELSE $2::text[] END
@@ -310,18 +315,32 @@ func (s *Store) SetTicketLabels(ctx context.Context, id string, labels []string,
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
 	}
+	if err != nil {
+		return nil, err
+	}
+	if err := appendTicketVersion(ctx, tx, id, c, at); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
 	if len(out) == 0 {
 		out = nil
 	}
-	return out, err
+	return out, nil
 }
 
-func (s *Store) SetTicketSeen(ctx context.Context, id string, seen confstore.TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time) error {
+func (s *Store) SetTicketSeen(ctx context.Context, id string, seen confstore.TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time, c confstore.Change) error {
 	labels := seen.Labels
 	if labels == nil {
 		labels = []string{}
 	}
-	tag, err := s.pool.Exec(ctx, `
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	tag, err := tx.Exec(ctx, `
 		UPDATE tickets SET title=$2, goal=$3, source_key=$4, source_url=$5, source_type=$6,
 			type_id=NULLIF($7,''), change_type=$8, labels=$9, updated_at=$10
 		 WHERE id=$1`,
@@ -332,7 +351,10 @@ func (s *Store) SetTicketSeen(ctx context.Context, id string, seen confstore.Tic
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("ticket %s: %w", id, confstore.ErrNotFound)
 	}
-	return nil
+	if err := appendTicketVersion(ctx, tx, id, c, at); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // --- comments and links ------------------------------------------------------

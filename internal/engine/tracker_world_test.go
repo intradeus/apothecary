@@ -58,7 +58,7 @@ func newTicketWorld(t *testing.T, remote *fake.TicketSource) *ticketWorld {
 func (w *ticketWorld) linked(id, key string) {
 	w.t.Helper()
 	if err := w.conf.DB().UpsertTicket(context.Background(), confstore.Ticket{ID: id, Title: "T",
-		SourceID: remoteIntegration, SourceKind: "fake", SourceKey: key, RemoteID: key, CreatedAt: time.Now(), UpdatedAt: time.Now()}); err != nil {
+		SourceID: remoteIntegration, SourceKind: "fake", SourceKey: key, RemoteID: key, CreatedAt: time.Now(), UpdatedAt: time.Now()}, confstore.Change{Kind: confstore.AuthorUser}); err != nil {
 		w.t.Fatal(err)
 	}
 }
@@ -85,7 +85,7 @@ func (w *ticketWorld) newHandWritten(id string) (confstore.Ticket, error) {
 	}
 	t := confstore.Ticket{ID: id, Title: "T", StatusID: todo.ID, SourceID: in.ID, SourceKind: confstore.KindInternal, RemoteID: id,
 		CreatedAt: time.Now(), UpdatedAt: time.Now()}
-	return t, w.conf.DB().UpsertTicket(ctx, t)
+	return t, w.conf.DB().UpsertTicket(ctx, t, confstore.Change{Kind: confstore.AuthorUser})
 }
 
 // status is the status of a tracker named name.

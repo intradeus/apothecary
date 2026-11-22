@@ -91,7 +91,8 @@ describe('TicketForm, creating', () => {
 			baseBranch: '',
 			changeType: 'feat',
 			typeId: undefined,
-			attachmentIds: []
+			attachmentIds: [],
+			assisted: false
 		});
 		expect(onsaved).toHaveBeenCalledWith(saved);
 		expect(toasts.list.at(-1)?.text).toBe('Ticket created');
@@ -282,7 +283,8 @@ describe('TicketForm, editing', () => {
 			baseBranch: 'feat/old',
 			changeType: 'fix',
 			typeId: 'ty',
-			attachmentIds: ['a1', 'a2']
+			attachmentIds: ['a1', 'a2'],
+			assisted: false
 		});
 		expect(api.tickets.create).not.toHaveBeenCalled();
 		expect(onsaved).toHaveBeenCalledWith(saved);
@@ -340,7 +342,7 @@ describe('TicketForm, the assistant', () => {
 		await userEvent.click(create());
 		await waitFor(() => expect(onsaved).toHaveBeenCalled());
 		expect(api.assistant.setSubject).toHaveBeenCalledWith('s1', 'APO-7');
-		expect(lastBody()).toMatchObject({ title: 'T', goal: 'G' });
+		expect(lastBody()).toMatchObject({ title: 'T', goal: 'G', assisted: true });
 	});
 
 	it('still hands the ticket over when the conversation cannot move', async () => {
@@ -361,6 +363,7 @@ describe('TicketForm, the assistant', () => {
 		await userEvent.click(create());
 		await waitFor(() => expect(onsaved).toHaveBeenCalled());
 		expect(api.assistant.setSubject).not.toHaveBeenCalled();
+		expect(lastBody().assisted).toBe(false);
 	});
 
 	it('is about the ticket’s key when editing one', async () => {

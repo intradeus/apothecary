@@ -37,6 +37,7 @@ func RunDBContract(t *testing.T, open func(t *testing.T) confstore.DB) {
 	t.Run("project deletion", func(t *testing.T) { projectDeletion(t, open) })
 	t.Run("members", func(t *testing.T) { members(t, open) })
 	t.Run("tickets", func(t *testing.T) { tickets(t, open) })
+	t.Run("ticket versions", func(t *testing.T) { ticketVersions(t, open) })
 	t.Run("trackers", func(t *testing.T) { trackers(t, open) })
 	t.Run("flows", func(t *testing.T) { flows(t, open) })
 	t.Run("flow versions", func(t *testing.T) { flowVersions(t, open) })
@@ -568,7 +569,7 @@ func integrations(t *testing.T, open opener) {
 		trackerLists(t, s)
 		k := fullTicket()
 		k.StatusID = ""
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		p := s.project("p1")
 		p.TicketSourceID = "i9"
 		ok(t, s.UpsertProject(ctx, p))
@@ -1040,7 +1041,7 @@ func tickets(t *testing.T, open opener) {
 		trackerLists(t, s)
 		k := fullTicket()
 		allSet(t, k)
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		same(t, "get", s.ticket(k.ID), k)
 		byRemote, err := s.GetTicketByRemote(ctx, "i9", "10001")
 		ok(t, err)
@@ -1054,16 +1055,16 @@ func tickets(t *testing.T, open opener) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		k := fullTicket()
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		dup := fullTicket()
 		dup.ID, dup.RemoteID, dup.CreatedAt, dup.UpdatedAt = "k2", "dup:k2", at(3), at(3)
-		ok(t, s.UpsertTicket(ctx, dup))
+		ok(t, s.UpsertTicket(ctx, dup, confstore.Change{Kind: confstore.AuthorUser}))
 		got, err := s.GetTicketBySourceKey(ctx, "i9", "PROJ-1")
 		ok(t, err)
 		same(t, "over a placeholder", got.ID, "k1")
 		newer := fullTicket()
 		newer.ID, newer.RemoteID, newer.CreatedAt, newer.UpdatedAt = "k3", "10002", at(4), at(4)
-		ok(t, s.UpsertTicket(ctx, newer))
+		ok(t, s.UpsertTicket(ctx, newer, confstore.Change{Kind: confstore.AuthorUser}))
 		got, err = s.GetTicketBySourceKey(ctx, "i9", "PROJ-1")
 		ok(t, err)
 		same(t, "newest", got.ID, "k3")
@@ -1077,7 +1078,7 @@ func tickets(t *testing.T, open opener) {
 	// feat for "" is the Service's.
 	t.Run("an empty change type stays empty", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0), confstore.Change{Kind: confstore.AuthorUser}))
 		same(t, "change type", s.ticket("k1").ChangeType, "")
 	})
 
@@ -1088,16 +1089,16 @@ func tickets(t *testing.T, open opener) {
 		_, err = s.GetTicketByRemote(ctx, "i9", "nope")
 		is(t, "by remote", err, confstore.ErrNotFound)
 		is(t, "delete", s.DeleteTicket(ctx, "nope"), confstore.ErrNotFound)
-		is(t, "seen", s.SetTicketSeen(ctx, "nope", confstore.TicketSeen{Title: "t"}, "", trackerport.ChangeFeat, at(1)), confstore.ErrNotFound)
+		is(t, "seen", s.SetTicketSeen(ctx, "nope", confstore.TicketSeen{Title: "t"}, "", trackerport.ChangeFeat, at(1), confstore.Change{Kind: confstore.AuthorSync}), confstore.ErrNotFound)
 	})
 
 	t.Run("its status and type must exist", func(t *testing.T) {
 		s := seeded(t, open)
 		k := ticket("k1", "i1", "u1", 0)
 		k.StatusID = "ghost"
-		is(t, "status", s.UpsertTicket(ctx, k), confstore.ErrInvalid)
+		is(t, "status", s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}), confstore.ErrInvalid)
 		k.StatusID, k.TypeID = "", "ghost"
-		is(t, "type", s.UpsertTicket(ctx, k), confstore.ErrInvalid)
+		is(t, "type", s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}), confstore.ErrInvalid)
 		if _, err := s.GetTicket(ctx, "k1"); !errors.Is(err, confstore.ErrNotFound) {
 			t.Errorf("a refused insert landed: %v", err)
 		}
@@ -1107,9 +1108,9 @@ func tickets(t *testing.T, open opener) {
 	// it, not the store.
 	t.Run("the owner is stored as given, on insert and on update", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "someone", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "someone", 0), confstore.Change{Kind: confstore.AuthorUser}))
 		same(t, "insert", s.ticket("k1").UserID, "someone")
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "else", 1)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "else", 1), confstore.Change{Kind: confstore.AuthorUser}))
 		same(t, "update", s.ticket("k1").UserID, "else")
 	})
 
@@ -1117,9 +1118,9 @@ func tickets(t *testing.T, open opener) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		in := fullTicket()
-		ok(t, s.UpsertTicket(ctx, in))
+		ok(t, s.UpsertTicket(ctx, in, confstore.Change{Kind: confstore.AuthorUser}))
 		upd := ticket("k1", "i8", "u2", 70)
-		ok(t, s.UpsertTicket(ctx, upd))
+		ok(t, s.UpsertTicket(ctx, upd, confstore.Change{Kind: confstore.AuthorUser}))
 		want := upd
 		want.CreatedAt = in.CreatedAt
 		same(t, "after update", s.ticket("k1"), want)
@@ -1131,18 +1132,18 @@ func tickets(t *testing.T, open opener) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		a, b := fullTicket(), fullTicket()
-		ok(t, s.UpsertTicket(ctx, a))
+		ok(t, s.UpsertTicket(ctx, a, confstore.Change{Kind: confstore.AuthorUser}))
 		b.ID, b.UserID, b.SourceKey = "k2", "u2", "OTHER-1"
-		is(t, "another owner", s.UpsertTicket(ctx, b), confstore.ErrConflict)
+		is(t, "another owner", s.UpsertTicket(ctx, b, confstore.Change{Kind: confstore.AuthorUser}), confstore.ErrConflict)
 		if _, err := s.GetTicket(ctx, "k2"); !errors.Is(err, confstore.ErrNotFound) {
 			t.Errorf("a refused insert landed: %v", err)
 		}
 		c := ticket("k3", "i1", "u1", 1)
-		ok(t, s.UpsertTicket(ctx, c))
+		ok(t, s.UpsertTicket(ctx, c, confstore.Change{Kind: confstore.AuthorUser}))
 		c.RemoteID = "10001"
-		ok(t, s.UpsertTicket(ctx, c)) // the same id on another tracker
+		ok(t, s.UpsertTicket(ctx, c, confstore.Change{Kind: confstore.AuthorUser})) // the same id on another tracker
 		c.SourceID = "i9"
-		is(t, "an update onto a held issue", s.UpsertTicket(ctx, c), confstore.ErrConflict)
+		is(t, "an update onto a held issue", s.UpsertTicket(ctx, c, confstore.Change{Kind: confstore.AuthorUser}), confstore.ErrConflict)
 		same(t, "after the refused update", s.ticket("k3").SourceID, "i1")
 	})
 
@@ -1151,11 +1152,11 @@ func tickets(t *testing.T, open opener) {
 		for i, id := range []string{"r1", "r2", "r3"} {
 			k := ticket("k"+id, "i9", "u1", i)
 			k.RemoteID = id
-			ok(t, s.UpsertTicket(ctx, k))
+			ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		}
 		other := ticket("kx", "i8", "u1", 0)
 		other.RemoteID = "r1"
-		ok(t, s.UpsertTicket(ctx, other))
+		ok(t, s.UpsertTicket(ctx, other, confstore.Change{Kind: confstore.AuthorUser}))
 		list, err := s.ListTicketsByRemote(ctx, "i9", []string{"r3", "r1", "nope"})
 		ok(t, err)
 		got := ids(list, func(r confstore.Ticket) string { return r.ID })
@@ -1177,14 +1178,14 @@ func tickets(t *testing.T, open opener) {
 		add := func(id, status, title, goal string, n int) {
 			k := ticket(id, "i8", "u1", n)
 			k.StatusID, k.Title, k.Goal = status, title, goal
-			ok(t, s.UpsertTicket(ctx, k))
+			ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		}
 		add("a1", "open", "Login page", "", 1)
 		add("a2", "done", "Logout", "", 2)
 		add("a3", "", "Search", "find the LOGIN form", 3)
 		add("a5", "open", "Billing", "", 4)
 		add("a4", "done", "Export", "", 4) // same created_at as a5: id breaks the tie
-		ok(t, s.UpsertTicket(ctx, ticket("b1", "i9", "u1", 5)))
+		ok(t, s.UpsertTicket(ctx, ticket("b1", "i9", "u1", 5), confstore.Change{Kind: confstore.AuthorUser}))
 		list := func(q confstore.InternalTicketQuery) []string {
 			t.Helper()
 			rows, err := s.ListInternalTickets(ctx, "i8", q)
@@ -1204,7 +1205,7 @@ func tickets(t *testing.T, open opener) {
 		same(t, "open after", list(confstore.InternalTicketQuery{Done: trackerport.DoneOpen, After: &confstore.TicketCursor{CreatedAt: at(3), ID: "a3"}}),
 			[]string{"a1"})
 		for i := range 55 {
-			ok(t, s.UpsertTicket(ctx, ticket(fmt.Sprintf("m%02d", i), "i8", "u1", 10)))
+			ok(t, s.UpsertTicket(ctx, ticket(fmt.Sprintf("m%02d", i), "i8", "u1", 10), confstore.Change{Kind: confstore.AuthorUser}))
 		}
 		same(t, "default limit", len(list(confstore.InternalTicketQuery{})), 50)
 	})
@@ -1213,22 +1214,22 @@ func tickets(t *testing.T, open opener) {
 		s := seeded(t, open)
 		trackerLists(t, s)
 		k := fullTicket()
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		seen := confstore.TicketSeen{RemoteID: "ignored", Key: "NEW-7", URL: "https://example.test/7", Title: "Moved", Goal: "New goal",
 			Type: "Story", TypeRemoteID: "11", Labels: []string{"x"}}
-		ok(t, s.SetTicketSeen(ctx, "k1", seen, "", trackerport.ChangeChore, at(9)))
+		ok(t, s.SetTicketSeen(ctx, "k1", seen, "", trackerport.ChangeChore, at(9), confstore.Change{Kind: confstore.AuthorSync}))
 		want := k
 		want.Title, want.Goal, want.SourceKey, want.SourceURL, want.SourceType = "Moved", "New goal", "NEW-7", "https://example.test/7", "Story"
 		want.TypeID, want.ChangeType, want.Labels, want.UpdatedAt = "", trackerport.ChangeChore, []string{"x"}, at(9)
 		same(t, "seen", s.ticket("k1"), want)
-		ok(t, s.SetTicketSeen(ctx, "k1", seen, "ty1", trackerport.ChangeFix, at(10)))
+		ok(t, s.SetTicketSeen(ctx, "k1", seen, "ty1", trackerport.ChangeFix, at(10), confstore.Change{Kind: confstore.AuthorSync}))
 		same(t, "type", s.ticket("k1").TypeID, "ty1")
-		is(t, "missing type", s.SetTicketSeen(ctx, "k1", seen, "ghost", trackerport.ChangeFix, at(11)), confstore.ErrInvalid)
+		is(t, "missing type", s.SetTicketSeen(ctx, "k1", seen, "ghost", trackerport.ChangeFix, at(11), confstore.Change{Kind: confstore.AuthorSync}), confstore.ErrInvalid)
 	})
 
 	t.Run("delete goes once", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0), confstore.Change{Kind: confstore.AuthorUser}))
 		ok(t, s.DeleteTicket(ctx, "k1"))
 		is(t, "second delete", s.DeleteTicket(ctx, "k1"), confstore.ErrNotFound)
 	})
@@ -1652,7 +1653,7 @@ func automations(t *testing.T, open opener) {
 
 	t.Run("what it names need not exist", func(t *testing.T) {
 		s := seeded(t, open)
-		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0)))
+		ok(t, s.UpsertTicket(ctx, ticket("k1", "i1", "u1", 0), confstore.Change{Kind: confstore.AuthorUser}))
 		a := fullAutomation()
 		a.TicketID, a.Flow = "k1", "ghost"
 		ok(t, s.UpsertAutomation(ctx, a))
@@ -1854,7 +1855,7 @@ func timestamps(t *testing.T, open opener) {
 
 		k := ticket("k1", "i1", "u1", 0)
 		k.CreatedAt, k.UpdatedAt = finer, finer
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		gk := s.ticket("k1")
 		check("ticket created_at", gk.CreatedAt)
 		check("ticket updated_at", gk.UpdatedAt)

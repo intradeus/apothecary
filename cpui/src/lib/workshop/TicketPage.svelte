@@ -39,6 +39,7 @@
 	import RunTable from '$lib/run/RunTable.svelte';
 	import StartRunPanel from '$lib/run/StartRunPanel.svelte';
 	import WorkshopName from '$lib/app/WorkshopName.svelte';
+	import TicketHistory from './TicketHistory.svelte';
 
 	let { projectId, ticketKey: key }: { projectId: string; ticketKey: string } = $props();
 
@@ -304,6 +305,7 @@
 						{/if}
 					</section>
 					<TicketComments {projectId} ticketKey={key} {refreshed} readonly={!canWrite} />
+					<TicketHistory {projectId} {ticket} {canWrite} onrestored={changed} />
 					{@render runList()}
 				</div>
 

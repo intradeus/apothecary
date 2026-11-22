@@ -158,21 +158,131 @@ func (s *Store) GetDashboard(ctx context.Context, id string) (analytics.Dashboar
 	return d, err
 }
 
+// maxVersions is how many versions a dashboard or scorecard keeps.
+const maxVersions = 100
+
 // PutDashboard creates or replaces; a replace never moves the owner or the
 // creation time. pgx encodes the jsonb columns (a value JSON cannot hold is
-// the Exec's error).
-func (s *Store) PutDashboard(ctx context.Context, d analytics.Dashboard) error {
+// the Exec's error). In the same transaction it appends a version from the
+// stored row when the name, filters or panels differ (jsonb equality) from
+// the latest one, and keeps the newest maxVersions.
+func (s *Store) PutDashboard(ctx context.Context, d analytics.Dashboard, c analytics.Change) error {
 	if d.Filters == nil {
 		d.Filters = []string{}
 	}
 	if d.Panels == nil {
 		d.Panels = []analytics.Panel{}
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO analytics_dashboards (`+dashboardCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7)
-		ON CONFLICT (id) DO UPDATE SET name=$3, filters=$4, panels=$5, updated_at=$7`,
-		d.ID, d.UserID, d.Name, d.Filters, d.Panels, d.CreatedAt, d.UpdatedAt)
-	return err
+	return s.putVersioned(ctx, d.ID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO analytics_dashboards (`+dashboardCols+`) VALUES ($1,$2,$3,$4,$5,$6,$7)
+			ON CONFLICT (id) DO UPDATE SET name=$3, filters=$4, panels=$5, updated_at=$7`,
+			d.ID, d.UserID, d.Name, d.Filters, d.Panels, d.CreatedAt, d.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO analytics_dashboard_versions
+			       (dashboard_id, seq, name, filters, panels, author_kind, author_id, restored_from, created_at)
+			SELECT d.id, COALESCE(l.seq, 0) + 1, d.name, d.filters, d.panels, $2, $3, NULLIF($4, 0), d.updated_at
+			  FROM analytics_dashboards d
+			  LEFT JOIN LATERAL (SELECT seq, name, filters, panels FROM analytics_dashboard_versions
+			                      WHERE dashboard_id = d.id ORDER BY seq DESC LIMIT 1) l ON true
+			 WHERE d.id = $1
+			   AND (l.seq IS NULL OR (d.name, d.filters, d.panels) IS DISTINCT FROM (l.name, l.filters, l.panels))`,
+			d.ID, string(c.Kind), c.AuthorID, c.RestoredFrom)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			DELETE FROM analytics_dashboard_versions
+			 WHERE dashboard_id = $1
+			   AND seq <= (SELECT max(seq) FROM analytics_dashboard_versions WHERE dashboard_id = $1) - $2`,
+			d.ID, maxVersions)
+		return err
+	})
+}
+
+// putVersioned runs a versioned write in one transaction; a unique
+// violation (two writers taking the same seq) is analytics.ErrConflict.
+func (s *Store) putVersioned(ctx context.Context, id string, write func(pgx.Tx) error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := write(tx); err != nil {
+		if isUnique(err) {
+			return fmt.Errorf("%s changed meanwhile: %w", id, analytics.ErrConflict)
+		}
+		return err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		if isUnique(err) {
+			return fmt.Errorf("%s changed meanwhile: %w", id, analytics.ErrConflict)
+		}
+		return err
+	}
+	return nil
+}
+
+const dashboardVersionCols = `dashboard_id, seq, name, filters, panels, author_kind, author_id, COALESCE(restored_from, 0), created_at`
+
+func scanDashboardVersion(row pgx.Row) (analytics.DashboardVersion, error) {
+	var v analytics.DashboardVersion
+	var filters, panels []byte
+	if err := row.Scan(&v.DashboardID, &v.Seq, &v.Name, &filters, &panels, &v.Kind, &v.AuthorID, &v.RestoredFrom, &v.CreatedAt); err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal(filters, &v.Filters); err != nil {
+		return v, fmt.Errorf("dashboard %s version %d filters: %w", v.DashboardID, v.Seq, err)
+	}
+	if err := json.Unmarshal(panels, &v.Panels); err != nil {
+		return v, fmt.Errorf("dashboard %s version %d panels: %w", v.DashboardID, v.Seq, err)
+	}
+	return v, nil
+}
+
+// ListDashboardVersions is newest first; an unknown dashboard is
+// ErrNotFound.
+func (s *Store) ListDashboardVersions(ctx context.Context, id string) ([]analytics.DashboardVersion, error) {
+	if err := s.analyticsExists(ctx, "analytics_dashboards", "dashboard", id); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+dashboardVersionCols+` FROM analytics_dashboard_versions WHERE dashboard_id=$1 ORDER BY seq DESC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []analytics.DashboardVersion{}
+	for rows.Next() {
+		v, err := scanDashboardVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetDashboardVersion(ctx context.Context, id string, seq int) (analytics.DashboardVersion, error) {
+	v, err := scanDashboardVersion(s.pool.QueryRow(ctx, `SELECT `+dashboardVersionCols+` FROM analytics_dashboard_versions WHERE dashboard_id=$1 AND seq=$2`, id, seq))
+	if err == pgx.ErrNoRows {
+		return v, fmt.Errorf("dashboard %s version %d: %w", id, seq, analytics.ErrNotFound)
+	}
+	return v, err
+}
+
+// analyticsExists is ErrNotFound when table has no row id.
+func (s *Store) analyticsExists(ctx context.Context, table, what, id string) error {
+	var ok bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+table+` WHERE id=$1)`, id).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%s %s: %w", what, id, analytics.ErrNotFound)
+	}
+	return nil
 }
 
 func (s *Store) DeleteDashboard(ctx context.Context, id string) error {
@@ -229,15 +339,83 @@ func (s *Store) GetScorecard(ctx context.Context, id string) (analytics.Scorecar
 
 // PutScorecard creates or replaces; a replace never moves the owner or the
 // creation time. pgx encodes the terms (a NaN weight is the Exec's error).
-func (s *Store) PutScorecard(ctx context.Context, sc analytics.Scorecard) error {
+// Versions as PutDashboard does, on (name, terms).
+func (s *Store) PutScorecard(ctx context.Context, sc analytics.Scorecard, c analytics.Change) error {
 	if sc.Terms == nil {
 		sc.Terms = []analytics.Term{}
 	}
-	_, err := s.pool.Exec(ctx, `
-		INSERT INTO analytics_scorecards (`+scorecardCols+`) VALUES ($1,$2,$3,$4,$5,$6)
-		ON CONFLICT (id) DO UPDATE SET name=$3, terms=$4, updated_at=$6`,
-		sc.ID, sc.UserID, sc.Name, sc.Terms, sc.CreatedAt, sc.UpdatedAt)
-	return err
+	return s.putVersioned(ctx, sc.ID, func(tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO analytics_scorecards (`+scorecardCols+`) VALUES ($1,$2,$3,$4,$5,$6)
+			ON CONFLICT (id) DO UPDATE SET name=$3, terms=$4, updated_at=$6`,
+			sc.ID, sc.UserID, sc.Name, sc.Terms, sc.CreatedAt, sc.UpdatedAt)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			INSERT INTO analytics_scorecard_versions
+			       (scorecard_id, seq, name, terms, author_kind, author_id, restored_from, created_at)
+			SELECT sc.id, COALESCE(l.seq, 0) + 1, sc.name, sc.terms, $2, $3, NULLIF($4, 0), sc.updated_at
+			  FROM analytics_scorecards sc
+			  LEFT JOIN LATERAL (SELECT seq, name, terms FROM analytics_scorecard_versions
+			                      WHERE scorecard_id = sc.id ORDER BY seq DESC LIMIT 1) l ON true
+			 WHERE sc.id = $1
+			   AND (l.seq IS NULL OR (sc.name, sc.terms) IS DISTINCT FROM (l.name, l.terms))`,
+			sc.ID, string(c.Kind), c.AuthorID, c.RestoredFrom)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `
+			DELETE FROM analytics_scorecard_versions
+			 WHERE scorecard_id = $1
+			   AND seq <= (SELECT max(seq) FROM analytics_scorecard_versions WHERE scorecard_id = $1) - $2`,
+			sc.ID, maxVersions)
+		return err
+	})
+}
+
+const scorecardVersionCols = `scorecard_id, seq, name, terms, author_kind, author_id, COALESCE(restored_from, 0), created_at`
+
+func scanScorecardVersion(row pgx.Row) (analytics.ScorecardVersion, error) {
+	var v analytics.ScorecardVersion
+	var terms []byte
+	if err := row.Scan(&v.ScorecardID, &v.Seq, &v.Name, &terms, &v.Kind, &v.AuthorID, &v.RestoredFrom, &v.CreatedAt); err != nil {
+		return v, err
+	}
+	if err := json.Unmarshal(terms, &v.Terms); err != nil {
+		return v, fmt.Errorf("scorecard %s version %d terms: %w", v.ScorecardID, v.Seq, err)
+	}
+	return v, nil
+}
+
+// ListScorecardVersions is newest first; an unknown scorecard is
+// ErrNotFound.
+func (s *Store) ListScorecardVersions(ctx context.Context, id string) ([]analytics.ScorecardVersion, error) {
+	if err := s.analyticsExists(ctx, "analytics_scorecards", "scorecard", id); err != nil {
+		return nil, err
+	}
+	rows, err := s.pool.Query(ctx, `SELECT `+scorecardVersionCols+` FROM analytics_scorecard_versions WHERE scorecard_id=$1 ORDER BY seq DESC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []analytics.ScorecardVersion{}
+	for rows.Next() {
+		v, err := scanScorecardVersion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+func (s *Store) GetScorecardVersion(ctx context.Context, id string, seq int) (analytics.ScorecardVersion, error) {
+	v, err := scanScorecardVersion(s.pool.QueryRow(ctx, `SELECT `+scorecardVersionCols+` FROM analytics_scorecard_versions WHERE scorecard_id=$1 AND seq=$2`, id, seq))
+	if err == pgx.ErrNoRows {
+		return v, fmt.Errorf("scorecard %s version %d: %w", id, seq, analytics.ErrNotFound)
+	}
+	return v, err
 }
 
 func (s *Store) DeleteScorecard(ctx context.Context, id string) error {

@@ -76,6 +76,79 @@ type Ticket struct {
 // "run:<id>/<stage>").
 const ChangedByUser = "user"
 
+// AuthorKind says who made a version of a ticket.
+type AuthorKind string
+
+const (
+	// AuthorUser is a person's save (AuthorID: the user).
+	AuthorUser AuthorKind = "user"
+	// AuthorAssistant is a save holding an assistant's work — a fill the
+	// person saved, or an act they confirmed (AuthorID: that person).
+	AuthorAssistant AuthorKind = "assistant"
+	// AuthorRun is a run's write through the tracker (AuthorID: the run).
+	AuthorRun AuthorKind = "run"
+	// AuthorSync is what was seen of a remote issue (AuthorID: the ticket
+	// source integration).
+	AuthorSync AuthorKind = "sync"
+	// AuthorBackfill is the content as it stood when history began.
+	AuthorBackfill AuthorKind = "backfill"
+)
+
+// Change says who makes a write, for the version it appends when it changes
+// what a person edits. RestoredFrom is the seq a restore copies (0: none).
+type Change struct {
+	Kind         AuthorKind `json:"author_kind"`
+	AuthorID     string     `json:"author_id"`
+	RestoredFrom int        `json:"restored_from,omitempty"`
+}
+
+// ByUser is a person's change, or — on a context an assistant act runs on
+// (WithAssistedChange), or when assisted — the assistant's, saved by them.
+func ByUser(ctx context.Context, userID string, assisted bool) Change {
+	if assisted || AssistedChange(ctx) {
+		return Change{Kind: AuthorAssistant, AuthorID: userID}
+	}
+	return Change{Kind: AuthorUser, AuthorID: userID}
+}
+
+type assistedKey struct{}
+
+// WithAssistedChange marks ctx as carrying an act the assistant proposed
+// and a person confirmed: every write made on it is authored assistant.
+func WithAssistedChange(ctx context.Context) context.Context {
+	return context.WithValue(ctx, assistedKey{}, true)
+}
+
+// AssistedChange reports whether ctx carries a confirmed assistant act.
+func AssistedChange(ctx context.Context) bool {
+	v, _ := ctx.Value(assistedKey{}).(bool)
+	return v
+}
+
+// MaxTicketVersions is how many versions a ticket keeps: the oldest go as
+// a new one comes; a seq is never reused.
+const MaxTicketVersions = 100
+
+// TicketVersion is one immutable version of what a person edits of a
+// ticket — its content as a write left it — and who made that write.
+type TicketVersion struct {
+	TicketID   string                 `json:"ticket_id"`
+	Seq        int                    `json:"seq"`
+	Title      string                 `json:"title"`
+	Goal       string                 `json:"goal"`
+	BaseBranch string                 `json:"base_branch"`
+	ChangeType trackerport.ChangeType `json:"change_type"`
+	TypeID     string                 `json:"type_id,omitempty"`
+	Labels     []string               `json:"labels,omitempty"`
+	Change
+	CreatedAt time.Time `json:"created_at"`
+	// Changed names the fields that differ from the version before it
+	// (title, goal, base_branch, change_type, type, labels): set by
+	// TicketVersions, none on the oldest kept. Oldest marks that one.
+	Changed []string `json:"changed,omitempty"`
+	Oldest  bool     `json:"oldest,omitempty"`
+}
+
 // Internal reports whether the ticket is its owner's internal tracker's.
 func (t Ticket) Internal() bool { return t.SourceKind == KindInternal }
 
@@ -122,8 +195,8 @@ type InternalTicketQuery struct {
 // validation is the caller's job (the httpapi layer runs
 // checkout.CheckBranch, which confstore cannot import). The ticket lands in
 // the first status unless told otherwise, and the first type of its change
-// type unless told otherwise.
-func (s *Service) CreateTicket(ctx context.Context, t Ticket) (Ticket, error) {
+// type unless told otherwise. Its first version is c's.
+func (s *Service) CreateTicket(ctx context.Context, t Ticket, c Change) (Ticket, error) {
 	in, err := s.InternalTracker(ctx, t.UserID)
 	if err != nil {
 		return Ticket{}, err
@@ -141,7 +214,7 @@ func (s *Service) CreateTicket(ctx context.Context, t Ticket) (Ticket, error) {
 		at := t.CreatedAt
 		t.StatusChangedAt = &at
 	}
-	if err := s.db.UpsertTicket(ctx, t); err != nil {
+	if err := s.db.UpsertTicket(ctx, t, c); err != nil {
 		return Ticket{}, err
 	}
 	return t, nil
@@ -152,8 +225,9 @@ func (s *Service) CreateTicket(ctx context.Context, t Ticket) (Ticket, error) {
 // empty, and labels left nil, keep the stored ones (an edit form may not know
 // them); on a ticket with no type, or one whose change type changed while its
 // type did not, the type follows the change type. A remote record changes
-// only its BaseBranch: everything else is its tracker's.
-func (s *Service) UpdateTicket(ctx context.Context, id string, upd Ticket) (Ticket, error) {
+// only its BaseBranch: everything else is its tracker's. A change to what a
+// person edits appends a version made by c.
+func (s *Service) UpdateTicket(ctx context.Context, id string, upd Ticket, c Change) (Ticket, error) {
 	cur, err := s.db.GetTicket(ctx, id)
 	if err != nil {
 		return Ticket{}, err
@@ -162,7 +236,7 @@ func (s *Service) UpdateTicket(ctx context.Context, id string, upd Ticket) (Tick
 		cur.BaseBranch = strings.TrimSpace(upd.BaseBranch)
 		event.CleanValue(&cur.BaseBranch)
 		cur.UpdatedAt = s.now().UTC()
-		if err := s.db.UpsertTicket(ctx, cur); err != nil {
+		if err := s.db.UpsertTicket(ctx, cur, c); err != nil {
 			return Ticket{}, err
 		}
 		return cur, nil
@@ -191,7 +265,7 @@ func (s *Service) UpdateTicket(ctx context.Context, id string, upd Ticket) (Tick
 		at := upd.UpdatedAt
 		upd.StatusChangedAt, upd.StatusChangedBy = &at, ChangedByUser
 	}
-	if err := s.db.UpsertTicket(ctx, upd); err != nil {
+	if err := s.db.UpsertTicket(ctx, upd, c); err != nil {
 		return Ticket{}, err
 	}
 	return upd, nil
@@ -242,11 +316,97 @@ func (s *Service) InternalTickets(ctx context.Context, sourceID string, q Intern
 	return s.db.ListInternalTickets(ctx, sourceID, q)
 }
 
-// DeleteTicket removes the ticket (its comments and links go with it). Runs
-// that referenced it keep their own run_created snapshot (self-contained), so
-// this never orphans history.
+// DeleteTicket removes the ticket (its comments, links and versions go with
+// it). Runs that referenced it keep their own run_created snapshot
+// (self-contained), so this never orphans history.
 func (s *Service) DeleteTicket(ctx context.Context, id string) error {
 	return s.db.DeleteTicket(ctx, id)
+}
+
+// TicketVersions is a ticket's history, newest first: each version with the
+// fields that differ from the one before it, the oldest kept marked (nil:
+// none). A missing ticket is ErrNotFound.
+func (s *Service) TicketVersions(ctx context.Context, id string) ([]TicketVersion, error) {
+	list, err := s.db.ListTicketVersions(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	for i := range list {
+		if i == len(list)-1 {
+			list[i].Oldest = true
+			break
+		}
+		list[i].Changed = ticketChanges(list[i+1], list[i])
+	}
+	return list, nil
+}
+
+// ticketChanges names the fields that differ between two versions.
+func ticketChanges(a, b TicketVersion) []string {
+	var out []string
+	for _, f := range []struct {
+		name string
+		same bool
+	}{
+		{"title", a.Title == b.Title},
+		{"goal", a.Goal == b.Goal},
+		{"base_branch", a.BaseBranch == b.BaseBranch},
+		{"change_type", a.ChangeType == b.ChangeType},
+		{"type", a.TypeID == b.TypeID},
+		{"labels", sameLabels(a.Labels, b.Labels)},
+	} {
+		if !f.same {
+			out = append(out, f.name)
+		}
+	}
+	return out
+}
+
+// TicketVersion is one version of a ticket, by seq (ErrNotFound: none).
+func (s *Service) TicketVersion(ctx context.Context, id string, seq int) (TicketVersion, error) {
+	return s.db.GetTicketVersion(ctx, id, seq)
+}
+
+// RestoreTicketVersion makes an internal ticket's content the version's
+// again, as an edit by c would (validated and placed on its tracker alike; a
+// type no longer on it gives way to the change type's), and returns the
+// ticket. The write appends a new version restored from seq — history is
+// never rewritten — unless the content is that already. A remote record's
+// content is its tracker's: restoring it is ErrInvalid, and nothing changes,
+// so no later sync has a restore to undo.
+func (s *Service) RestoreTicketVersion(ctx context.Context, id string, seq int, c Change) (Ticket, error) {
+	cur, err := s.db.GetTicket(ctx, id)
+	if err != nil {
+		return Ticket{}, err
+	}
+	if !cur.Internal() {
+		name := cur.SourceKind
+		if in, err := s.GetIntegration(ctx, cur.SourceID); err == nil {
+			name = fmt.Sprintf("%s (%s)", in.Name, in.Kind)
+		}
+		return Ticket{}, invalidf("ticket %s is an issue of %s: its content is that tracker's, so an old version cannot be restored here; change it on %s",
+			id, name, name)
+	}
+	v, err := s.db.GetTicketVersion(ctx, id, seq)
+	if err != nil {
+		return Ticket{}, err
+	}
+	if v.TypeID != "" {
+		types, err := s.db.ListTrackerTypes(ctx, cur.SourceID)
+		if err != nil {
+			return Ticket{}, err
+		}
+		if !slices.ContainsFunc(types, func(ty TrackerType) bool { return ty.ID == v.TypeID }) {
+			v.TypeID = ""
+		}
+	}
+	labels := v.Labels
+	if labels == nil {
+		labels = []string{} // none, not "keep the stored ones"
+	}
+	c.RestoredFrom = seq
+	return s.UpdateTicket(ctx, id, Ticket{Title: v.Title, Goal: v.Goal, BaseBranch: v.BaseBranch,
+		ChangeType: v.ChangeType, TypeID: v.TypeID, StatusID: cur.StatusID, Labels: labels}, c)
 }
 
 // RecordTicket makes sure a remote issue has a record: an existing one (by
@@ -281,7 +441,7 @@ func (s *Service) RecordTicket(ctx context.Context, sourceID string, seen Ticket
 		TypeID: typeID, Labels: seen.Labels, SourceID: sourceID, SourceKind: in.Kind, SourceKey: seen.Key,
 		SourceURL: seen.URL, SourceType: seen.Type, RemoteID: seen.RemoteID, AutomationID: automationID,
 		CreatedAt: now, UpdatedAt: now}
-	err = s.db.UpsertTicket(ctx, t)
+	err = s.db.UpsertTicket(ctx, t, Change{Kind: AuthorSync, AuthorID: sourceID})
 	if errors.Is(err, ErrConflict) {
 		// Recorded meanwhile: that record is the one.
 		cur, gerr := s.db.GetTicketByRemote(ctx, sourceID, seen.RemoteID)
@@ -313,13 +473,16 @@ func (s *Service) SeeTicket(ctx context.Context, ticketID string, seen TicketSee
 	return s.see(ctx, cur, seen)
 }
 
+// see writes what was seen onto the record: a change to its content is a
+// version made by its tracker (sync).
 func (s *Service) see(ctx context.Context, cur Ticket, seen TicketSeen) (Ticket, error) {
 	typeID, ct, err := s.seenType(ctx, cur.SourceID, seen)
 	if err != nil {
 		return Ticket{}, err
 	}
 	seen.Title = seenTitle(seen)
-	if err := s.db.SetTicketSeen(ctx, cur.ID, seen, typeID, ct, s.now().UTC()); err != nil {
+	c := Change{Kind: AuthorSync, AuthorID: cur.SourceID}
+	if err := s.db.SetTicketSeen(ctx, cur.ID, seen, typeID, ct, s.now().UTC(), c); err != nil {
 		return Ticket{}, err
 	}
 	return s.db.GetTicket(ctx, cur.ID)
@@ -490,13 +653,13 @@ func (s *Service) SetTicketStatus(ctx context.Context, ticketID, statusID, by st
 }
 
 // SetTicketLabels replaces an internal ticket's labels, or adds to them
-// (union, in order of first appearance), in one SQL statement, and returns
-// the result.
-func (s *Service) SetTicketLabels(ctx context.Context, ticketID string, labels []string, union bool) ([]string, error) {
+// (union, in order of first appearance), in one write — with the version c
+// makes when they change — and returns the result.
+func (s *Service) SetTicketLabels(ctx context.Context, ticketID string, labels []string, union bool, c Change) ([]string, error) {
 	if _, err := s.internalTicket(ctx, ticketID); err != nil {
 		return nil, err
 	}
-	return s.db.SetTicketLabels(ctx, ticketID, cleanLabels(labels), union, s.now().UTC())
+	return s.db.SetTicketLabels(ctx, ticketID, cleanLabels(labels), union, s.now().UTC(), c)
 }
 
 // TicketComments is an internal ticket's stored comments, oldest first. A

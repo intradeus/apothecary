@@ -18,7 +18,7 @@ import (
 func TestTicketNow(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t, devSource())
-	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g", Labels: []string{"backend"}}, owner, nil)
+	tk, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g", Labels: []string{"backend"}}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +188,7 @@ func TestEachWorkshopNamesTheBaseBranch(t *testing.T) {
 	conftest.SeedProject(t, w.conf, confstore.Project{ID: "prj-2", UserID: owner, Name: "q",
 		Repo: confstore.RepoConfig{BranchFormat: "{ticket_number}/{ticket_title}"}})
 	rec := w.record(t)
-	hand, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "Add keys", Goal: "g"}, owner, nil)
+	hand, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "Add keys", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestEachWorkshopNamesTheBaseBranch(t *testing.T) {
 	}
 
 	for _, id := range []string{rec.ID, hand.ID} {
-		if _, err := w.f.Update(ctx, id, confstore.Ticket{Title: "Add keys", Goal: "g", BaseBranch: "mine/farewell"}, owner, nil); err != nil {
+		if _, err := w.f.Update(ctx, id, confstore.Ticket{Title: "Add keys", Goal: "g", BaseBranch: "mine/farewell"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil); err != nil {
 			t.Fatal(err)
 		}
 		for _, project := range []string{testProject, "prj-2"} {
@@ -224,7 +224,7 @@ func TestEachWorkshopNamesTheBaseBranch(t *testing.T) {
 func TestAnInternalRunTicketHasNoSource(t *testing.T) {
 	ctx := context.Background()
 	w := newWorld(t, devSource())
-	hand, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, owner, nil)
+	hand, err := w.f.Create(ctx, confstore.Ticket{UserID: owner, Title: "T", Goal: "g"}, confstore.Change{Kind: confstore.AuthorUser, AuthorID: owner}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

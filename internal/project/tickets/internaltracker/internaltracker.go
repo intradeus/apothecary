@@ -31,6 +31,7 @@ import (
 	"slices"
 	"strings"
 
+	"apothecary/internal/account/auth"
 	"apothecary/internal/ports/trackerport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/resolution"
@@ -158,7 +159,10 @@ func noField(key, field string) error {
 		Reason: fmt.Sprintf("the internal tracker has no field %q; it has: %s", field, fieldLabels)}
 }
 
-// SetFields writes labels (a comma-separated list, replacing them).
+// SetFields writes labels (a comma-separated list, replacing them). A change
+// is a version by the run on the context (resolution.TrackerActor), else by
+// the person on it — the assistant's, saved by them, on a confirmed
+// assistant act (confstore.WithAssistedChange).
 func (t *Tracker) SetFields(ctx context.Context, key string, fields map[string]string) error {
 	for name := range fields {
 		if !strings.EqualFold(strings.TrimSpace(name), fieldLabels) {
@@ -168,8 +172,12 @@ func (t *Tracker) SetFields(ctx context.Context, key string, fields map[string]s
 	if _, err := t.ticket(ctx, key); err != nil {
 		return err
 	}
+	c := confstore.ByUser(ctx, auth.UserID(ctx), false)
+	if a, ok := resolution.TrackerActorFrom(ctx); ok {
+		c = confstore.Change{Kind: confstore.AuthorRun, AuthorID: a.RunID}
+	}
 	for _, v := range fields {
-		if _, err := t.Conf.SetTicketLabels(ctx, key, splitList(v), false); err != nil {
+		if _, err := t.Conf.SetTicketLabels(ctx, key, splitList(v), false, c); err != nil {
 			return gone(key, err)
 		}
 	}

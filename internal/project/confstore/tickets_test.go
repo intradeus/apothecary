@@ -11,11 +11,11 @@ func TestTicketCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	// Missing title → ErrInvalid.
-	if _, err := svc.CreateTicket(ctx, Ticket{UserID: "u1"}); !errors.Is(err, ErrInvalid) {
+	if _, err := svc.CreateTicket(ctx, Ticket{UserID: "u1"}, Change{Kind: AuthorUser}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("create without title = %v, want ErrInvalid", err)
 	}
 
-	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "Add health", Goal: "g", BaseBranch: "fix/x"})
+	tk, err := svc.CreateTicket(ctx, Ticket{UserID: "u1", Title: "Add health", Goal: "g", BaseBranch: "fix/x"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,7 +36,7 @@ func TestTicketCRUD(t *testing.T) {
 		t.Fatalf("get = %+v, %v", got, err)
 	}
 
-	upd, err := svc.UpdateTicket(ctx, tk.ID, Ticket{Title: "Renamed", BaseBranch: "fix/y"})
+	upd, err := svc.UpdateTicket(ctx, tk.ID, Ticket{Title: "Renamed", BaseBranch: "fix/y"}, Change{Kind: AuthorUser})
 	if err != nil {
 		t.Fatal(err)
 	}

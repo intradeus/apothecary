@@ -101,7 +101,7 @@ func trackers(t *testing.T, open opener) {
 		trackerLists(t, s)
 		k := ticket("k1", "i9", "u1", 1)
 		k.StatusID = "st1"
-		ok(t, s.UpsertTicket(ctx, k))
+		ok(t, s.UpsertTicket(ctx, k, confstore.Change{Kind: confstore.AuthorUser}))
 		keep := []confstore.TrackerStatus{{ID: "st2", RemoteID: "2", Name: "Done", IsDone: true}}
 		is(t, "no replacement", s.ReplaceTrackerStatuses(ctx, "i9", keep, nil), confstore.ErrReferenced)
 		same(t, "after the refusal", statusIDs(t, s, "i9"), []string{"st1", "st2"})
@@ -257,7 +257,7 @@ func trackers(t *testing.T, open opener) {
 		in, err := svc.InternalTracker(ctx, "u1")
 		ok(t, err)
 		k, err := svc.CreateTicket(ctx, confstore.Ticket{UserID: "u1", Title: " Fix it ", ChangeType: "fix",
-			SourceID: "ghost", SourceKind: "jira", SourceKey: "X-1", RemoteID: "r", SourceURL: "u", SourceType: "Bug"})
+			SourceID: "ghost", SourceKind: "jira", SourceKey: "X-1", RemoteID: "r", SourceURL: "u", SourceType: "Bug"}, confstore.Change{Kind: confstore.AuthorUser})
 		ok(t, err)
 		k = s.ticket(k.ID)
 		same(t, "source", []string{k.SourceID, k.SourceKind, k.RemoteID, k.SourceKey, k.SourceURL, k.SourceType},
@@ -324,13 +324,13 @@ func trackers(t *testing.T, open opener) {
 		remote := remoteTracker(t, svc, "u1", "jira")
 		k, _, err := svc.RecordTicket(ctx, remote.ID, confstore.TicketSeen{RemoteID: "1", Key: "P-1", Title: "Remote"}, "")
 		ok(t, err)
-		upd, err := svc.UpdateTicket(ctx, k.ID, confstore.Ticket{Title: "Mine", Goal: "g", BaseBranch: " feat/x ", Labels: []string{"l"}})
+		upd, err := svc.UpdateTicket(ctx, k.ID, confstore.Ticket{Title: "Mine", Goal: "g", BaseBranch: " feat/x ", Labels: []string{"l"}}, confstore.Change{Kind: confstore.AuthorUser})
 		ok(t, err)
 		same(t, "base branch", upd.BaseBranch, "feat/x")
 		same(t, "the rest", []string{upd.Title, upd.Goal}, []string{"Remote", ""})
 		same(t, "stored", s.ticket(k.ID).BaseBranch, "feat/x")
 		is(t, "status", svc.SetTicketStatus(ctx, k.ID, "any", confstore.ChangedByUser), confstore.ErrInvalid)
-		_, err = svc.SetTicketLabels(ctx, k.ID, []string{"x"}, false)
+		_, err = svc.SetTicketLabels(ctx, k.ID, []string{"x"}, false, confstore.Change{Kind: confstore.AuthorUser})
 		is(t, "labels", err, confstore.ErrInvalid)
 		is(t, "link", svc.AddTicketLink(ctx, k.ID, trackerport.TicketLink{URL: "https://example.test"}), confstore.ErrInvalid)
 		_, _, err = svc.AddTicketComment(ctx, confstore.TicketComment{TicketID: k.ID, Body: "hi", Origin: confstore.CommentUser})

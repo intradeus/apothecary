@@ -30,7 +30,10 @@ vi.mock('$lib/api', () => ({
 			addComment: vi.fn(),
 			setStatus: vi.fn(),
 			setLabels: vi.fn(),
-			update: vi.fn()
+			update: vi.fn(),
+			versions: vi.fn(),
+			version: vi.fn(),
+			restore: vi.fn()
 		},
 		runs: { abort: vi.fn() },
 		files: { upload: vi.fn(), attachmentUrl: vi.fn(), limits: vi.fn() },
@@ -78,6 +81,7 @@ beforeEach(() => {
 	vi.mocked(api.skillsets.list).mockResolvedValue([]);
 	vi.mocked(api.projects.ticketTypes).mockResolvedValue([]);
 	vi.mocked(api.files.limits).mockRejectedValue(new Error('no policy'));
+	vi.mocked(api.tickets.versions).mockResolvedValue([]);
 });
 afterEach(() => {
 	vi.restoreAllMocks();
@@ -230,6 +234,56 @@ describe('TicketPage, what may be done to it', () => {
 		expect(screen.getByRole('button', { name: 'Remove label api' })).toBeDisabled();
 		expect(screen.queryByRole('button', { name: 'Comment' })).toBeNull();
 		expect(await startBtn()).toBeDisabled();
+	});
+});
+
+describe('TicketPage, its history', () => {
+	const internal = () =>
+		aTicketDetail({
+			internal: true,
+			url: '',
+			source: { id: 'o', kind: 'internal', name: 'Apothecary' }
+		});
+	const summary = (seq: number, title: string) => ({
+		seq,
+		title,
+		author: { kind: 'user' as const, id: 'u1', handle: 'ann' },
+		createdAt: new Date().toISOString(),
+		changed: ['title'],
+		oldest: false
+	});
+
+	it('shows in the read view, not while editing', async () => {
+		setup(internal());
+		expect(await screen.findByRole('region', { name: 'History' })).toBeInTheDocument();
+		expect(api.tickets.versions).toHaveBeenCalledWith('p1', 'PROJ-7');
+		await userEvent.click(screen.getByRole('button', { name: 'Edit' }));
+		expect(screen.queryByRole('region', { name: 'History' })).toBeNull();
+	});
+
+	it('takes a restored ticket as the page’s and rereads the history', async () => {
+		vi.mocked(api.tickets.versions).mockResolvedValue([summary(2, 'Now'), summary(1, 'Was')]);
+		vi.mocked(api.tickets.version).mockResolvedValue({
+			...summary(1, 'Was'),
+			goal: 'G',
+			baseBranch: '',
+			changeType: 'feat',
+			typeId: '',
+			labels: []
+		});
+		vi.mocked(api.tickets.restore).mockResolvedValue({ ...internal(), title: 'Was' });
+		setup(internal());
+		await userEvent.click(await screen.findByRole('button', { name: /^v1/ }));
+		vi.mocked(api.tickets.versions).mockResolvedValue([
+			summary(3, 'Was'),
+			summary(2, 'Now'),
+			summary(1, 'Was')
+		]);
+		await userEvent.click(await screen.findByRole('button', { name: 'Restore this version' }));
+		await confirmed(true);
+		await waitFor(() => expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Was'));
+		expect(api.tickets.restore).toHaveBeenCalledWith('p1', 'PROJ-7', 1);
+		expect(await screen.findByRole('button', { name: /^v3/ })).toBeInTheDocument();
 	});
 });
 

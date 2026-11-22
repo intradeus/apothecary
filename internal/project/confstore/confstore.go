@@ -324,9 +324,17 @@ type DB interface {
 	// Ticket writes check the ticket's status and type rows exist
 	// (ErrInvalid), not that they are its tracker's — that is the Service's.
 	// A second row with the same (source_id, remote_id) is ErrConflict.
-	UpsertTicket(ctx Ctx, t Ticket) error
+	// UpsertTicket, SetTicketSeen and SetTicketLabels append a version made
+	// by c, in the same write, when the stored title, goal, base branch,
+	// change type, type or labels differ from the latest version, and keep
+	// the newest MaxTicketVersions; two appending at once is ErrConflict.
+	UpsertTicket(ctx Ctx, t Ticket, c Change) error
 	GetTicket(ctx Ctx, id string) (Ticket, error)
-	DeleteTicket(ctx Ctx, id string) error // its comments and links go with it
+	DeleteTicket(ctx Ctx, id string) error // its comments, links and versions go with it
+	// ListTicketVersions is a ticket's versions, newest first (nil: none);
+	// a missing ticket is ErrNotFound. GetTicketVersion is one, by seq.
+	ListTicketVersions(ctx Ctx, ticketID string) ([]TicketVersion, error)
+	GetTicketVersion(ctx Ctx, ticketID string, seq int) (TicketVersion, error)
 	// GetTicketByRemote is the record of a source's issue by the tracker's
 	// stable id; ErrNotFound when there is none.
 	GetTicketByRemote(ctx Ctx, sourceID, remoteID string) (Ticket, error)
@@ -344,13 +352,13 @@ type DB interface {
 	// SetTicketSeen writes what was last seen of a remote issue: title, goal,
 	// source key/url/type, type_id ("" = NULL), change type, labels and
 	// updated_at = at. remote_id is unchanged.
-	SetTicketSeen(ctx Ctx, id string, seen TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time) error
+	SetTicketSeen(ctx Ctx, id string, seen TicketSeen, typeID string, changeType trackerport.ChangeType, at time.Time, c Change) error
 	// SetTicketStatus sets the status in one statement, stamping
 	// status_changed_at/by and updated_at only when it changes.
 	SetTicketStatus(ctx Ctx, id, statusID, by string, at time.Time) error
 	// SetTicketLabels replaces the labels, or adds to them in order of first
-	// appearance, in one statement; returns the result.
-	SetTicketLabels(ctx Ctx, id string, labels []string, union bool, at time.Time) ([]string, error)
+	// appearance, in one write (with its version); returns the result.
+	SetTicketLabels(ctx Ctx, id string, labels []string, union bool, at time.Time, c Change) ([]string, error)
 
 	// A ticket's comments and links go with it.
 	ListTicketComments(ctx Ctx, ticketID string) ([]TicketComment, error)
