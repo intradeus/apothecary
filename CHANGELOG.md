@@ -2,6 +2,46 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.2.0 (2026-11-23)
+
+### Features
+
+- **sandbox**: add kata container support
+- **tickets**: keep ticket and dashboard history, restore a version
+- **assistant**: a drawer from every page, a fill modal on each page
+
+### Fixes
+
+- **sandbox**: add tests and fix flaky tests for kata sandboxes
+- **ci**: fix kata size in CI
+- **ci**: test for kata setup in ci
+- **sandbox**: kata sandbox bugfixes
+- **assistant**: install a replaced token after a turn that failed
+- **assistant**: keep the session's token across turns, not one turn
+- **tickets**: treat reordered labels as no new ticket version
+- **shim**: let an answer already delivered win over a closed done
+- **analytics**: show panel and filter reorders in dashboard history
+- **ci**: fix tests under-coverage
+- **assistant**: keep a run's flow handoff through a failed store or load
+- **assistant**: open a session only once its stream follows
+- **assistant**: hold questions and frames while a gap rereads the session
+- **assistant**: recover a fill from the record when its frame is lost
+- **assistant**: reread a conversation's own session by id after a gap
+- **engine**: keep a logged ping's choices and ref in pending pings
+- **assistant**: keep an old conversation's models, drop Undo on cancel
+- **assistant**: skip only a skillset that is gone, not a failing library
+- **assistant**: start a fresh fill on a workshop picked in the modal
+- **assistant**: say why the assistant pod is stuck, and keep live suites honest in CI
+
+### Reverts
+
+- **httpapi**: stop waiting for a held run to be running
+- **shim**: let an answer already delivered win over a closed done
+
+### Docs
+
+- plan sandbox runtimes, sizes, Kata and stop-on-idle
+
 ## v5.1.0 (2026-11-20)
 
 ### Features
