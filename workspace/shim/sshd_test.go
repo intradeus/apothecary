@@ -226,11 +226,19 @@ func TestSSHRefusesWhatItDoesNotServe(t *testing.T) {
 }
 
 // A client slower than the command keeps everything it wrote: the process
-// exits with the SSH window full and the last bytes still in the pipe.
+// exits with the SSH window full and the rest of its output not yet taken.
+//
+// The output comes from a background child that holds the shell's stdout,
+// so the shell exits at once however little the kernel's pipe holds. A
+// foreground writer could only exit once its tail fit in the pipe, and the
+// pipe is no fixed 64 KiB: macOS shares about 16 MiB among every pipe on the
+// machine and gives a new one 512 bytes once that is spent (a loaded
+// machine), Linux gives 8 KiB to a user over pipe-user-pages-soft. The
+// writer then blocks, the marker never appears, and the test times out.
 func TestSSHExecDeliversAllOutputToASlowClient(t *testing.T) {
 	client, _, repo, _ := newTestSSH(t)
 	t.Setenv("SHELL", "/bin/sh")
-	const size = 2<<20 + 48<<10 // past the 2 MiB window, within the pipe
+	const size = 2<<20 + 256<<10 // past the 2 MiB window, and past any pipe
 	exited := filepath.Join(repo, "exited")
 	ses, err := client.NewSession()
 	if err != nil {
@@ -241,11 +249,15 @@ func TestSSHExecDeliversAllOutputToASlowClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ses.Start(fmt.Sprintf("head -c %d /dev/zero; touch %s", size, exited)); err != nil {
+	// The shell's last act is the marker: once it is there, the shell is
+	// exiting while head still has most of its output to write.
+	if err := ses.Start(fmt.Sprintf("head -c %d /dev/zero & touch %s", size, exited)); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, func() bool { _, err := os.Stat(exited); return err == nil })
-	time.Sleep(50 * time.Millisecond) // long enough for an early Wait to bite
+	// Long enough for an early Wait to bite (it closes the pipe under head);
+	// the shim that is right passes however long this is.
+	time.Sleep(50 * time.Millisecond)
 	if n, err := io.Copy(io.Discard, stdout); err != nil || n != size {
 		t.Errorf("got %d of %d bytes, %v", n, size, err)
 	}

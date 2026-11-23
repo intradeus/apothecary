@@ -48,9 +48,19 @@ type KubeConfig struct {
 	// the cluster) instead of directly by pod IP.
 	Forward bool
 	// Storage: "pvc" (default; survives a pod restart) or "emptydir", for
-	// every runtime but a VM one, whose disks are always emptyDirs of its own
-	// (runtime.go, the vm trait).
+	// every runtime but a VM one (runtime.go, the vm trait), whose storage is
+	// VMStorageClass's.
 	Storage, StorageClass, StorageSize string
+	// VMStorageClass, when set, gives a VM runtime's sandbox (Kata) the run's
+	// claim as a raw block device (volumeMode: Block) from this class: one
+	// disk in its VM that outlives the pod, which the sandbox formats and
+	// mounts itself (apo-dockerd, APO_DATA_DEVICE), so it can be stopped and
+	// kept. The class must provision Block volumes (EBS, TopoLVM, Longhorn,
+	// Ceph RBD; not k3s's local-path). Empty: a VM sandbox's disks are
+	// emptyDirs of its own, gone with its pod. A filesystem claim is never
+	// an answer: it reaches the VM over virtio-fs, where docker cannot keep
+	// its layers.
+	VMStorageClass string
 	// Runtime is what isolates each sandbox (runtime.go): privileged (the
 	// default, "") or sysbox. RuntimeClass, when set, names the
 	// RuntimeClass the default runtime's pods ask for instead of the
@@ -339,14 +349,18 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 	if err != nil {
 		return err
 	}
-	// A VM's disks are emptyDirs of its own: no claim under it.
-	if h.cfg.Storage == "pvc" && !rt.vm {
+	if h.keepsClaim(rt) {
 		pvc := kube.PersistentVolumeClaim{TypeMeta: kube.PVCType(),
 			Metadata: kube.ObjectMeta{Name: dataClaimName(name), Labels: h.labels(name, spec.Project)},
 			Spec: kube.PVCSpec{AccessModes: []string{"ReadWriteOnce"},
 				Resources: kube.ResourceRequirements{Requests: map[string]string{"storage": h.cfg.StorageSize}}}}
-		if h.cfg.StorageClass != "" {
-			pvc.Spec.StorageClassName = kube.Ptr(h.cfg.StorageClass)
+		class := h.cfg.StorageClass
+		if rt.vm {
+			// A disk in the VM: the claim as a raw device.
+			class, pvc.Spec.VolumeMode = h.cfg.VMStorageClass, "Block"
+		}
+		if class != "" {
+			pvc.Spec.StorageClassName = kube.Ptr(class)
 		}
 		if err := k.Create(ctx, pvc); err != nil {
 			return err
@@ -372,7 +386,7 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		found = false
 	} else if found && pod.Status.Phase == "Running" && h.refusesExec(ctx, name) {
 		kept := "its volume and checkout are kept"
-		if h.cfg.Storage == "emptydir" || rt.vm {
+		if !h.keepsClaim(rt) {
 			kept = "its checkout is on an emptyDir and goes with it"
 		}
 		plog("→ replacing the sandbox pod: it no longer accepts exec (container runtime restarted?); %s\n", kept)
@@ -602,10 +616,22 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 	}
 	runMount := kube.VolumeMount{Name: "data", SubPath: "run", MountPath: folder}
 	dockerMount := kube.VolumeMount{Name: "data", SubPath: "docker", MountPath: "/var/lib/docker"}
+	// The sandbox container's own mounts: the run folder and docker's data,
+	// or, on a VM's raw-block claim, the seeded run volume aside (vmSeedDir).
+	sandboxMounts := []kube.VolumeMount{dockerMount, runMount}
+	vmClaim := rt.vm && h.keepsClaim(rt)
 	if rt.vm {
 		// A volume each, no subPath: a disk each in the guest.
 		runMount = kube.VolumeMount{Name: "run", MountPath: folder}
 		dockerMount = kube.VolumeMount{Name: "docker", MountPath: "/var/lib/docker"}
+		sandboxMounts = []kube.VolumeMount{dockerMount, runMount}
+	}
+	if vmClaim {
+		// The claim is a device the sandbox formats and mounts: the run folder
+		// and docker's data on it, and the shim and tools the init containers
+		// seed into the run volume bound over the folder's (apo-dockerd). The
+		// init containers and the relay keep the run volume at the folder.
+		sandboxMounts = []kube.VolumeMount{{Name: "run", MountPath: vmSeedDir}}
 	}
 	privileged := func() *kube.SecurityContext {
 		if !rt.privileged {
@@ -624,14 +650,17 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		SecurityContext: privileged(),
 		ReadinessProbe: &kube.Probe{Exec: &kube.ExecAction{Command: []string{"docker", "version"}},
 			PeriodSeconds: 3, TimeoutSeconds: 5, FailureThreshold: 100},
-		VolumeMounts: []kube.VolumeMount{
-			dockerMount,
-			runMount,
-			{Name: "apo", MountPath: "/run/apo"},
-		},
+		VolumeMounts: append(sandboxMounts, kube.VolumeMount{Name: "apo", MountPath: "/run/apo"}),
 	}
 	if rt.vm {
 		sandbox.Env = append(sandbox.Env, kube.EnvVar{Name: "APO_DEV_PRELUDE", Value: "1"})
+	}
+	if vmClaim {
+		sandbox.VolumeDevices = []kube.VolumeDevice{{Name: "data", DevicePath: vmDataDevice}}
+		sandbox.Env = append(sandbox.Env,
+			kube.EnvVar{Name: "APO_DATA_DEVICE", Value: vmDataDevice},
+			kube.EnvVar{Name: "APO_RUN_DIR", Value: folder},
+			kube.EnvVar{Name: "APO_SEED_DIR", Value: vmSeedDir})
 	}
 	seed := kube.Container{Name: "shim-seed", Image: h.cfg.ShimImage, ImagePullPolicy: h.cfg.PullPolicy,
 		Args: []string{"seed", filepath.Join(folder, "shim")}, VolumeMounts: []kube.VolumeMount{runMount}}
@@ -668,7 +697,13 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		// why sysbox needs it).
 		pod.Spec.HostUsers = kube.Ptr(false)
 	}
-	if rt.vm {
+	if vmClaim {
+		// The seeded shim and tools only (the tools bundle is about 2.3 GB):
+		// reseeded by each pod, never kept.
+		pod.Spec.Volumes = append(pod.Spec.Volumes,
+			kube.Volume{Name: "run", EmptyDir: &kube.EmptyDirVolumeSource{SizeLimit: vmSeedSize}},
+			kube.Volume{Name: "data", PersistentVolumeClaim: &kube.PersistentVolumeClaimVolumeSource{ClaimName: dataClaimName(name)}})
+	} else if rt.vm {
 		pod.Spec.Volumes = append(pod.Spec.Volumes,
 			kube.Volume{Name: "run", EmptyDir: &kube.EmptyDirVolumeSource{SizeLimit: h.cfg.StorageSize}},
 			kube.Volume{Name: "docker", EmptyDir: &kube.EmptyDirVolumeSource{SizeLimit: h.cfg.StorageSize}})
@@ -943,33 +978,44 @@ func (h *k8sHost) stopSandbox(ctx context.Context, name string) error {
 	return nil
 }
 
-// canStop: a sandbox on emptyDir storage, or under a VM runtime, loses
-// everything with its pod.
+// canStop: a sandbox without a claim (emptyDir storage, or a VM runtime
+// without a VM storage class) loses everything with its pod.
 func (h *k8sHost) canStop(want envport.Runtime) error {
-	if err := CanStop(h.cfg.Storage); err != nil {
-		return err
-	}
 	rt, err := h.runtimeFor(want)
 	if err != nil {
 		return err
 	}
-	return CanStopUnder(rt.name)
+	return CanStopUnder(rt.name, h.cfg.Storage, h.cfg.VMStorageClass)
 }
 
-// checkStop is canStop for the run's live pod: the runtime it was built
-// under, which may not be the one its project picks now. No pod: nothing
-// to lose.
-func (h *k8sHost) checkStop(ctx context.Context, name string) error {
-	if err := CanStop(h.cfg.Storage); err != nil {
-		return err
+// keepsClaim: rt's sandboxes keep the run on its claim, which outlives the
+// pod (a raw-block one under a VM runtime).
+func (h *k8sHost) keepsClaim(rt sandboxRuntime) bool {
+	if rt.vm {
+		return h.cfg.VMStorageClass != ""
 	}
+	return h.cfg.Storage == "pvc"
+}
+
+// checkStop is canStop for the run's live pod, by what it stands on: the
+// run's claim (mounted, or a VM's raw-block disk) is kept, anything else
+// goes with it, whatever the project picks now. No pod: the default
+// runtime's answer.
+func (h *k8sHost) checkStop(ctx context.Context, name string) error {
 	var pod kube.Pod
 	found, err := h.cfg.Kube.Get(ctx, "pod", name, &pod)
 	if err != nil {
 		return err
 	}
-	if found && h.isVMPod(pod) {
-		return fmt.Errorf("sandbox pod %s runs in a VM (runtime class %s): its disks go with it, so it cannot be stopped and kept", name, pod.Spec.RuntimeClassName)
+	if !found {
+		// Nothing running: the integration's default runtime says.
+		return h.canStop("")
+	}
+	if !usesClaim(pod, name) {
+		if h.isVMPod(pod) {
+			return fmt.Errorf("sandbox pod %s runs in a VM (runtime class %s) on disks of its own, which go with it: it cannot be stopped and kept", name, pod.Spec.RuntimeClassName)
+		}
+		return CanStop("emptydir")
 	}
 	return nil
 }

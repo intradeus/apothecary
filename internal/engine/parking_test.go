@@ -2,6 +2,10 @@ package engine
 
 import (
 	"context"
+	"fmt"
+	"runtime"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -67,8 +71,26 @@ func (s *stallStore) stall() {
 }
 
 // inWindow runs act while the loop is stalled writing run_paused, lets the
-// write go a moment later, and returns act's error once it has one.
+// write go a moment later, and returns act's error once it has one. The
+// tests on it pass whether act lands in the window or just after it (the
+// run parked either way); one whose outcome hinges on act being in the
+// window uses inWindowParked.
 func inWindow(t *testing.T, s *stallStore, act func() error) error {
+	t.Helper()
+	return stallWindow(t, s, act, func(int, <-chan struct{}) { time.Sleep(20 * time.Millisecond) })
+}
+
+// inWindowParked runs act while the loop is stalled and lets the write go
+// only once act is parked in fn (a function of this package, such as
+// "(*Engine).messageLive"): blocked there on a channel or a lock, waiting
+// on the loop. What act hands the loop is then there when the loop goes on,
+// however the goroutines are scheduled — a sleep only makes that likely.
+func inWindowParked(t *testing.T, s *stallStore, fn string, act func() error) error {
+	t.Helper()
+	return stallWindow(t, s, act, func(id int, returned <-chan struct{}) { waitParked(t, id, fn, returned) })
+}
+
+func stallWindow(t *testing.T, s *stallStore, act func() error, settle func(id int, returned <-chan struct{})) error {
 	t.Helper()
 	select {
 	case <-s.reached:
@@ -76,8 +98,14 @@ func inWindow(t *testing.T, s *stallStore, act func() error) error {
 		t.Fatal("the loop never got to parking")
 	}
 	errs := make(chan error, 1)
-	go func() { errs <- act() }()
-	time.Sleep(20 * time.Millisecond)
+	ids := make(chan int, 1)
+	returned := make(chan struct{})
+	go func() {
+		ids <- goroutineID()
+		errs <- act()
+		close(returned)
+	}()
+	settle(<-ids, returned)
 	close(s.letGo)
 	select {
 	case err := <-errs:
@@ -86,6 +114,75 @@ func inWindow(t *testing.T, s *stallStore, act func() error) error {
 		t.Fatal("the verb never came back")
 		return nil
 	}
+}
+
+// goroutineID is the calling goroutine's id, as its stack trace names it.
+func goroutineID() int {
+	buf := make([]byte, 64)
+	buf = buf[:runtime.Stack(buf, false)]
+	var id int
+	if _, err := fmt.Sscanf(string(buf), "goroutine %d ", &id); err != nil {
+		panic(err)
+	}
+	return id
+}
+
+// parkedStates are a goroutine's states (its stack trace's header) while it
+// is blocked on a channel or a lock.
+var parkedStates = []string{"select", "chan send", "chan receive", "sync.Mutex.Lock",
+	"sync.RWMutex.Lock", "sync.RWMutex.RLock", "sync.Cond.Wait", "semacquire"}
+
+// waitParked waits until goroutine id is parked in fn — its innermost frame
+// of this package's, under the runtime's and the sync package's — or until
+// returned is closed. Only a goroutine there for good passes: the trace is
+// the runtime's own record of where it is blocked, not a guess from time.
+func waitParked(t *testing.T, id int, fn string, returned <-chan struct{}) {
+	t.Helper()
+	header := fmt.Sprintf("goroutine %d [", id)
+	frame := "apothecary/internal/engine." + fn + "("
+	deadline := time.Now().Add(10 * time.Second)
+	buf := make([]byte, 1<<20)
+	for {
+		select {
+		case <-returned:
+			return
+		default:
+		}
+		n := runtime.Stack(buf, true)
+		if n == len(buf) {
+			buf = make([]byte, 2*len(buf))
+			continue
+		}
+		for _, g := range strings.Split(string(buf[:n]), "\n\n") {
+			if strings.HasPrefix(g, header) && parkedIn(g, len(header), frame) {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("goroutine %d never parked in %s", id, fn)
+		}
+		runtime.Gosched()
+	}
+}
+
+// parkedIn reports whether a goroutine's trace g (state from offset at)
+// shows it blocked with frame as its innermost frame outside the runtime
+// and sync packages.
+func parkedIn(g string, at int, frame string) bool {
+	state, _, _ := strings.Cut(g[at:], "]")
+	state, _, _ = strings.Cut(state, ",") // "select, 2 minutes"
+	if !slices.Contains(parkedStates, state) {
+		return false
+	}
+	for _, line := range strings.Split(g, "\n")[1:] {
+		switch {
+		case strings.HasPrefix(line, "\t"):
+		case strings.HasPrefix(line, "runtime."), strings.HasPrefix(line, "sync."), strings.HasPrefix(line, "internal/"):
+		default:
+			return strings.HasPrefix(line, frame)
+		}
+	}
+	return false
 }
 
 // parkOnQuestion starts a run whose agent ends its turn on a question.

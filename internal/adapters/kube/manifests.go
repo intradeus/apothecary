@@ -86,6 +86,7 @@ type Container struct {
 	Env             []EnvVar              `json:"env,omitempty"`
 	Ports           []ContainerPort       `json:"ports,omitempty"`
 	VolumeMounts    []VolumeMount         `json:"volumeMounts,omitempty"`
+	VolumeDevices   []VolumeDevice        `json:"volumeDevices,omitempty"` // a raw-block claim, as a device node
 	SecurityContext *SecurityContext      `json:"securityContext,omitempty"`
 	ReadinessProbe  *Probe                `json:"readinessProbe,omitempty"`
 	StartupProbe    *Probe                `json:"startupProbe,omitempty"`
@@ -125,6 +126,13 @@ type VolumeMount struct {
 	MountPath string `json:"mountPath"`
 	SubPath   string `json:"subPath,omitempty"`
 	ReadOnly  bool   `json:"readOnly,omitempty"`
+}
+
+// VolumeDevice is a raw-block claim (volumeMode: Block) in a container, as
+// the device node at DevicePath.
+type VolumeDevice struct {
+	Name       string `json:"name"`
+	DevicePath string `json:"devicePath"`
 }
 
 type SecurityContext struct {
@@ -250,6 +258,8 @@ type PVCSpec struct {
 	AccessModes      []string             `json:"accessModes"`
 	StorageClassName *string              `json:"storageClassName,omitempty"`
 	Resources        ResourceRequirements `json:"resources"`
+	// VolumeMode: "Block" is a raw device; "" is the default, Filesystem.
+	VolumeMode string `json:"volumeMode,omitempty"`
 }
 
 type Secret struct {

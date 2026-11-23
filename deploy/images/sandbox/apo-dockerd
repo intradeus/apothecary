@@ -7,7 +7,11 @@
 #     mirror and its build-cache registry, and the WireGuard tunnel's MTU;
 #     without one, the pod interface's MTU (docker's 1500 default is more
 #     than an overlay network's 1450, and inner traffic would be dropped);
-#   - under a VM runtime (APO_DEV_PRELUDE=1, Kata), a full /dev first.
+#   - under a VM runtime (APO_DEV_PRELUDE=1, Kata), a full /dev first;
+#   - on a VM's raw-block claim (APO_DATA_DEVICE), that disk formatted once
+#     and mounted: the run folder (APO_RUN_DIR) and docker's data on it, and
+#     the shim and tools the init containers seeded into the run volume
+#     (mounted at APO_SEED_DIR) bound over the folder's.
 set -eu
 if [ "${APO_DEV_PRELUDE:-}" = 1 ]; then
   # Kata gives a privileged container a minimal /dev, and every container
@@ -24,6 +28,38 @@ if [ "${APO_DEV_PRELUDE:-}" = 1 ]; then
   [ -e /dev/net/tun ] || mknod /dev/net/tun c 10 200
   umount /run/apo/devt
   rmdir /run/apo/devt
+fi
+if [ -n "${APO_DATA_DEVICE:-}" ]; then
+  # A claim is formatted once: only when it carries no filesystem signature
+  # at all (blkid prints nothing). Anything else is never formatted over: a
+  # filesystem other than ext4 stops the sandbox here, and a failed mount
+  # below too, rather than wipe the run.
+  disk=/var/lib/apo-data
+  sig=$(blkid "$APO_DATA_DEVICE" || true)
+  case "$sig" in
+    "")
+      echo "apo-dockerd: formatting $APO_DATA_DEVICE (a new claim)" >&2
+      mkfs.ext4 -q -L apo-data "$APO_DATA_DEVICE"
+      ;;
+    *'TYPE="ext4"'*) ;;
+    *)
+      echo "apo-dockerd: $APO_DATA_DEVICE holds something other than ext4 ($sig): not formatting over it" >&2
+      exit 1
+      ;;
+  esac
+  mkdir -p "$disk"
+  mountpoint -q "$disk" || mount -t ext4 "$APO_DATA_DEVICE" "$disk"
+  # bind src dst, unless dst already is src: by identity, not by "is a
+  # mount point" (an image's VOLUME can make /var/lib/docker one already).
+  bind() {
+    mkdir -p "$1" "$2"
+    [ "$(stat -c %d:%i "$1")" = "$(stat -c %d:%i "$2")" ] || mount --bind "$1" "$2"
+  }
+  bind "$disk/docker" /var/lib/docker
+  bind "$disk/run" "$APO_RUN_DIR"
+  for d in shim tools; do
+    bind "$APO_SEED_DIR/$d" "$APO_RUN_DIR/$d"
+  done
 fi
 set -- dockerd --host=unix:///var/run/docker.sock --default-address-pool base=100.64.0.0/10,size=24
 if [ -n "${APO_GATEWAY_IP:-}" ]; then

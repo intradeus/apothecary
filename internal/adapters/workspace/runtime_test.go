@@ -3,6 +3,7 @@ package workspace
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -363,16 +364,89 @@ func TestKataSandboxShape(t *testing.T) {
 	}
 }
 
-// What can be stopped and kept: a sandbox on claims, under a runtime whose
-// disks are not its VM's own.
+// What can be stopped and kept: a sandbox on a claim. A VM's is the VM
+// storage class's raw-block claim, the others' the integration's storage.
 func TestCanStop(t *testing.T) {
 	if CanStop("pvc") != nil || CanStop("emptydir") == nil {
 		t.Error("storage")
 	}
-	for rt, ok := range map[envport.Runtime]bool{envport.RuntimePrivileged: true, envport.RuntimeSysbox: true, envport.RuntimeKata: false, "gvisor": false} {
-		if err := CanStopUnder(rt); (err == nil) != ok {
-			t.Errorf("%s: %v", rt, err)
+	for _, c := range []struct {
+		rt               envport.Runtime
+		storage, vmClass string
+		ok               bool
+	}{
+		{envport.RuntimePrivileged, "pvc", "", true},
+		{envport.RuntimeSysbox, "pvc", "", true},
+		{envport.RuntimeSysbox, "emptydir", "block", false},
+		{envport.RuntimeKata, "pvc", "", false},
+		{envport.RuntimeKata, "emptydir", "block", true},
+		{"gvisor", "pvc", "block", false},
+	} {
+		if err := CanStopUnder(c.rt, c.storage, c.vmClass); (err == nil) != c.ok {
+			t.Errorf("%+v: %v", c, err)
 		}
+	}
+}
+
+// With a VM storage class a kata sandbox keeps the run on one raw-block
+// claim from it, formatted and mounted by the sandbox: the claim a device in
+// the sandbox container alone, the init containers and the relay on the
+// seeded run volume, which the sandbox mounts aside.
+func TestAVMSandboxOnABlockClaim(t *testing.T) {
+	ctx := context.Background()
+	k := &kubeFake{secrets: map[string]string{}}
+	_, h := k8sWith(t, k, false)
+	h.cfg.Storage, h.cfg.StorageClass, h.cfg.VMStorageClass = "emptydir", "local-path", "block"
+	h.rt, _ = lookupRuntime(envport.RuntimeKata)
+	sized := envport.EnvSpec{Size: envport.SandboxSize{MilliCPU: 2000, MemoryMiB: 4096}}
+	if err := h.ensurePod(ctx, "w", sized, false, egressgw.Attachment{}, discard); err != nil {
+		t.Fatal(err)
+	}
+	var pvc kube.PersistentVolumeClaim
+	raw, _ := json.Marshal(k.obj(k.created, "PersistentVolumeClaim"))
+	if err := json.Unmarshal(raw, &pvc); err != nil {
+		t.Fatal(err)
+	}
+	if pvc.Metadata.Name != "w-data" || pvc.Spec.VolumeMode != "Block" || pvc.Spec.StorageClassName == nil || *pvc.Spec.StorageClassName != "block" {
+		t.Errorf("claim = %+v", pvc)
+	}
+	pod, err := h.podManifest(ctx, "w", sized, egressgw.Attachment{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sb := pod.Spec.Containers[0]
+	if !slices.Equal(sb.VolumeDevices, []kube.VolumeDevice{{Name: "data", DevicePath: vmDataDevice}}) {
+		t.Errorf("devices = %+v", sb.VolumeDevices)
+	}
+	env := map[string]string{}
+	for _, e := range sb.Env {
+		env[e.Name] = e.Value
+	}
+	if env["APO_DATA_DEVICE"] != vmDataDevice || env["APO_SEED_DIR"] != vmSeedDir || env["APO_RUN_DIR"] != h.a.folderFor("w") || env["APO_DEV_PRELUDE"] != "1" {
+		t.Errorf("env = %v", env)
+	}
+	for _, m := range sb.VolumeMounts {
+		if m.Name == "run" && m.MountPath != vmSeedDir || m.Name == "data" || m.Name == "docker" {
+			t.Errorf("sandbox mounts %+v", m)
+		}
+	}
+	for _, c := range pod.Spec.InitContainers {
+		if len(c.VolumeDevices) != 0 {
+			t.Errorf("%s takes the device", c.Name)
+		}
+	}
+	if claimUse(pod, "w") != "device" || h.canStop(envport.RuntimeKata) != nil {
+		t.Errorf("use %q, stop %v", claimUse(pod, "w"), h.canStop(envport.RuntimeKata))
+	}
+	// A rebuild never hands a VM's disk to a container's mount, or back.
+	h.rt, _ = lookupRuntime(envport.RuntimeSysbox)
+	h.cfg.Storage = "pvc"
+	sysbox, err := h.podManifest(ctx, "w", envport.EnvSpec{}, egressgw.Attachment{})
+	if err != nil || claimUse(sysbox, "w") != "mount" {
+		t.Fatalf("sysbox: %v %q", err, claimUse(sysbox, "w"))
+	}
+	if replace, note := shapeChange(pod, sysbox, "w"); replace || !strings.Contains(note, "between a VM and a container") {
+		t.Errorf("kata → sysbox: %v %q", replace, note)
 	}
 }
 

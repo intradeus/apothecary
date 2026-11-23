@@ -57,9 +57,11 @@ func (k Kubernetes) Descriptor() Descriptor {
 			{Name: "gateway_image", Label: "Egress gateway image", Placeholder: d.GatewayImage},
 			{Name: "image_pull_policy", Label: "Image pull policy", Placeholder: orDefault(d.PullPolicy, "IfNotPresent")},
 			{Name: "storage", Label: "Workspace storage (pvc/emptydir)", Placeholder: "pvc",
-				Help: "Where a sandbox keeps its checkout and inner Docker data. pvc: a claim per run, kept while the run lives; stopped idle sandboxes keep it. emptydir: the node's disk, gone with the pod. A kata sandbox always gets emptyDirs of its own (disks in its VM), whatever this says: it cannot be stopped when idle."},
+				Help: "Where a sandbox keeps its checkout and inner Docker data. pvc: a claim per run, kept while the run lives; stopped idle sandboxes keep it. emptydir: the node's disk, gone with the pod. Not a kata sandbox's: see the VM storage class."},
 			{Name: "storage_class", Label: "Storage class", Help: "Must be a local or block filesystem: the inner docker daemon cannot run on NFS."},
 			{Name: "storage_size", Label: "Storage size per run", Placeholder: "20Gi"},
+			{Name: "vm_storage_class", Label: "VM storage class (kata)", Placeholder: "none: disks inside the VM",
+				Help: "A class that provisions raw block volumes (volumeMode: Block: EBS, TopoLVM, Longhorn, Ceph RBD; not k3s's local-path). Set, a kata sandbox keeps its checkout and inner Docker data on a block claim of storage size from it, a disk in its VM kept while the run lives, so it can stop when idle. Empty: on disks inside its VM, gone with its pod, and it never stops when idle."},
 			{Name: "runtime", Label: "Sandbox runtime (" + strings.Join(runtimeNames(), "/") + ")", Placeholder: orDefault(d.Runtime, string(envport.RuntimePrivileged)),
 				Help: "What isolates each sandbox. privileged: sandbox root is root on its node (CI, a cluster of your own). sysbox: unprivileged, in a user namespace of its own (hostUsers: false; sysbox-runc on the nodes, containerd 2.0.5+, sysbox 0.7+; README, cluster requirements). kata: a VM per sandbox (Kata Containers with Cloud Hypervisor, KVM on the nodes; sized sandboxes, on disks of their own that a stop would lose)."},
 			{Name: "runtimes", Label: "Approved runtimes (comma-separated)", Placeholder: orDefault(strings.Join(d.Runtimes, ","), "the default runtime alone"),
@@ -138,6 +140,7 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 			Forward:         d.Transport == "portforward",
 			Storage:         storage,
 			StorageClass:    cfg.Str("storage_class", ""),
+			VMStorageClass:  cfg.Str("vm_storage_class", ""),
 			StorageSize:     cfg.Str("storage_size", ""),
 			Runtime:         runtime,
 			RuntimeClasses:  classes,
@@ -292,11 +295,10 @@ func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, 
 			return envport.RuntimeChoice{}, nil, fmt.Errorf("kubernetes: runtime_class names a class for %s, which the integration does not approve", rt)
 		}
 	}
-	if err := workspaceadapter.CanStop(kubernetesStorage(cfg)); err != nil {
-		c.NoSleep = err.Error()
-	}
+	// Per runtime: a VM keeps its disks on the VM storage class, the others
+	// on the integration's storage.
 	for _, rt := range c.Approved {
-		if err := workspaceadapter.CanStopUnder(rt); err != nil {
+		if err := workspaceadapter.CanStopUnder(rt, kubernetesStorage(cfg), cfg.Str("vm_storage_class", "")); err != nil {
 			if c.NoSleepUnder == nil {
 				c.NoSleepUnder = map[envport.Runtime]string{}
 			}
@@ -307,7 +309,8 @@ func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, 
 }
 
 // kubernetesStorage is the integration's workspace storage (default pvc),
-// for every runtime but a VM one, whose disks are always its own emptyDirs.
+// for every runtime but a VM one, whose disks are its VM storage class's
+// raw-block claim, else emptyDirs of its own.
 func kubernetesStorage(cfg Config) string {
 	return strings.ToLower(cfg.Str("storage", "pvc"))
 }

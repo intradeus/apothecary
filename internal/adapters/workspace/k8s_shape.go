@@ -39,13 +39,27 @@ func podShape(rt sandboxRuntime, pod kube.Pod) string {
 
 // usesClaim: the pod keeps the run's checkout and inner docker data on the
 // run's claim, which outlives it.
-func usesClaim(pod kube.Pod, name string) bool {
+func usesClaim(pod kube.Pod, name string) bool { return claimUse(pod, name) != "" }
+
+// claimUse is how the pod holds the run's claim: "mount" (a filesystem
+// claim, mounted), "device" (a raw-block one, a VM's disk), "" not at all.
+// A claim's mode is fixed when it is made, so a pod of one use cannot take
+// over another's claim.
+func claimUse(pod kube.Pod, name string) string {
 	for _, v := range pod.Spec.Volumes {
-		if v.PersistentVolumeClaim != nil && v.PersistentVolumeClaim.ClaimName == dataClaimName(name) {
-			return true
+		if v.PersistentVolumeClaim == nil || v.PersistentVolumeClaim.ClaimName != dataClaimName(name) {
+			continue
 		}
+		for _, c := range append(pod.Spec.InitContainers, pod.Spec.Containers...) {
+			for _, d := range c.VolumeDevices {
+				if d.Name == v.Name {
+					return "device"
+				}
+			}
+		}
+		return "mount"
 	}
-	return false
+	return ""
 }
 
 // shapeChange is what a rebuild does with the running pod live, given the
@@ -58,8 +72,11 @@ func shapeChange(live, want kube.Pod, name string) (replace bool, note string) {
 	if live.Metadata.Annotations[shapeAnnotation] == want.Metadata.Annotations[shapeAnnotation] {
 		return false, ""
 	}
-	if usesClaim(live, name) && usesClaim(want, name) {
+	if use := claimUse(live, name); use != "" && use == claimUse(want, name) {
 		return true, ""
+	}
+	if usesClaim(live, name) && usesClaim(want, name) {
+		return false, "the workshop's sandbox runtime changed between a VM and a container: the run's claim is a disk for one and a filesystem for the other, so the change applies to the workshop's next run"
 	}
 	return false, "the workshop's sandbox size or runtime changed, but this sandbox keeps its checkout on disks that go with its pod: the change applies to the workshop's next run"
 }

@@ -63,8 +63,13 @@ change is to the images, the sandbox or the Kubernetes provisioner.
 In a sysbox workspace, `TestLiveK8sAssistantPod` skips and says why: under
 sysbox a k3d cluster on the workspace's docker cannot run a user-namespaced
 pod (`docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md`).
-That skip is expected, not a failure to work around; CI runs the test, and
-fails on any live-suite skip (`APOTHECARY_LIVE_STRICT`).
+That skip is expected, not a failure to work around. A kata workspace has
+a kernel of its own and runs user-namespaced pods, but a k3d cluster inside
+it cannot start its egress gateways: they need kernel WireGuard, which the
+stock guest kernel lacks
+(`docs/notes/2026-11-23-a-kata-workspace-runs-user-namespaced-pods-but-not-the-gateways.md`).
+Either way, CI runs the k8s suites and fails on any live-suite skip
+(`APOTHECARY_LIVE_STRICT`).
 
 Never run `build`, `build:images` or `deploy/images.sh … --push`: they
 build every platform's binaries or publish images.

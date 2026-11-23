@@ -132,6 +132,28 @@ workspaces:
   protectCIDRs: "10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"
   # -- The cluster's DNS domain.
   clusterDomain: cluster.local
+  # Kata's RuntimeClass, made by the chart for a cluster whose Kata nodes
+  # have none yet (deploy/k3s/install.sh --kata makes its own: leave this
+  # off there). It is cluster-wide: one release per cluster creates it.
+  kataRuntimeClass:
+    # -- Create it.
+    create: false
+    # -- Its name: the one Kata sandbox pods name (`kata`, or
+    # `runtimeClassName` when Kata is the default runtime).
+    name: kata
+    # -- The containerd runtime handler Kata is installed under.
+    handler: kata
+    # -- The VM's own CPU and memory, beyond the pod's limits: the scheduler
+    # counts them and the pod's cgroup holds them.
+    overhead:
+      cpu: 250m
+      memory: 320Mi
+    # -- Labels of the nodes that run Kata (KVM): Kata sandbox pods go only
+    # there, e.g. `{apothecary.dev/kata: "true"}`. Empty: any node.
+    nodeSelector: {}
+    # -- Tolerations Kata sandbox pods get, for Kata nodes tainted to keep
+    # other pods off.
+    tolerations: []
 
 # The assistant beside the flow, ticket and skill pages: one pod per person
 # who uses it, in the workspaces namespace, with that person's volume

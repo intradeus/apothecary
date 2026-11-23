@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -345,6 +346,76 @@ func TestASecondUseWaitsForTheWakeInFlight(t *testing.T) {
 	c.advance(time.Minute)
 	if h.e.use.IdleFor(id) == 0 {
 		t.Error("a failed use left its hold")
+	}
+}
+
+// statusHook calls hook on the first Status asked of it, before answering.
+type statusHook struct {
+	*fake.EnvProvisioner
+	asked atomic.Bool
+	hook  func()
+}
+
+func (s *statusHook) Status(ctx context.Context, id envport.EnvID) (envport.EnvStatus, error) {
+	if s.asked.CompareAndSwap(false, true) {
+		s.hook()
+	}
+	return s.EnvProvisioner.Status(ctx, id)
+}
+
+// A wake that found the workspace asleep, but whose claim another wake
+// took first (between its look and its claim), waits that wake out and
+// meets the workspace up: no error, no second wake. The first wake's look
+// (its first Status) starts the second and returns once that one holds
+// the claim, parked in its Provision; the second goes on only once the
+// first's look is over — its resolution closed, after the refused claim.
+func TestAWakeWhoseClaimWasTakenWaitsForTheOtherWake(t *testing.T) {
+	h, id, c := idleRun(t)
+	ctx := context.Background()
+	c.advance(time.Hour)
+	if slept := h.e.SleepIdle(ctx); len(slept) != 1 {
+		t.Fatalf("slept %v", slept)
+	}
+	claimed, lookOver := make(chan struct{}), make(chan struct{})
+	other := make(chan error, 1)
+	var opAtLookEnd string
+	var closed atomic.Bool
+	h.res.Release = func() {
+		if closed.CompareAndSwap(false, true) {
+			opAtLookEnd = h.e.envState.Op(id)
+			close(lookOver)
+		}
+	}
+	h.envp.WakeHook = func(envport.EnvID) {
+		h.envp.WakeHook = nil
+		close(claimed)
+		<-lookOver
+	}
+	h.res.Envp = &statusHook{EnvProvisioner: h.envp, hook: func() {
+		go func() { other <- h.e.WakeEnv(ctx, id, WokeByEditor) }()
+		<-claimed
+	}}
+	if err := h.e.WakeEnv(ctx, id, WokeByTerminal); err != nil {
+		t.Fatalf("the wake whose claim was taken = %v", err)
+	}
+	if err := <-other; err != nil {
+		t.Fatalf("the other wake = %v", err)
+	}
+	if opAtLookEnd != opWaking {
+		t.Errorf("the first look ended under op %q, want the other wake's", opAtLookEnd)
+	}
+	if len(h.envp.Woken) != 1 || h.e.envState.Statuses()[id] != envport.EnvRunning || h.e.envState.InFlight(id) {
+		t.Errorf("woken %v, status %s, op in flight %v", h.envp.Woken, h.e.envState.Statuses()[id], h.e.envState.InFlight(id))
+	}
+	var woke []string
+	evs, _ := h.store.Events(ctx, id, 0)
+	for _, e := range evs {
+		if p, ok := e.Payload.(*event.EnvWoke); ok {
+			woke = append(woke, p.By+":"+p.Error)
+		}
+	}
+	if !slices.Equal(woke, []string{WokeByEditor + ":"}) {
+		t.Errorf("env_woke = %v, want the other wake's alone", woke)
 	}
 }
 

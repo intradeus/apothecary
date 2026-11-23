@@ -113,16 +113,35 @@ func TestK8sAVMSandboxCannotSleep(t *testing.T) {
 	if a.CanSleep("") == nil {
 		t.Error("emptydir")
 	}
-	h.cfg.Storage = "pvc"
-
-	// The live pod decides: a kata pod refuses, a sysbox one (or none) stops.
-	k.pod = `{"spec":{"runtimeClassName":"kata"},"status":{"phase":"Running"}}`
-	if err := h.stopSandbox(ctx, "w"); err == nil || !strings.Contains(err.Error(), "runs in a VM") || len(k.deleted) != 0 {
-		t.Errorf("kata pod: %v, deleted %v", err, k.deleted)
+	// A VM storage class keeps a kata sandbox's disk, whatever the others'
+	// storage.
+	h.cfg.VMStorageClass = "block"
+	if err := a.CanSleep(envport.RuntimeKata); err != nil {
+		t.Errorf("kata on a block claim: %v", err)
 	}
-	k.pod = `{"spec":{"runtimeClassName":"sysbox-runc"},"status":{"phase":"Running"}}`
-	if err := h.stopSandbox(ctx, "w"); err != nil || !slices.Equal(k.deleted, []string{"pod/w"}) {
-		t.Errorf("sysbox pod: %v, deleted %v", err, k.deleted)
+	h.cfg.Storage, h.cfg.VMStorageClass = "pvc", ""
+
+	// The live pod decides, by what it stands on: a kata pod on disks of its
+	// own refuses, and so does any pod on an emptyDir; a pod on the run's
+	// claim (mounted, or a VM's raw-block disk) stops.
+	claim := `"volumes":[{"name":"data","persistentVolumeClaim":{"claimName":"w-data"}}]`
+	for _, c := range []struct{ pod, refusal string }{
+		{`{"spec":{"runtimeClassName":"kata"},"status":{"phase":"Running"}}`, "runs in a VM"},
+		{`{"spec":{"runtimeClassName":"sysbox-runc","volumes":[{"name":"data","emptyDir":{}}]},"status":{"phase":"Running"}}`, "emptydir storage"},
+	} {
+		k.pod, k.deleted = c.pod, nil
+		if err := h.stopSandbox(ctx, "w"); err == nil || !strings.Contains(err.Error(), c.refusal) || len(k.deleted) != 0 {
+			t.Errorf("%s: %v, deleted %v", c.pod, err, k.deleted)
+		}
+	}
+	for _, pod := range []string{
+		`{"spec":{"runtimeClassName":"sysbox-runc",` + claim + `},"status":{"phase":"Running"}}`,
+		`{"spec":{"runtimeClassName":"kata",` + claim + `,"containers":[{"name":"sandbox","volumeDevices":[{"name":"data","devicePath":"/dev/apo-data"}]}]},"status":{"phase":"Running"}}`,
+	} {
+		k.pod, k.deleted = pod, nil
+		if err := h.stopSandbox(ctx, "w"); err != nil || !slices.Equal(k.deleted, []string{"pod/w"}) {
+			t.Errorf("%s: %v, deleted %v", pod, err, k.deleted)
+		}
 	}
 	_, h2 := k8sWith(t, &kubeFake{secrets: map[string]string{}}, false, kubeRule{match: "get --request-timeout=30s pod", stderr: "boom", code: 1})
 	if err := h2.checkStop(ctx, "w"); err == nil {

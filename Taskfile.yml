@@ -703,7 +703,7 @@ tasks:
       - helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint >/dev/null
       - for: { var: VALUES }
         cmd: helm lint {{.CHART}} -f {{.ITEM}} && helm template lint {{.CHART}} -f {{.ITEM}} >/dev/null
-      - for: [workspaces.runtime=gvisor, 'workspaces.runtimes={gvisor}', 'workspaces.runtimes={privileged}', access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2, assistant.idle=soon, assistant.volumeDays=-1]
+      - for: [workspaces.runtime=gvisor, 'workspaces.runtimes={gvisor}', 'workspaces.runtimes={privileged}', access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2, assistant.idle=soon, assistant.volumeDays=-1, workspaces.kataRuntimeClass.handler=Kata_Runtime, 'workspaces.runtime=kata,workspaces.runtimeClassName=kata-clh,workspaces.kataRuntimeClass.create=true']
         cmd: '! helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint --set {{.ITEM}} >/dev/null 2>&1 || { echo "the schema must refuse {{.ITEM}}"; exit 1; }'
       - '{{.HELM_DOCS}} -c charts -s file --skip-version-footer -l warning -d | diff -u {{.CHART}}/README.md - || { echo "charts/apothecary/README.md is stale: run task chart:docs"; exit 1; }'
 
@@ -788,6 +788,8 @@ tasks:
   # it is up (and leaves it); otherwise creates it and deletes it afterwards.
   # Without /dev/kvm the task refuses to start; the Go suite run by hand with
   # APOTHECARY_LIVE_RUNTIME=kata skips (a failure under APOTHECARY_LIVE_STRICT).
+  # The sandboxes keep the run on a raw-block claim from the rig's apo-block
+  # class, so the lifecycle sleeps and wakes them as it does the others.
   # Inside the Kata sandbox it also starts a Kubernetes node and a
   # user-namespaced pod on it (APOTHECARY_LIVE_NESTED_K8S, the k3s of
   # deploy/kata/kata.env): what `task sandbox:test:k8s` run inside the
@@ -814,8 +816,9 @@ tasks:
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY=IfNotPresent
         APOTHECARY_LIVE_RUNTIME=kata
+        APOTHECARY_LIVE_VM_STORAGE_CLASS=apo-block
         APOTHECARY_LIVE_NESTED_K8S=$K3S_IMAGE
-        go test -tags live -count=1 -timeout 40m -run 'TestLiveK8sLifecycle$|TestLiveK8sRuntimeProbe' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
+        go test -tags live -count=1 -timeout 40m -run 'TestLiveK8sLifecycle$|TestLiveK8sRuntimeProbe|TestLiveKataDiskLimit' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
 
   k8s:import:
     internal: true

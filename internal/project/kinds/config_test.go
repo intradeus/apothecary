@@ -619,6 +619,14 @@ func TestKubernetesSleepRefusals(t *testing.T) {
 	if why := c.SleepRefusal(envport.RuntimeSysbox); !strings.Contains(why, "emptydir storage") {
 		t.Errorf("sysbox on emptydir: %q", why)
 	}
+	// A VM storage class keeps kata's disks, whatever the others' storage.
+	c, err = k.RuntimeChoice(Config{Values: map[string]any{"runtime": "sysbox", "runtimes": "sysbox,kata", "storage": "emptydir", "vm_storage_class": "ebs-gp3"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SleepRefusal(envport.RuntimeKata) != "" || c.SleepRefusal(envport.RuntimeSysbox) == "" {
+		t.Errorf("kata on a block class: %v", c.NoSleepUnder)
+	}
 }
 
 func TestKubernetesBuildsAndCleansUp(t *testing.T) {

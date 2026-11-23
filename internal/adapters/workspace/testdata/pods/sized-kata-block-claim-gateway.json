@@ -1,0 +1,268 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "apo-x",
+    "labels": {
+      "apothecary.io/managed": "true",
+      "apothecary.io/project": "p1",
+      "apothecary.io/run": "apo-x",
+      "apothecary.io/sandbox": "true"
+    },
+    "annotations": {
+      "apothecary.io/project-name": "My App",
+      "apothecary.io/shape": "2ca4559e6a7233e5"
+    }
+  },
+  "spec": {
+    "restartPolicy": "Always",
+    "terminationGracePeriodSeconds": 30,
+    "runtimeClassName": "kata",
+    "automountServiceAccountToken": false,
+    "enableServiceLinks": false,
+    "dnsPolicy": "None",
+    "dnsConfig": {
+      "nameservers": [
+        "10.90.0.1"
+      ],
+      "searches": [
+        "ws.svc.cluster.local",
+        "svc.cluster.local",
+        "cluster.local"
+      ],
+      "options": [
+        {
+          "name": "ndots",
+          "value": "2"
+        }
+      ]
+    },
+    "hostname": "apo-x",
+    "initContainers": [
+      {
+        "name": "shim-seed",
+        "image": "shim:1",
+        "args": [
+          "seed",
+          "/var/lib/apothecary/runs/apo-x/shim"
+        ],
+        "volumeMounts": [
+          {
+            "name": "run",
+            "mountPath": "/var/lib/apothecary/runs/apo-x"
+          }
+        ]
+      },
+      {
+        "name": "tools-seed",
+        "image": "tools:1",
+        "args": [
+          "/var/lib/apothecary/runs/apo-x/tools"
+        ],
+        "volumeMounts": [
+          {
+            "name": "run",
+            "mountPath": "/var/lib/apothecary/runs/apo-x"
+          }
+        ]
+      },
+      {
+        "name": "wg",
+        "image": "sbx:1",
+        "command": [
+          "apo-wg-up"
+        ],
+        "env": [
+          {
+            "name": "GW_ENDPOINT",
+            "value": "10.43.9.9:51820"
+          },
+          {
+            "name": "GW_SVC_IP",
+            "value": "10.43.9.9"
+          },
+          {
+            "name": "ENGINE_IP",
+            "value": "10.43.0.20"
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "wg-secret",
+            "mountPath": "/secrets/wg",
+            "readOnly": true
+          },
+          {
+            "name": "apo",
+            "mountPath": "/run/apo"
+          }
+        ],
+        "securityContext": {
+          "privileged": true
+        },
+        "startupProbe": {
+          "exec": {
+            "command": [
+              "test",
+              "-f",
+              "/run/apo/wg-ready"
+            ]
+          },
+          "periodSeconds": 1,
+          "failureThreshold": 60
+        },
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
+      },
+      {
+        "name": "relay",
+        "image": "shim:1",
+        "args": [
+          "relay",
+          "--serve",
+          "0.0.0.0:7070",
+          "--dir",
+          "/var/lib/apothecary/runs/apo-x/shim",
+          "--token-file",
+          "/secrets/run/relay-token"
+        ],
+        "ports": [
+          {
+            "name": "relay",
+            "containerPort": 7070
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "run",
+            "mountPath": "/var/lib/apothecary/runs/apo-x"
+          },
+          {
+            "name": "run-secret",
+            "mountPath": "/secrets/run",
+            "readOnly": true
+          }
+        ],
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
+      }
+    ],
+    "containers": [
+      {
+        "name": "sandbox",
+        "image": "sbx:1",
+        "command": [
+          "apo-dockerd"
+        ],
+        "env": [
+          {
+            "name": "DOCKER_TLS_CERTDIR"
+          },
+          {
+            "name": "APO_DEV_PRELUDE",
+            "value": "1"
+          },
+          {
+            "name": "APO_DATA_DEVICE",
+            "value": "/dev/apo-data"
+          },
+          {
+            "name": "APO_RUN_DIR",
+            "value": "/var/lib/apothecary/runs/apo-x"
+          },
+          {
+            "name": "APO_SEED_DIR",
+            "value": "/var/lib/apo-seed"
+          },
+          {
+            "name": "APO_GATEWAY_IP",
+            "value": "10.90.0.1"
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "run",
+            "mountPath": "/var/lib/apo-seed"
+          },
+          {
+            "name": "apo",
+            "mountPath": "/run/apo"
+          }
+        ],
+        "volumeDevices": [
+          {
+            "name": "data",
+            "devicePath": "/dev/apo-data"
+          }
+        ],
+        "securityContext": {
+          "privileged": true
+        },
+        "readinessProbe": {
+          "exec": {
+            "command": [
+              "docker",
+              "version"
+            ]
+          },
+          "periodSeconds": 3,
+          "timeoutSeconds": 5,
+          "failureThreshold": 100
+        },
+        "resources": {
+          "requests": {
+            "cpu": "1000m",
+            "memory": "8192Mi"
+          },
+          "limits": {
+            "cpu": "4000m",
+            "memory": "8192Mi"
+          }
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "name": "apo",
+        "emptyDir": {}
+      },
+      {
+        "name": "run-secret",
+        "secret": {
+          "secretName": "apo-run-apo-x",
+          "defaultMode": 256
+        }
+      },
+      {
+        "name": "run",
+        "emptyDir": {
+          "sizeLimit": "4Gi"
+        }
+      },
+      {
+        "name": "data",
+        "persistentVolumeClaim": {
+          "claimName": "apo-x-data"
+        }
+      },
+      {
+        "name": "wg-secret",
+        "secret": {
+          "secretName": "apo-wg-apo-x",
+          "defaultMode": 256
+        }
+      }
+    ]
+  },
+  "status": {}
+}

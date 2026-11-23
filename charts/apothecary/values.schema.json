@@ -112,7 +112,19 @@
         },
         "privileged": { "type": "boolean" },
         "protectCIDRs": { "type": "string" },
-        "clusterDomain": { "type": "string" }
+        "clusterDomain": { "type": "string" },
+        "kataRuntimeClass": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": { "type": "boolean" },
+            "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" },
+            "handler": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+            "overhead": { "type": "object", "additionalProperties": { "type": ["string", "number"] } },
+            "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tolerations": { "type": "array", "items": { "type": "object" } }
+          }
+        }
       }
     },
     "assistant": {

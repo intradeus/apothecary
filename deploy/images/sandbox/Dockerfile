@@ -15,7 +15,8 @@ RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath -ldflags="-s -w" golang.zx2c4.
 
 FROM docker:29-dind
 ARG DEVCONTAINER_CLI_VERSION=0.86.0
-RUN apk add --no-cache bash git nodejs npm wireguard-tools-wg iproute2 curl coreutils findutils grep \
+# e2fsprogs: a Kata sandbox on a raw-block claim formats it (apo-dockerd).
+RUN apk add --no-cache bash git nodejs npm wireguard-tools-wg iproute2 curl coreutils findutils grep e2fsprogs \
     && npm install -g @devcontainers/cli@${DEVCONTAINER_CLI_VERSION} \
     && npm cache clean --force
 COPY --from=wireguard-go /out/wireguard /usr/local/bin/wireguard-go

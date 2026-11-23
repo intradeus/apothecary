@@ -92,6 +92,12 @@ Kubernetes: `>=1.29.0-0`
 | workspaces.privileged | bool | `false` | Older form of `runtime`, read only when that is empty: true is `privileged`, false is `sysbox`. |
 | workspaces.protectCIDRs | string | `"10.42.0.0/16,10.43.0.0/16,169.254.0.0/16"` | Destinations no workspace may reach through its gateway: the cluster's pod and service ranges and link-local metadata. The defaults are k3s's; set your cluster's (EKS: the VPC CIDR). |
 | workspaces.clusterDomain | string | `"cluster.local"` | The cluster's DNS domain. |
+| workspaces.kataRuntimeClass.create | bool | `false` | Create it. |
+| workspaces.kataRuntimeClass.name | string | `"kata"` | Its name: the one Kata sandbox pods name (`kata`, or `runtimeClassName` when Kata is the default runtime). |
+| workspaces.kataRuntimeClass.handler | string | `"kata"` | The containerd runtime handler Kata is installed under. |
+| workspaces.kataRuntimeClass.overhead | object | `{"cpu":"250m","memory":"320Mi"}` | The VM's own CPU and memory, beyond the pod's limits: the scheduler counts them and the pod's cgroup holds them. |
+| workspaces.kataRuntimeClass.nodeSelector | object | `{}` | Labels of the nodes that run Kata (KVM): Kata sandbox pods go only there, e.g. `{apothecary.dev/kata: "true"}`. Empty: any node. |
+| workspaces.kataRuntimeClass.tolerations | list | `[]` | Tolerations Kata sandbox pods get, for Kata nodes tainted to keep other pods off. |
 | assistant.enabled | bool | `true` | Run it. People still each choose their harness (Claude Code or opencode) in their settings. |
 | assistant.idle | string | `"30m"` | Stop a person's pod after this long unused; their volume stays. |
 | assistant.volumeDays | int | `30` | Delete a person's volume after this many days unused (0: never). |

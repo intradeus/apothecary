@@ -23,7 +23,11 @@
 #   - Kata's configuration (configuration-apothecary.toml, from the release's
 #     configuration-clh-runtime-rs.toml): each emptyDir an ext4 disk in the
 #     guest (block-plain), freed guest memory handed back, the mem-agent on;
-#   - the `kata` RuntimeClass, with the VM's own overhead.
+#   - the `kata` RuntimeClass, with the VM's own overhead;
+#   - raw block volumes, which a Kata sandbox's claim needs to be kept
+#     across a stop (the integration's VM storage class) and k3s's
+#     local-path cannot make: a storage class `apo-block` and a pool of
+#     local Block volumes on loop devices in the node (block_pool).
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
@@ -106,6 +110,62 @@ EOF
 
 kubectl_node() { docker exec -i "$NODE" kubectl "$@"; }
 
+# The Block pool: BLOCK_PVS local volumes of BLOCK_SIZE each, every one a
+# sparse file in the node's k3s volume on a loop device, offered through
+# the no-provisioner class apo-block. A volume a claim released is made
+# again from an empty file (a static volume is never reused with its old
+# disk), and one still bound is left. The live test's claims are 20Gi each
+# (storage_size's default): a sandbox, the cross-run check's second one.
+BLOCK_PVS=${BLOCK_PVS:-6}
+BLOCK_SIZE=20Gi
+block_pool() {
+  kubectl_node apply -f - >/dev/null <<'EOF'
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata: {name: apo-block}
+provisioner: kubernetes.io/no-provisioner
+volumeBindingMode: WaitForFirstConsumer
+EOF
+  local i pv phase
+  for i in $(seq 0 $((BLOCK_PVS - 1))); do
+    pv=apo-block-$i
+    phase=$(kubectl_node get pv "$pv" -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    case "$phase" in Available | Bound | Pending) continue ;; esac
+    [ -z "$phase" ] || kubectl_node delete pv "$pv" --wait=true >/dev/null
+    # A fresh sparse file (truncate's G is GiB: 20Gi is 20G) on a loop
+    # device of its own (made when the node's /dev lacks it: a privileged
+    # container's /dev is the host's at start).
+    local dev
+    dev=$(docker exec "$NODE" sh -euc '
+      img=/var/lib/rancher/k3s/apo-block/'"$pv"'.img
+      mkdir -p "${img%/*}"
+      for d in $(losetup -j "$img" | cut -d: -f1); do losetup -d "$d"; done
+      rm -f "$img"; truncate -s '"${BLOCK_SIZE%i}"' "$img"
+      d=$(losetup -f)
+      [ -e "$d" ] || mknod "$d" b 7 "${d#/dev/loop}"
+      losetup "$d" "$img"
+      echo "$d"')
+    kubectl_node apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: PersistentVolume
+metadata: {name: $pv}
+spec:
+  capacity: {storage: $BLOCK_SIZE}
+  volumeMode: Block
+  accessModes: [ReadWriteOnce]
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: apo-block
+  local: {path: $dev}
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - {key: kubernetes.io/hostname, operator: In, values: [$NODE]}
+EOF
+  done
+  say "Block pool: $BLOCK_PVS volumes of $BLOCK_SIZE (storage class apo-block)"
+}
+
 up() {
   [ -c /dev/kvm ] || die "no /dev/kvm on this host: Kata needs KVM"
   unpack
@@ -131,6 +191,7 @@ up() {
   done
   kubectl_node get nodes | grep -q ' Ready' || die "the node is not Ready after 3 minutes (docker logs $NODE)"
   runtime_class | kubectl_node apply -f - >/dev/null
+  block_pool
 
   # In a container of the docker daemon itself (the devcontainer), join the
   # node's network to reach it by address, as k8s:cluster does for k3d; on
@@ -160,6 +221,10 @@ down() {
   local self
   self=$("$ROOT/deploy/self-container.sh" id)
   [ -z "$self" ] || docker network disconnect "$NET" "$self" 2>/dev/null || true
+  # Loop devices are the host's: detach the pool's before its files go.
+  docker exec "$NODE" sh -c 'for f in /var/lib/rancher/k3s/apo-block/*.img; do
+      for d in $(losetup -j "$f" | cut -d: -f1); do losetup -d "$d"; done
+    done' 2>/dev/null || true
   docker rm -f "$NODE" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true
   docker volume rm "$K3S_VOL" >/dev/null 2>&1 || true

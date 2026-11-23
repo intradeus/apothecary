@@ -23,13 +23,15 @@ type sandboxRuntime struct {
 	// (hostUsers: false).
 	ownUserNamespace bool
 	// vm is a runtime whose pod is a virtual machine (Kata):
-	//   - no volumeMount.subPath (Kata does not support it), so the run
-	//     folder and the inner docker's data are a volume each, and always
-	//     emptyDirs of its own, whatever the integration's storage (which
-	//     the other runtimes keep): a block emptyDir is a disk in the guest,
-	//     while a claim from a directory-backed class arrives over virtio-fs,
-	//     where docker cannot keep its layers. So a VM sandbox cannot be
-	//     stopped and kept (CanStopUnder);
+	//   - no volumeMount.subPath (Kata does not support it), and never a
+	//     filesystem claim, whatever the integration's storage (which the
+	//     other runtimes keep): one arrives over virtio-fs, where docker
+	//     cannot keep its layers. Either the run's claim as a raw block
+	//     device from the VM storage class (KubeConfig.VMStorageClass), one
+	//     disk the sandbox formats and mounts, kept across a stop; or, with
+	//     no such class, the run folder and the inner docker's data on an
+	//     emptyDir each (a block emptyDir is a disk in the guest), gone with
+	//     the pod, so the sandbox cannot be stopped and kept (CanStopUnder);
 	//   - a minimal /dev in a privileged container, which the sandbox
 	//     completes before dockerd (APO_DEV_PRELUDE);
 	//   - a size, required: the pod's limits size the VM.
@@ -90,15 +92,30 @@ func CanStop(storage string) error {
 }
 
 // CanStopUnder says why a sandbox under runtime name cannot be stopped and
-// kept whatever the integration's storage: a VM's disks are emptyDirs of
-// its own (the vm trait), gone with its pod.
-func CanStopUnder(name envport.Runtime) error {
+// kept on this integration's storage: a VM's disks are the VM storage
+// class's raw-block claim, kept, or with no such class emptyDirs of its own
+// (the vm trait), gone with its pod; every other runtime's are storage's.
+func CanStopUnder(name envport.Runtime, storage, vmStorageClass string) error {
 	rt, err := lookupRuntime(name)
 	if err != nil {
 		return err
 	}
-	if rt.vm {
-		return fmt.Errorf("a %s sandbox keeps its checkout and containers on disks inside its VM, which go with its pod: it cannot be stopped and kept", name)
+	if !rt.vm {
+		return CanStop(storage)
+	}
+	if vmStorageClass == "" {
+		return fmt.Errorf("a %s sandbox keeps its checkout and containers on disks inside its VM, which go with its pod: stopping idle %s sandboxes needs the Kubernetes integration's VM storage class (a class that provisions raw block volumes)", name, name)
 	}
 	return nil
 }
+
+// A VM sandbox on its raw-block claim (KubeConfig.VMStorageClass): the
+// device's path in the sandbox container, where the init containers' run
+// volume is mounted aside (apo-dockerd binds its shim and tools into the
+// run folder on the disk), and that volume's bound: the shim and the tools
+// bundle (about 2.3 GB), never kept.
+const (
+	vmDataDevice = "/dev/apo-data"
+	vmSeedDir    = "/var/lib/apo-seed"
+	vmSeedSize   = "4Gi"
+)

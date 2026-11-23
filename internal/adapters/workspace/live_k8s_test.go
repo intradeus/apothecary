@@ -22,6 +22,10 @@ package workspace
 //     kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
 //     its sandboxes are sized, on emptyDir disks, and tunnel through
 //     wireguard-go (the stock guest kernel has no WireGuard).
+//   - APOTHECARY_LIVE_VM_STORAGE_CLASS: a class of raw block volumes for a
+//     kata sandbox's claim (the rig's apo-block); then its lifecycle sleeps
+//     and wakes like the others'. Unset, a kata sandbox is on disks of its
+//     own and the test checks that it refuses to sleep.
 //   - APOTHECARY_LIVE_NESTED_K8S=<k3s image>: also start a Kubernetes node
 //     inside the sandbox and a user-namespaced pod on it (liveNestedKubernetes),
 //     what this repository's own sandbox suites need. Only for a runtime that
@@ -202,6 +206,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 			EngineNamespace: ns,
 			Forward:         true,
 			Storage:         "pvc",
+			VMStorageClass:  os.Getenv("APOTHECARY_LIVE_VM_STORAGE_CLASS"),
 			Runtime:         runtime,
 			Firewall:        gateway,
 			// The tunnel either way: kernel WireGuard by default, userspace
@@ -450,14 +455,15 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	if caps := runtime.Capabilities(); nestedImage != "" && caps.NestedKubernetes && caps.UserNamespaces {
 		liveNestedKubernetes(ctx, t, a.host.(*k8sHost), name, nestedImage)
 	}
-	// Stop-on-idle: a sandbox on a claim sleeps and wakes; one on emptyDir
-	// storage (a VM runtime's) is refused, by design, and that refusal is
-	// what is checked — never a quiet pass over the part that did not run.
-	if err := a.CanSleep(runtime); vm {
+	// Stop-on-idle: a sandbox on a claim (a VM's raw-block one included)
+	// sleeps and wakes; a VM's on disks of its own is refused, by design, and
+	// that refusal is what is checked — never a quiet pass over the part
+	// that did not run.
+	if err := a.CanSleep(runtime); vm && os.Getenv("APOTHECARY_LIVE_VM_STORAGE_CLASS") == "" {
 		if err == nil {
 			t.Error("a sandbox on emptyDir storage says it can sleep: its checkout would go with the pod")
 		} else {
-			t.Logf("sleep and wake: not part of a %s sandbox's lifecycle (%v)", runtime, err)
+			t.Logf("sleep and wake: not part of a %s sandbox's lifecycle without a VM storage class (%v)", runtime, err)
 		}
 	} else if err != nil {
 		t.Errorf("a sandbox on a claim cannot sleep: %v", err)

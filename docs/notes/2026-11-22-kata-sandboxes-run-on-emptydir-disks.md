@@ -8,6 +8,11 @@ static, Cloud Hypervisor, the stock guest kernel 6.18.62).
 
 ## The decision: a Kata sandbox's disks are always its own emptyDirs
 
+(Since 2026-11-23, unless the integration names a VM storage class: then
+the run's claim is one raw-block disk in the VM, and the sandbox can stop.
+The note 2026-11-23-kata-sandboxes-keep-their-disk-on-a-raw-block-claim
+says how. Without one, everything below still holds.)
+
 A claim from a directory-backed class (k3s `local-path`, most `hostPath`
 provisioners) reaches the guest over virtio-fs, where docker cannot keep its
 layers. A block-backed class (EBS) or a raw-block claim might work, but each
@@ -40,7 +45,8 @@ This is the runtime's trait (`vm`), not the integration's storage:
   `discard`, so deleted files are freed on the host (three 500 MB
   write-and-delete cycles left 15 MB), and docker's churn does not evict a
   run. Each of the two volumes is bounded by the integration's
-  `storage_size`.
+  `storage_size`. CI's kata suite now holds the eviction
+  (`TestLiveKataDiskLimit`, 2026-11-23).
 - **Sizing**: a pod limited to 4 GiB and 2 CPUs gets a guest with 3,966 MiB
   and 3 vCPUs (Kata adds its one default vCPU). With
   `static_sandbox_resource_mgmt`, the VM is the limit and no more. The pod's
@@ -91,12 +97,12 @@ costs one kubectl process, which is fine for a dev engine.
 
 ## Not done here
 
-- The chart does not install Kata's RuntimeClass: installing Kata is the
-  cluster's job. `deploy/k3s/install.sh --kata` does it on a k3s box, and
-  CI runs a strict Kata suite (both in the note
-  2026-11-22-kata-runs-in-ci-with-a-nested-cluster-inside-its-sandbox). EKS
-  with nested virtualisation is documented (`docs/kubernetes.md`) and
-  untried.
+- Installing Kata is the cluster's job. `deploy/k3s/install.sh --kata`
+  does it on a k3s box, and CI runs a strict Kata suite (both in the note
+  2026-11-22-kata-runs-in-ci-with-a-nested-cluster-inside-its-sandbox). The
+  chart makes the RuntimeClass when asked (2026-11-23,
+  the-chart-can-make-the-kata-runtimeclass). EKS with nested
+  virtualisation is documented (`docs/kubernetes.md`) and untried.
 - Kernel WireGuard in the guest needs a kernel built with it; the stock one
   tunnels through wireguard-go (phase 4).
 
