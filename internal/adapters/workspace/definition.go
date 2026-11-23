@@ -11,12 +11,16 @@ import (
 )
 
 // Definition is how a repo describes its workspace, and how to build and enter
-// it inside a sandbox's docker daemon. The repo picks it (Detect, first match
-// wins) — it is a property of the checkout, never of the provisioner.
+// it inside a run's sandbox (a devcontainer: in the sandbox's own docker
+// daemon). The repo picks it (Detect, first match wins) — it is a property of
+// the checkout, never of the provisioner or of the sandbox's runtime.
 type Definition interface {
 	// Name is stable and recorded per run, so an env keeps its definition
 	// across engine restarts without re-detecting.
 	Name() string
+	// Needs is what the definition asks of the sandbox's runtime; a runtime
+	// that cannot give it is refused before anything is built.
+	Needs() envport.RuntimeCapabilities
 	Detect(ctx context.Context, fsys sandboxFS, src string) bool
 	// Up builds (or reuses) and starts the workspace container, WITHOUT the
 	// repo's lifecycle hooks: RunUserCommands runs them once the adapter has

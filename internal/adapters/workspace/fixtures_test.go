@@ -274,6 +274,9 @@ type testHost struct {
 	prepErr    error
 	state      func(name string) (string, error) // nil: "running" once the run folder exists
 	destroys   []string
+	stops      []string
+	stopErr    error // stopSandbox's answer; canStopErr canStop's
+	canStopErr error
 	destroyErr error
 	resets     []string
 	resetErr   error
@@ -295,7 +298,7 @@ func (h *testHost) innerSock(name string) string {
 	return filepath.Join(h.a.folderFor(name), "docker.sock")
 }
 
-func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
+func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
 	a := h.a
 	if h.prepErr != nil {
 		return prep{}, h.prepErr
@@ -329,8 +332,8 @@ func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpe
 	return prep{src: src, shimDir: shimDir, toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def}, nil
 }
 
-func (h *testHost) unprivileged() bool       { return h.unpriv }
-func (h *testHost) unprivilegedHint() string { return "a runtime class with privileged off" }
+func (h *testHost) contained(envport.Runtime) bool { return h.unpriv }
+func (h *testHost) containedHint() string          { return "a runtime that contains the sandbox" }
 
 func (h *testHost) runInner(ctx context.Context, name, bin string, args []string, stdin []byte, tee io.Writer, extraEnv ...string) ([]byte, []byte, int, error) {
 	env := append([]string{"DOCKER_HOST=unix://" + h.innerSock(name)}, extraEnv...)
@@ -353,6 +356,14 @@ func (h *testHost) destroySandbox(_ context.Context, name string) error {
 	h.destroys = append(h.destroys, name)
 	return h.destroyErr
 }
+
+func (h *testHost) stopSandbox(_ context.Context, name string) error {
+	h.stops = append(h.stops, name)
+	return h.stopErr
+}
+
+func (h *testHost) canStop(envport.Runtime) error           { return h.canStopErr }
+func (h *testHost) checkStop(context.Context, string) error { return h.canStopErr }
 
 func (h *testHost) resetSandbox(_ context.Context, name string) error {
 	h.resets = append(h.resets, name)

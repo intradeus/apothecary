@@ -1,0 +1,26 @@
+# Sysbox by default, Kata for the workshops that choose it, on a cluster
+# whose Kata nodes (Kata Containers installed, KVM: bare metal or nested
+# virtualisation) are labelled and tainted for it. The chart makes the kata
+# RuntimeClass, whose scheduling places Kata sandbox pods on those nodes.
+# Kata sandboxes must be sized (System → Limits); for Kata sandboxes that
+# stop when idle, set the provisioner's VM storage class to a class that
+# provisions raw block volumes (docs/kubernetes.md, Installing Kata).
+#
+#   kubectl label node <node> apothecary.dev/kata=true
+#   kubectl taint node <node> apothecary.dev/kata=true:NoSchedule
+masterKey: ci-placeholder
+postgres:
+  password: ci-placeholder
+
+workspaces:
+  runtime: sysbox
+  runtimes: [sysbox, kata]
+  kataRuntimeClass:
+    create: true
+    nodeSelector:
+      apothecary.dev/kata: "true"
+    tolerations:
+      - key: apothecary.dev/kata
+        operator: Equal
+        value: "true"
+        effect: NoSchedule

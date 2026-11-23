@@ -22,6 +22,9 @@ import type {
 	AuthStatus,
 	CliLogin,
 	Limits,
+	SandboxRunUsage,
+	RuntimeOffer,
+	SandboxSize,
 	Me,
 	Permission,
 	SshKey,
@@ -464,7 +467,8 @@ export function toResourceSample(w: Wire.ResourceSample): ResourceSample {
 		memLimit: w.mem_limit,
 		netRx: w.net_rx,
 		netTx: w.net_tx,
-		pids: w.pids
+		pids: w.pids,
+		oomKills: w.oom_kills ?? 0
 	};
 }
 
@@ -918,6 +922,9 @@ function toWorkspacePolicy(w: Wire.ProjectView['workspace']): WorkspacePolicy {
 		services: list(w?.services).map(toServiceConfig),
 		browserEnabled: w?.browser?.enabled ?? false,
 		docker: w?.docker ?? false,
+		size: toSandboxSize(w?.size),
+		runtime: w?.runtime ?? '',
+		idleMinutes: w?.idle_minutes ?? 0,
 		editor: w?.editor
 			? {
 					theme: w.editor.theme,
@@ -1407,14 +1414,70 @@ export function fromSettings(s: Settings): Wire.Settings {
 export function fromLimits(l: Limits): Wire.LimitsInfo {
 	return {
 		max_concurrent_runs: l.maxConcurrentRuns ?? -1,
-		max_environments: l.maxEnvironments ?? -1
+		max_environments: l.maxEnvironments ?? -1,
+		sandbox: {
+			default: fromSandboxSize(l.sandbox?.default),
+			ceiling: fromSandboxSize(l.sandbox?.ceiling),
+			idle_minutes: l.sandbox?.idleMinutes ?? 0
+		}
 	};
 }
 
 export function toLimits(w: Wire.LimitsInfo): Limits {
 	return {
 		maxConcurrentRuns: w.max_concurrent_runs < 0 ? null : w.max_concurrent_runs,
-		maxEnvironments: w.max_environments < 0 ? null : w.max_environments
+		maxEnvironments: w.max_environments < 0 ? null : w.max_environments,
+		sandbox: {
+			default: toSandboxSize(w.sandbox?.default),
+			ceiling: toSandboxSize(w.sandbox?.ceiling),
+			idleMinutes: w.sandbox?.idle_minutes ?? 0
+		}
+	};
+}
+
+// --- sandbox sizes ------------------------------------------------------------
+
+/** Thousandths of a core and MiB on the wire, CPUs and GiB here; 0 is unset. */
+export function toSandboxSize(w?: Wire.SandboxSize): SandboxSize {
+	return {
+		cpus: w?.milli_cpu ? w.milli_cpu / 1000 : null,
+		memoryGiB: w?.memory_mib ? w.memory_mib / 1024 : null
+	};
+}
+
+export function fromSandboxSize(s?: SandboxSize): Wire.SandboxSize {
+	return {
+		milli_cpu: s?.cpus ? Math.round(s.cpus * 1000) : 0,
+		memory_mib: s?.memoryGiB ? Math.round(s.memoryGiB * 1024) : 0
+	};
+}
+
+export function toSandboxRunUsage(w: Wire.RunUsage): SandboxRunUsage {
+	return {
+		runId: w.run_id,
+		peakMem: w.peak_mem,
+		memLimit: w.mem_limit,
+		oomKills: w.oom_kills,
+		at: w.at
+	};
+}
+
+export function toRuntimeOffer(w: Wire.RuntimeOffer): RuntimeOffer {
+	return {
+		offered: w.offered,
+		default: w.default,
+		approved: list(w.approved).map((r) => ({
+			name: r.name,
+			capabilities: {
+				nestedContainers: r.capabilities.nested_containers,
+				nestedKubernetes: r.capabilities.nested_kubernetes,
+				userNamespaces: r.capabilities.user_namespaces,
+				contained: r.capabilities.contained
+			},
+			noSleep: r.noSleep || undefined
+		})),
+		error: w.error || undefined,
+		noSleep: w.noSleep || undefined
 	};
 }
 

@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -490,5 +491,72 @@ func TestServiceErrorStatuses(t *testing.T) {
 	}
 	if w := call(x.srv.getRunServices, "GET", "/", "", testUser, map[string]string{"id": "gone"}); w.Code != http.StatusNotFound {
 		t.Errorf("services of nothing = %d %s", w.Code, w.Body)
+	}
+}
+
+// Wake starts a workspace stopped when idle; one that will not come back is
+// a 502 saying why, and an awake one is left alone.
+func TestWakeWorkspace(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	id := x.createTicket(t, "T")
+	x.e.Wait(id)
+	_, d := x.do(t, "GET", "/api/runs/"+id, nil, nil)
+	var detail struct {
+		Run struct {
+			EnvID string `json:"env_id"`
+		} `json:"run"`
+	}
+	if err := json.Unmarshal(d, &detail); err != nil || detail.Run.EnvID == "" {
+		t.Fatalf("run detail: %v %s", err, d)
+	}
+	v := detail.Run
+	path := "/api/runs/" + id + "/wake"
+	if res, body := x.do(t, "POST", path, nil, nil); res.StatusCode != http.StatusNoContent || len(x.envp.Woken) != 0 {
+		t.Fatalf("awake = %d %s, woken %v", res.StatusCode, body, x.envp.Woken)
+	}
+	// What the engine's sweep does: the sandbox stopped, its status recorded.
+	sleep := func() {
+		t.Helper()
+		if err := x.envp.Sleep(context.Background(), envport.EnvID(v.EnvID)); err != nil {
+			t.Fatal(err)
+		}
+		x.srv.EnvState.SetStatus(id, envport.EnvAsleep)
+	}
+	sleep()
+	// Another op on the workspace: try again later.
+	rel, err := x.srv.EnvState.Begin(id, "rebuilding")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res, body := x.do(t, "POST", path, nil, nil); res.StatusCode != http.StatusServiceUnavailable || res.Header.Get("Retry-After") == "" {
+		t.Errorf("wake under a rebuild = %d %s", res.StatusCode, body)
+	}
+	if res, body := x.do(t, "GET", "/api/runs/"+id+"/workspace/tree", nil, nil); res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("files under a rebuild = %d %s", res.StatusCode, body)
+	}
+	rel(nil)
+	x.envp.WakeErr = errors.New("no node has room")
+	if res, body := x.do(t, "POST", path, nil, nil); res.StatusCode != http.StatusBadGateway || !strings.Contains(string(body), "no node has room") {
+		t.Errorf("failed wake = %d %s", res.StatusCode, body)
+	}
+	x.envp.WakeErr = nil
+	if res, body := x.do(t, "POST", path, nil, nil); res.StatusCode != http.StatusNoContent || len(x.envp.Woken) != 1 {
+		t.Errorf("wake = %d %s, woken %v", res.StatusCode, body, x.envp.Woken)
+	}
+	// Opening the editor wakes it too, before anything else.
+	sleep()
+	x.do(t, "POST", "/api/runs/"+id+"/open-editor", nil, nil)
+	if len(x.envp.Woken) != 2 {
+		t.Errorf("the editor did not wake it: %v", x.envp.Woken)
+	}
+	// So does reading its files: the Files pane, Changes, a diff.
+	sleep()
+	x.do(t, "GET", "/api/runs/"+id+"/workspace/tree", nil, nil)
+	if len(x.envp.Woken) != 3 {
+		t.Errorf("the Files view did not wake it: %v", x.envp.Woken)
+	}
+	evs, _ := x.store.Events(context.Background(), id, 0)
+	if p, ok := evs[len(evs)-1].Payload.(*event.EnvWoke); !ok || p.By != engine.WokeByFiles {
+		t.Errorf("last event = %+v, want a wake by files", evs[len(evs)-1].Payload)
 	}
 }

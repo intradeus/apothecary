@@ -115,6 +115,19 @@ type EnvSpec struct {
 	// declare it itself. Gated by the deployment's daemon door like a repo's
 	// own declaration.
 	Docker bool
+	// Size is what the sandbox may use, already resolved against the
+	// instance's default and ceiling (SandboxPolicy.Effective). Zero fields:
+	// no size. It applies when the sandbox is created (a provision, a
+	// rebuild that replaces it), never to a live one.
+	Size SandboxSize
+	// SizeCap is the most the sandbox may use where Size sets nothing (the
+	// instance's ceiling, SandboxPolicy.Cap): a limit, never a reservation.
+	// Zero fields: no limit.
+	SizeCap SandboxSize
+	// Runtime is what isolates the sandbox, already chosen against the
+	// provisioner's offer (RuntimeChoice.Choose); "" is its default. Like
+	// Size, it applies when the sandbox is created.
+	Runtime Runtime
 	// GitUser/GitPass are the repository host git credential (see type
 	// comment). Empty for public repos.
 	GitUser string
@@ -161,6 +174,10 @@ const (
 	// restarted under it); a rebuild replaces it. Adapters return it: the
 	// provisioner answered, and what it says is that nothing runs in there.
 	EnvBroken EnvStatus = "broken"
+	// EnvAsleep: the sandbox was stopped on purpose (EnvSleeper.Sleep): no
+	// pod, its storage kept. Provision of the same spec wakes it, checkout
+	// and containers included; nothing else runs in it until then.
+	EnvAsleep EnvStatus = "asleep"
 	// EnvUnknown is NOT returned by any adapter's Status — a provisioner
 	// either knows a workspace's state (broken included) or errors. The
 	// engine synthesizes it when a status probe fails (provisioner
@@ -386,6 +403,10 @@ type ResourceSample struct {
 	NetRx    int64     `json:"net_rx"`    // cumulative bytes received
 	NetTx    int64     `json:"net_tx"`    // cumulative bytes sent
 	PIDs     int       `json:"pids"`
+	// OOMKills counts processes the kernel killed in the environment for
+	// reaching its memory limit, cumulative since the sandbox started: a
+	// rise is a run that needs more memory than its size gives it.
+	OOMKills int `json:"oom_kills"`
 }
 
 // ResourceSampler is an OPTIONAL EnvProvisioner capability: one resource
@@ -434,4 +455,15 @@ type WorkspaceSSH interface {
 // Service, not a loopback relay. Absent ⇒ the engine's configured URL.
 type EngineURLProvider interface {
 	EngineURL(env EnvID) string
+}
+
+// EnvSleeper is a provisioner that can stop a workspace and keep it: its
+// storage, its secrets and its egress identity stay, its processes go.
+// Provision with the same spec wakes it (EnvAsleep until then).
+type EnvSleeper interface {
+	// CanSleep says whether this provisioner's workspaces under runtime rt
+	// ("" its default) can sleep, and why not (storage that goes with the
+	// sandbox).
+	CanSleep(rt Runtime) error
+	Sleep(ctx context.Context, env EnvID) error
 }

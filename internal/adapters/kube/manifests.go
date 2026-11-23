@@ -11,8 +11,10 @@ type TypeMeta struct {
 }
 
 type ObjectMeta struct {
-	Name        string            `json:"name,omitempty"`
-	Namespace   string            `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Namespace string `json:"namespace,omitempty"`
+	// UID is the API server's, set on what it answers (never on a manifest).
+	UID         string            `json:"uid,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
@@ -84,6 +86,7 @@ type Container struct {
 	Env             []EnvVar              `json:"env,omitempty"`
 	Ports           []ContainerPort       `json:"ports,omitempty"`
 	VolumeMounts    []VolumeMount         `json:"volumeMounts,omitempty"`
+	VolumeDevices   []VolumeDevice        `json:"volumeDevices,omitempty"` // a raw-block claim, as a device node
 	SecurityContext *SecurityContext      `json:"securityContext,omitempty"`
 	ReadinessProbe  *Probe                `json:"readinessProbe,omitempty"`
 	StartupProbe    *Probe                `json:"startupProbe,omitempty"`
@@ -123,6 +126,13 @@ type VolumeMount struct {
 	MountPath string `json:"mountPath"`
 	SubPath   string `json:"subPath,omitempty"`
 	ReadOnly  bool   `json:"readOnly,omitempty"`
+}
+
+// VolumeDevice is a raw-block claim (volumeMode: Block) in a container, as
+// the device node at DevicePath.
+type VolumeDevice struct {
+	Name       string `json:"name"`
+	DevicePath string `json:"devicePath"`
 }
 
 type SecurityContext struct {
@@ -203,6 +213,8 @@ type ContainerStatus struct {
 	Ready        bool           `json:"ready"`
 	RestartCount int            `json:"restartCount"`
 	State        ContainerState `json:"state,omitempty"`
+	// LastState is how the previous run of a restarted container ended.
+	LastState ContainerState `json:"lastState,omitempty"`
 }
 
 // ContainerState is which of its states a container is in (one is set).
@@ -246,6 +258,8 @@ type PVCSpec struct {
 	AccessModes      []string             `json:"accessModes"`
 	StorageClassName *string              `json:"storageClassName,omitempty"`
 	Resources        ResourceRequirements `json:"resources"`
+	// VolumeMode: "Block" is a raw device; "" is the default, Filesystem.
+	VolumeMode string `json:"volumeMode,omitempty"`
 }
 
 type Secret struct {

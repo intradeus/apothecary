@@ -56,6 +56,10 @@ type Server struct {
 	Kinds *kinds.Registry
 	// Ops runs integration tests / repo listing (the resolver); nil = 503.
 	Ops IntegrationOps
+	// Runtimes is what the instance's provisioner offers workshops for their
+	// sandbox runtime, and the check a saved workshop passes (the
+	// resolver); nil = no choice offered, nothing checked.
+	Runtimes RuntimeOffers
 	// Sources resolves ticketsource integrations for the ticket factory (the
 	// resolver again); nil = no remote tracker is read and the routes say so.
 	Sources tickets.Sources

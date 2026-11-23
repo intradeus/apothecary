@@ -2,6 +2,7 @@
 // run of it inherits.
 
 import type { ServiceConfig } from './service';
+import type { SandboxSize } from './sandbox';
 
 export interface Project {
 	id: string;
@@ -139,6 +140,15 @@ export interface WorkspacePolicy {
 	 *  docker-outside-of-docker feature itself — the engine adds it to the
 	 *  build. The instance's daemon door decides whether it is allowed. */
 	docker: boolean;
+	/** What each sandbox may use; absent or a null field takes the instance's
+	 *  default. Applies to the next provision or rebuild. */
+	size?: SandboxSize;
+	/** The sandbox runtime, one an admin approved; '' or absent is the
+	 *  provisioner's default. Applies to the next provision or rebuild. */
+	runtime?: string;
+	/** Minutes a sandbox may sit unused before it is stopped and kept: 0 or
+	 *  absent the instance's default, IDLE_NEVER never. */
+	idleMinutes?: number;
 }
 
 /** code-server defaults, applied as VS Code user settings when the browser

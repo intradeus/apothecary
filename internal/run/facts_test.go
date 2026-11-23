@@ -233,9 +233,26 @@ func TestFactBearing(t *testing.T) {
 			t.Errorf("%s is fact-bearing", ty)
 		}
 	}
-	for _, ty := range []event.Type{event.TypeSnapshotCaptured, event.TypeVerdictReceived, event.TypeEnvDestroyed} {
+	// A sandbox's sleep and wake are orthogonal to the run: a sleeping run's
+	// facts neither advance nor stop advancing over them.
+	for _, ty := range []event.Type{event.TypeSnapshotCaptured, event.TypeVerdictReceived, event.TypeEnvDestroyed, event.TypeEnvSlept, event.TypeEnvWoke} {
 		if FactBearing(ty) {
 			t.Errorf("%s is not fact-bearing", ty)
 		}
+	}
+}
+
+// A sandbox's sleep and wake leave the run's UpdatedAt where it was: they
+// are housekeeping, and a completed run's reaping window counts from its
+// last real change, not from the sweep that stopped its idle sandbox.
+func TestSleepAndWakeDoNotMoveUpdatedAt(t *testing.T) {
+	t0 := time.Date(2026, 11, 22, 12, 0, 0, 0, time.UTC)
+	evs := []event.Event{
+		{RunID: "r", TS: t0, Payload: &event.RunCreated{ProjectID: "p"}},
+		{RunID: "r", TS: t0.Add(time.Hour), Payload: &event.EnvSlept{EnvID: "e", IdleMinutes: 30}},
+		{RunID: "r", TS: t0.Add(2 * time.Hour), Payload: &event.EnvWoke{EnvID: "e", By: "terminal"}},
+	}
+	if v := Reduce(evs); !v.UpdatedAt.Equal(t0) {
+		t.Errorf("updated at %v, want %v", v.UpdatedAt, t0)
 	}
 }

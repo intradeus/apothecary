@@ -7,6 +7,7 @@ import (
 	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/run/event"
 )
 
@@ -78,5 +79,25 @@ func TestSchedulerGauges(t *testing.T) {
 	e.mu.Unlock()
 	if _, ok := read()["apothecary.engine.runs.slots"]; ok {
 		t.Error("slots reported while uncapped")
+	}
+}
+
+// Sandboxes are counted by runtime and badge state; an absent one is not
+// counted, and a run not yet reconciled says so.
+func TestSandboxCounts(t *testing.T) {
+	got := sandboxCounts(
+		map[string]string{"a": "running", "b": "running", "c": "asleep", "d": "absent", "e": "waking", "f": "running"},
+		map[string]envport.Runtime{"a": envport.RuntimeKata, "b": envport.RuntimeKata, "c": envport.RuntimeSysbox, "d": envport.RuntimeKata, "f": ""},
+	)
+	want := map[sandboxKey]int64{
+		{"kata", "running"}: 2, {"sysbox", "asleep"}: 1, {"unreconciled", "waking"}: 1, {"default", "running"}: 1,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("counts = %v", got)
+	}
+	for k, n := range want {
+		if got[k] != n {
+			t.Errorf("%v = %d, want %d (all %v)", k, got[k], n, got)
+		}
 	}
 }

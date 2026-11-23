@@ -4,7 +4,8 @@
 // another one holds.
 import { SvelteSet } from 'svelte/reactivity';
 
-export type HeaderAction = 'pause' | 'play' | 'stop' | 'retry' | 'archive' | 'editor' | 'rebuild';
+export type HeaderAction =
+	'pause' | 'play' | 'stop' | 'retry' | 'archive' | 'editor' | 'rebuild' | 'wake';
 
 export class HeaderActions {
 	#running = new SvelteSet<HeaderAction>();

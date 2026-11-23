@@ -83,7 +83,42 @@ type EnvProvisioner struct {
 	// dial of an env's ssh.sock connects to. nil = the workspace serves no
 	// ssh.
 	SSHDial func(env envport.EnvID) (net.Conn, error)
+	// Stop-on-idle (envport.EnvSleeper): CannotSleep is CanSleep's answer,
+	// SleepErr Sleep's; Slept records the envs put to sleep, Woken those a
+	// Provision of their spec woke (same id, files kept).
+	CannotSleep error
+	SleepErr    error
+	WakeErr     error // a Provision that would wake a sleeping workspace fails so
+	Slept       []envport.EnvID
+	Woken       []envport.EnvID
+	// SleepHook and WakeHook, when set, run as a Sleep, or a Provision that
+	// wakes, begins (no lock held): where a test puts what happens while a
+	// sandbox is being stopped or started.
+	SleepHook func(id envport.EnvID)
+	WakeHook  func(id envport.EnvID)
 }
+
+func (p *EnvProvisioner) CanSleep(envport.Runtime) error { return p.CannotSleep }
+
+func (p *EnvProvisioner) Sleep(_ context.Context, id envport.EnvID) error {
+	if p.SleepHook != nil {
+		p.SleepHook(id)
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.SleepErr != nil {
+		return p.SleepErr
+	}
+	e, ok := p.envs[id]
+	if !ok {
+		return fmt.Errorf("sleep %s: no such workspace", id)
+	}
+	e.Status = envport.EnvAsleep
+	p.Slept = append(p.Slept, id)
+	return nil
+}
+
+var _ envport.EnvSleeper = (*EnvProvisioner)(nil)
 
 // SSH implements envport.WorkspaceSSH over the SSHDial hook.
 func (f *EnvProvisioner) SSH(_ context.Context, env envport.EnvID) (envport.PortConn, error) {
@@ -115,6 +150,19 @@ func NewEnvProvisioner() *EnvProvisioner {
 }
 
 func (p *EnvProvisioner) Provision(_ context.Context, spec envport.EnvSpec) (envport.EnvID, error) {
+	if p.WakeHook != nil {
+		p.mu.Lock()
+		var asleep envport.EnvID
+		for id, e := range p.envs {
+			if spec.Name != "" && e.Spec.Name == spec.Name && e.Status == envport.EnvAsleep {
+				asleep = id
+			}
+		}
+		p.mu.Unlock()
+		if asleep != "" {
+			p.WakeHook(asleep)
+		}
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.provisions < len(p.ProvisionErrs) {
@@ -134,6 +182,17 @@ func (p *EnvProvisioner) Provision(_ context.Context, spec envport.EnvSpec) (env
 		}
 	} else {
 		p.provisions++
+	}
+	// A sleeping workspace of the same name wakes: same id, files kept.
+	for id, e := range p.envs {
+		if spec.Name != "" && e.Spec.Name == spec.Name && e.Status == envport.EnvAsleep {
+			if p.WakeErr != nil {
+				return "", p.WakeErr
+			}
+			e.Status = envport.EnvRunning
+			p.Woken = append(p.Woken, id)
+			return id, nil
+		}
 	}
 	p.nextID++
 	id := envport.EnvID(fmt.Sprintf("env-%d", p.nextID))

@@ -117,14 +117,14 @@ func TestDaemonDoorFollowsTheSetting(t *testing.T) {
 			a := newTestAdapter(t, &scriptRunner{})
 			a.cfg.WorkspaceDocker = c.setting
 			hostOf(t, a).unpriv = c.unpriv
-			if a.doorOpen() != c.open {
-				t.Fatalf("doorOpen = %v, want %v", a.doorOpen(), c.open)
+			if a.doorOpen("") != c.open {
+				t.Fatalf("doorOpen = %v, want %v", a.doorOpen(""), c.open)
 			}
 			// Nothing asked: never a refusal, whatever the door.
-			if err := a.checkDaemonDoor(""); err != nil {
+			if err := a.checkDaemonDoor("", ""); err != nil {
 				t.Errorf("no ask refused: %v", err)
 			}
-			if err := a.checkDaemonDoor("feature x"); (err == nil) != c.open {
+			if err := a.checkDaemonDoor("feature x", ""); (err == nil) != c.open {
 				t.Errorf("an ask with the door open=%v: err = %v", c.open, err)
 			}
 		})
@@ -161,7 +161,7 @@ func TestProvisionRefusesDaemonDoorWhenClosed(t *testing.T) {
 	for _, want := range []string{
 		"feature ghcr.io/devcontainers/features/docker-outside-of-docker:1",
 		"root on the host",
-		hostOf(t, a).unprivilegedHint(), // how this host gets unprivileged
+		hostOf(t, a).containedHint(), // how this host gets a contained sandbox
 		"APOTHECARY_WORKSPACE_DOCKER=on",
 		"Unprivileged sandboxes",
 	} {
@@ -184,7 +184,7 @@ func TestProvisionRefusesDaemonDoorWhenOff(t *testing.T) {
 	armSandbox(t, a, "apothecary-run1")
 	doorRepo(t, a, "apothecary-run1")
 	_, err := a.Provision(context.Background(), doorSpec)
-	if err == nil || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER=off") || strings.Contains(err.Error(), hostOf(t, a).unprivilegedHint()) {
+	if err == nil || !strings.Contains(err.Error(), "APOTHECARY_WORKSPACE_DOCKER=off") || strings.Contains(err.Error(), hostOf(t, a).containedHint()) {
 		t.Fatalf("err = %v", err)
 	}
 	if len(r.calls) != 0 {

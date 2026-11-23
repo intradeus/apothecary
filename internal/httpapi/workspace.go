@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,7 @@ import (
 	"apothecary/internal/engine/ask"
 	"apothecary/internal/engine/mrs"
 	"apothecary/internal/run/event"
+	"apothecary/internal/workspace/envstate"
 	"apothecary/internal/workspace/sidecar"
 	"apothecary/internal/workspace/wsinfo"
 )
@@ -108,8 +110,17 @@ func (s *Server) deleteHold(w http.ResponseWriter, r *http.Request) {
 }
 
 // workspace resolves the run's sidecar and the checkout ?repo= names (the
-// primary when absent), answering the error itself.
+// primary when absent), answering the error itself. Reading the workspace
+// is a use of it (Files, Changes, Diff): held for the request, and woken
+// first when it was stopped when idle.
 func (s *Server) workspace(w http.ResponseWriter, r *http.Request) (*sidecar.Client, wsinfo.Checkout, bool) {
+	return s.workspaceFor(w, r, engine.WokeByFiles)
+}
+
+func (s *Server) workspaceFor(w http.ResponseWriter, r *http.Request, by string) (*sidecar.Client, wsinfo.Checkout, bool) {
+	if !s.useFor(w, r, by) {
+		return nil, wsinfo.Checkout{}, false
+	}
 	c, co, err := s.Workspaces.Workspace(r.Context(), r.PathValue("id"), r.URL.Query().Get("repo"))
 	if err != nil {
 		switch {
@@ -345,11 +356,42 @@ func (s *Server) holdsShell(r *http.Request) bool {
 // proxied to the sidecar. Not in the route table: a protocol switch is not
 // something OpenAPI describes, and the generated client would not use it.
 func (s *Server) serveTerminal(w http.ResponseWriter, r *http.Request) {
-	c, co, ok := s.workspace(w, r)
+	c, co, ok := s.workspaceFor(w, r, engine.WokeByTerminal)
 	if !ok {
 		return
 	}
 	c.TerminalProxy(co.Name).ServeHTTP(w, r)
+}
+
+// useFor holds the path's run's workspace for the rest of the request — the
+// terminal's whole session — and starts it first if it was stopped when
+// idle (engine.UseEnv), waiting out a sleep or a wake already in flight. It
+// answers for the caller when it cannot: 503 with Retry-After while another
+// workspace op (a rebuild, a destroy) holds it, 502 when it would not come
+// back. by names what woke it.
+func (s *Server) useFor(w http.ResponseWriter, r *http.Request, by string) bool {
+	if s.Runs == nil {
+		return true
+	}
+	release, err := s.Runs.UseEnv(r.Context(), r.PathValue("id"), by)
+	switch {
+	case err == nil:
+		context.AfterFunc(r.Context(), release)
+		return true
+	case errors.Is(err, envstate.ErrInFlight):
+		w.Header().Set("Retry-After", "5")
+		writeErr(w, http.StatusServiceUnavailable, "another operation on the workspace is in progress; try again in a moment")
+	default:
+		writeErr(w, http.StatusBadGateway, err.Error())
+	}
+	return false
+}
+
+// postWake starts a workspace stopped when idle, as opening it would.
+func (s *Server) postWake(w http.ResponseWriter, r *http.Request) {
+	if s.useFor(w, r, engine.WokeByPerson) {
+		w.WriteHeader(http.StatusNoContent)
+	}
 }
 
 // workspaceRoutes is a run's workspace: ports, the editor, resources, the Ask pane, SSH, files and changes.
@@ -362,6 +404,10 @@ func (s *Server) workspaceRoutes() []Route {
 			Summary: "How to reach the run's workspace over SSH: the command, the VS Code link, the door's fingerprint",
 			Doc:     "The SSH door is the engine's own listener (APOTHECARY_SSH_LISTEN); the username is the workspace, the key one registered on the account. The workspace's sidecar is started on demand, so the first answer may take a moment.",
 			Handler: s.getRunSSH, Returns: RunSSH{}, Scope: ScopeRun, Action: authz.RunRead},
+		{Method: "POST", Path: "/api/runs/{id}/wake", ID: "wakeRunWorkspace", Tag: tagWorkspace,
+			Summary: "Start the run's workspace again after it was stopped when idle",
+			Doc:     "A workspace stopped after its project's idle period keeps its checkout and containers; this starts it on them (a terminal, the editor, a port or an SSH session does the same on its own). 204 once it is up, or when it was not asleep; 503 with Retry-After while another request is waking it; 502 when it would not come back.",
+			Handler: s.postWake, Status: http.StatusNoContent, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "POST", Path: "/api/runs/{id}/expose-port", ID: "exposeRunPort", Tag: tagWorkspace,
 			Summary: "Publish a workspace port and get its browsable URL",
 			Handler: s.postExposePort, Body: ExposePortRequest{}, Returns: ExposedPort{}, Scope: ScopeRun, Action: authz.RunShell},

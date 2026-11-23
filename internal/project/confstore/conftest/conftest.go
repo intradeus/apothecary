@@ -10,6 +10,7 @@
 package conftest
 
 import (
+	"apothecary/internal/ports/envport"
 	"context"
 	"encoding/json"
 	"errors"
@@ -182,8 +183,11 @@ func fullProject() confstore.Project {
 			Services: []confstore.ServiceConfig{{Name: "default", Description: "the app", Start: "make up", Stop: "make down",
 				Health: confstore.ServiceHealth{HTTP: "http://localhost:3000", TCP: 3000, Command: "true", Timeout: "1m", Interval: "5s"},
 				Ports:  []confstore.ServicePort{{Port: 3000, Label: "web", Path: "/app", Protocol: "http"}}}},
-			Browser: confstore.BrowserConfig{Enabled: true},
-			Docker:  true,
+			Browser:     confstore.BrowserConfig{Enabled: true},
+			Docker:      true,
+			Size:        envport.SandboxSize{MilliCPU: 2500, MemoryMiB: 6144},
+			Runtime:     envport.RuntimeSysbox,
+			IdleMinutes: 45,
 		},
 		DefaultFlow: template(), CreatedAt: at(1), UpdatedAt: at(2)}
 }

@@ -8,7 +8,7 @@ import { deferred } from '$test/helpers';
 import { HeaderActions } from './actions.svelte';
 import WorkspaceControls from './WorkspaceControls.svelte';
 
-vi.mock('$lib/api', () => ({ api: { runs: { openEditor: vi.fn() } } }));
+vi.mock('$lib/api', () => ({ api: { runs: { openEditor: vi.fn(), wake: vi.fn() } } }));
 
 const props = { envBtn: null, rebuildBtn: null, envOpen: false, rebuildOpen: false };
 const paused = () => aRunStore(aRun({ state: 'paused', envId: 'env-1' }), { hasWorkspace: true });
@@ -71,6 +71,43 @@ describe('WorkspaceControls', () => {
 		});
 		render(WorkspaceControls, { rs, actions: new HeaderActions(), ...props });
 		expect(rebuildBtn()).toBeDisabled();
+	});
+
+	it('offers Wake on an asleep workspace only', () => {
+		render(WorkspaceControls, { rs: paused(), actions: new HeaderActions(), ...props });
+		expect(screen.queryByRole('button', { name: 'Wake' })).toBeNull();
+	});
+
+	it('wakes an asleep workspace, held while it wakes, and shows a failure', async () => {
+		const rs = aRunStore(aRun({ state: 'completed', envId: 'env-1', envStatus: 'asleep' }), {
+			hasWorkspace: true
+		});
+		const wake = deferred<void>();
+		vi.mocked(api.runs.wake).mockReturnValue(wake.promise);
+		render(WorkspaceControls, { rs, actions: new HeaderActions(), ...props });
+		const btn = screen.getByRole('button', { name: 'Wake' });
+		expect(btn).toHaveAttribute('title', expect.stringMatching(/stopped after sitting unused/));
+		await userEvent.click(btn);
+		expect(api.runs.wake).toHaveBeenCalledWith(rs.run!.id);
+		expect(btn).toBeDisabled();
+		wake.resolve();
+		await vi.waitFor(() => expect(btn).toBeEnabled());
+
+		vi.mocked(api.runs.wake).mockRejectedValue(new Error('no node has room'));
+		await userEvent.click(btn);
+		await vi.waitFor(() => expect(rs.error).toBe('no node has room'));
+	});
+
+	it('holds Wake from a viewer, and while the engine is waking it', () => {
+		fleet.projects = [aViewerProject({ id: 'p1' })];
+		const rs = aRunStore(
+			aRun({ state: 'completed', envId: 'env-1', envStatus: 'waking', projectId: 'p1' }),
+			{ hasWorkspace: true }
+		);
+		render(WorkspaceControls, { rs, actions: new HeaderActions(), ...props });
+		const btn = screen.getByRole('button', { name: 'Wake' });
+		expect(btn).toBeDisabled();
+		expect(btn).toHaveAttribute('title', 'Your role in this workshop does not allow this');
 	});
 
 	it('shows a failed editor on the store and closes the blank tab', async () => {

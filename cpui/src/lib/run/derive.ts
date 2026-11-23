@@ -681,6 +681,12 @@ export function describe(e: RunEvent): Described {
 			return { text: t('run.event.archived'), tone: '' };
 		case 'env_destroyed':
 			return { text: t('run.event.destroyed'), tone: '' };
+		case 'env_slept':
+			return { text: t('run.event.slept', { m: Number(p.idle_minutes) }), tone: '' };
+		case 'env_woke':
+			return p.error
+				? { text: t('run.event.wakeFailed', { error: String(p.error) }), tone: 'bad' }
+				: { text: t('run.event.woke', { by: String(p.by) }), tone: 'info' };
 		case 'env_destroy_failed':
 			return { text: t('run.event.destroyFailed', { error: String(p.error) }), tone: 'bad' };
 		case 'service_started': {

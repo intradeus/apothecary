@@ -103,16 +103,28 @@
         "namespace": { "type": "string", "minLength": 1 },
         "createNamespace": { "type": "boolean" },
         "podSecurity": { "enum": ["privileged", "baseline", "restricted"] },
+        "runtime": { "enum": ["", "kata", "privileged", "sysbox"] },
         "runtimeClassName": { "type": "string" },
+        "runtimes": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "enum": ["kata", "privileged", "sysbox"] }
+        },
         "privileged": { "type": "boolean" },
         "protectCIDRs": { "type": "string" },
-        "clusterDomain": { "type": "string" }
-      },
-      "if": { "properties": { "privileged": { "const": false } } },
-      "then": {
-        "description": "unprivileged sandboxes need workspaces.runtimeClassName (e.g. sysbox-runc); or set workspaces.privileged: true on a cluster of your own",
-        "properties": { "runtimeClassName": { "minLength": 1 } },
-        "required": ["runtimeClassName"]
+        "clusterDomain": { "type": "string" },
+        "kataRuntimeClass": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": { "type": "boolean" },
+            "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" },
+            "handler": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+            "overhead": { "type": "object", "additionalProperties": { "type": ["string", "number"] } },
+            "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tolerations": { "type": "array", "items": { "type": "object" } }
+          }
+        }
       }
     },
     "assistant": {

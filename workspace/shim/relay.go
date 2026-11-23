@@ -33,13 +33,17 @@ func runRelay(args []string) {
 	var serveAddr, dir, tokenFile string
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
-		case "--stdio":
-			// One connection over this process's stdio, then exit.
+		case "--stdio", "--stdio-ack":
+			// One connection over this process's stdio, then exit. With
+			// --stdio-ack, "OK" and a newline first, once the socket
+			// answered: the engine's dial through kubectl exec reads it, as
+			// it reads the mux's.
+			flag := args[i]
 			i++
 			if i >= len(args) {
-				fatal("--stdio needs <sock>")
+				fatal("%s needs <sock>", flag)
 			}
-			if err := pumpStdio(args[i], os.Stdin, os.Stdout); err != nil {
+			if err := pumpStdio(args[i], os.Stdin, os.Stdout, flag == "--stdio-ack"); err != nil {
 				fatal("stdio %s: %v", args[i], err)
 			}
 			os.Exit(0)

@@ -93,6 +93,12 @@ const (
 	TypeEnvRebuildStarted   Type = "env_rebuild_started"
 	TypeEnvRebuildCompleted Type = "env_rebuild_completed"
 	TypeEnvRebuildFailed    Type = "env_rebuild_failed"
+	// Stop-on-idle: the run's sandbox stopped after sitting unused (its
+	// storage kept), and woken again on the next use. Like a rebuild,
+	// orthogonal to the run's State; not fact-bearing (run.factBearing), so
+	// a sleeping run's facts do not advance.
+	TypeEnvSlept Type = "env_slept"
+	TypeEnvWoke  Type = "env_woke"
 	// A project service started, up, stopped, or failing to come up — by a
 	// stage, a person on the run page, or the engine when the chain whose
 	// stage started it ends. Its health flipping while it runs is live state
@@ -1055,6 +1061,22 @@ type EnvRebuildFailed struct {
 	Error string `json:"error"`
 }
 
+// EnvSlept: the sandbox was stopped after IdleMinutes without use.
+type EnvSlept struct {
+	EnvID       string `json:"env_id"`
+	IdleMinutes int    `json:"idle_minutes"`
+}
+
+// EnvWoke: the sleeping sandbox was started again, by what (a stage, a
+// terminal, a port...); Error when it would not come back.
+type EnvWoke struct {
+	EnvID string `json:"env_id"`
+	By    string `json:"by"`
+	Error string `json:"error,omitempty"`
+}
+
+func (*EnvSlept) EventType() Type        { return TypeEnvSlept }
+func (*EnvWoke) EventType() Type         { return TypeEnvWoke }
 func (*RunCreated) EventType() Type      { return TypeRunCreated }
 func (*EnvRequested) EventType() Type    { return TypeEnvRequested }
 func (*ImageBuilt) EventType() Type      { return TypeImageBuilt }

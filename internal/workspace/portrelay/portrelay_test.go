@@ -386,3 +386,135 @@ func TestForHost(t *testing.T) {
 		t.Errorf("host-routed ForHost = %q", got)
 	}
 }
+
+// trackedConn counts the dials through the port Track wrapped.
+type trackedConn struct {
+	envport.PortConn
+	dials *atomic.Int32
+}
+
+func (c trackedConn) Dial(ctx context.Context) (net.Conn, error) {
+	c.dials.Add(1)
+	return c.PortConn.Dial(ctx)
+}
+
+// roundTrip sends ping through u and returns what came back.
+func roundTrip(t *testing.T, u string) string {
+	t.Helper()
+	c := dialURL(t, u)
+	defer c.Close()
+	_, _ = c.Write([]byte("ping"))
+	_ = c.(*net.TCPConn).CloseWrite()
+	got, _ := io.ReadAll(c)
+	return string(got)
+}
+
+// An exposure outlives its workspace's sleep on the same URL: the first
+// connection wakes the workspace and is served by the exposure the wake
+// opens again — on a listener of its own, or routed by host.
+func TestAnExposureWakesItsSleepingWorkspace(t *testing.T) {
+	for _, routed := range []bool{false, true} {
+		m := New("127.0.0.1")
+		if routed {
+			m.RouteByHost("apps.example.com", "http")
+		}
+		var woken atomic.Int32
+		var u string
+		next := newEchoConn(t)
+		m.Wake = func(_ context.Context, runID string) error {
+			woken.Add(1)
+			// What the engine's wake does: the exposure opened again.
+			m.Reset(runID)
+			if again, err := m.Expose(runID, 3000, next); err != nil || again != u {
+				t.Errorf("re-exposed on %q, %v", again, err)
+			}
+			return nil
+		}
+		old := newEchoConn(t)
+		u, err := m.Expose("run1", 3000, old)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.Sleep("run1")
+		m.Sleep("run1") // twice is once
+		if !old.closed.Load() {
+			t.Error("the sleeping workspace's path stayed open")
+		}
+		if l := m.List("run1"); len(l) != 1 || l[0].URL != u {
+			t.Errorf("exposures while asleep = %v", l)
+		}
+		if routed {
+			_, _, pc, ok := m.Lookup("3000-run1.apps.example.com")
+			if !ok {
+				t.Fatal("asleep: not routed")
+			}
+			c, err := pc.Dial(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.Close()
+		} else if got := roundTrip(t, u); got != "pong-ping" {
+			t.Errorf("through the woken exposure: %q", got)
+		}
+		if woken.Load() != 1 {
+			t.Errorf("routed %v: woken %d times", routed, woken.Load())
+		}
+		m.CloseAll()
+	}
+}
+
+// A dial into a sleeping workspace says why it cannot go through: no way
+// to wake it, a wake that failed, a port the wake did not bring back.
+func TestADormantExposureThatCannotWake(t *testing.T) {
+	m := New("127.0.0.1")
+	m.RouteByHost("apps.example.com", "http")
+	if _, err := m.Expose("run1", 3000, &nopConn{}); err != nil {
+		t.Fatal(err)
+	}
+	m.Sleep("run1")
+	_, _, pc, _ := m.Lookup("3000-run1.apps.example.com")
+	ctx := context.Background()
+	if _, err := pc.Dial(ctx); err == nil || !strings.Contains(err.Error(), "stopped") {
+		t.Errorf("no wake = %v", err)
+	}
+	m.Wake = func(context.Context, string) error { return errors.New("no node") }
+	if _, err := pc.Dial(ctx); err == nil || !strings.Contains(err.Error(), "no node") {
+		t.Errorf("failed wake = %v", err)
+	}
+	m.Wake = func(context.Context, string) error { return nil }
+	if _, err := pc.Dial(ctx); err == nil || !strings.Contains(err.Error(), "did not come back") {
+		t.Errorf("still dormant = %v", err)
+	}
+	m.Wake = func(_ context.Context, runID string) error { m.Reset(runID); return nil }
+	if _, err := pc.Dial(ctx); err == nil || !strings.Contains(err.Error(), "did not come back") {
+		t.Errorf("gone after the wake = %v", err)
+	}
+	if _, err := pc.Dial(ctx); err == nil || !strings.Contains(err.Error(), "no longer exposed") {
+		t.Errorf("a dial after the exposure went = %v", err)
+	}
+}
+
+// Track wraps each exposure's port before it is served: what stop-on-idle
+// counts as use.
+func TestExposeServesTheTrackedPort(t *testing.T) {
+	m := New("127.0.0.1")
+	defer m.CloseAll()
+	var dials atomic.Int32
+	var runs []string
+	m.Track = func(runID string, pc envport.PortConn) envport.PortConn {
+		runs = append(runs, runID)
+		return trackedConn{PortConn: pc, dials: &dials}
+	}
+	u, err := m.Expose("run1", 3000, newEchoConn(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := dialURL(t, u)
+	_, _ = c.Write([]byte("ping"))
+	_ = c.(*net.TCPConn).CloseWrite()
+	got, _ := io.ReadAll(c)
+	c.Close()
+	if string(got) != "pong-ping" || dials.Load() != 1 || len(runs) != 1 || runs[0] != "run1" {
+		t.Errorf("got %q, %d dials, tracked %v", got, dials.Load(), runs)
+	}
+}

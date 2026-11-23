@@ -34,22 +34,88 @@ LINK_MTU=$(ip -o link show dev eth0 | awk '{for (i = 1; i <= NF; i++) if ($i == 
 MTU=$(( LINK_MTU - 60 ))   # outer IPv4 20 + UDP 8 + WireGuard 32
 
 sysctl -qw net.ipv6.conf.all.disable_ipv6=1 net.ipv4.conf.all.rp_filter=0 net.ipv4.conf.default.rp_filter=0 net.ipv4.conf.eth0.rp_filter=0
-ip link show wg0 >/dev/null 2>&1 || ip link add wg0 type wireguard
 (umask 077 && mkdir -p /etc/wireguard && cat /secrets/wg/wg-private-key > /etc/wireguard/wg0.key)
-wg set wg0 private-key /etc/wireguard/wg0.key \
-  peer "$(cat /secrets/wg/gw-public-key)" endpoint "$GW_ENDPOINT" allowed-ips 0.0.0.0/0 persistent-keepalive 25
-ip address replace "$(cat /secrets/wg/wg-ip)/32" dev wg0
-ip link set wg0 mtu "$MTU" up
-ip route replace "$GW_SVC_IP/32" via "$ORIG_GW" dev eth0
-ip route replace "$ENGINE_IP/32" via "$ORIG_GW" dev eth0
-ip route replace default dev wg0
-echo "$MTU" > /run/apo/mtu
-touch /run/apo/wg-ready
-echo "apo-wg-up: wg0 $(cat /secrets/wg/wg-ip) → $GW_ENDPOINT (mtu $MTU)"
 
-# Watchdog: a replaced gateway pod leaves a stale UDP conntrack entry behind
-# the Service IP; a new source port is a new flow, freshly translated.
-while sleep 60; do
+# The link: the kernel's WireGuard, else wireguard-go over TUN, the same wg0
+# for every wg and ip call after it. A kernel without the module (a Kata
+# guest's) refuses the link type; APO_WG_USERSPACE=1 takes userspace on a
+# kernel that has it (the live test, so CI covers both). The gateway always
+# runs the node's kernel WireGuard; the two interoperate.
+MODE=kernel
+[ "${APO_WG_USERSPACE:-}" = 1 ] && MODE=userspace
+# Why the kernel's link was refused, when it was: said before the fallback,
+# and again if the fallback fails too, so a node without the module (or a
+# sandbox without NET_ADMIN) is named for what it is, not as a missing TUN.
+KERNEL_WHY=
+userspace_link() {
+  if [ ! -c /dev/net/tun ]; then
+    # Not every runtime hands out the TUN device; with CAP_MKNOD (not in a
+    # user namespace) it can be made: misc device 10:200.
+    mkdir -p /dev/net
+    if ! mknod -m 0600 /dev/net/tun c 10 200; then
+      echo "apo-wg-up: no /dev/net/tun, and it cannot be made here: no WireGuard link" >&2
+      [ -z "$KERNEL_WHY" ] || echo "apo-wg-up: (the kernel's WireGuard was refused first: $KERNEL_WHY)" >&2
+      exit 1
+    fi
+  fi
+  # wg configures wireguard-go over its control socket, in
+  # /var/run/wireguard, which the hosts' wg AppArmor profile (header) does
+  # not let wg reach: keep the socket under /etc/wireguard, which it does.
+  mkdir -p /etc/wireguard/run
+  if [ ! -L /var/run/wireguard ]; then
+    rm -rf /var/run/wireguard
+    ln -s /etc/wireguard/run /var/run/wireguard
+  fi
+  # Foreground, as this script's child: the watchdog sees it die.
+  wireguard-go -f wg0 >/run/apo/wireguard-go.log 2>&1 &
+  echo $! > /run/apo/wireguard-go.pid
+  i=0
+  until ip link show wg0 >/dev/null 2>&1; do
+    i=$((i + 1))
+    if [ "$i" -gt 50 ] || ! kill -0 "$(cat /run/apo/wireguard-go.pid)" 2>/dev/null; then
+      echo "apo-wg-up: wireguard-go did not bring up wg0:" >&2
+      cat /run/apo/wireguard-go.log >&2
+      exit 1
+    fi
+    sleep 0.1
+  done
+}
+link() {
+  if [ "$MODE" = kernel ] && ! ip link show wg0 >/dev/null 2>&1; then
+    if ! KERNEL_WHY=$(ip link add wg0 type wireguard 2>&1); then
+      KERNEL_WHY=$(echo "$KERNEL_WHY" | tr '\n' ' ' | sed 's/ *$//')
+      echo "apo-wg-up: no kernel WireGuard link ($KERNEL_WHY); falling back to wireguard-go" >&2
+      MODE=userspace
+    fi
+  fi
+  if [ "$MODE" = userspace ] && ! ip link show wg0 >/dev/null 2>&1; then
+    userspace_link
+  fi
+  wg set wg0 private-key /etc/wireguard/wg0.key \
+    peer "$(cat /secrets/wg/gw-public-key)" endpoint "$GW_ENDPOINT" allowed-ips 0.0.0.0/0 persistent-keepalive 25
+  ip address replace "$(cat /secrets/wg/wg-ip)/32" dev wg0
+  ip link set wg0 mtu "$MTU" up
+  ip route replace "$GW_SVC_IP/32" via "$ORIG_GW" dev eth0
+  ip route replace "$ENGINE_IP/32" via "$ORIG_GW" dev eth0
+  ip route replace default dev wg0
+}
+link
+echo "$MTU" > /run/apo/mtu
+echo "$MODE" > /run/apo/wg-mode
+touch /run/apo/wg-ready
+echo "apo-wg-up: wg0 ($MODE WireGuard) $(cat /secrets/wg/wg-ip) → $GW_ENDPOINT (mtu $MTU)"
+
+# Watchdog: a dead wireguard-go takes wg0 (and the default route) with it:
+# start it again and put the link back. A replaced gateway pod leaves a
+# stale UDP conntrack entry behind the Service IP; a new source port is a
+# new flow, freshly translated.
+while sleep "${APO_WG_WATCH_EVERY:-60}"; do
+  if [ "$MODE" = userspace ] && ! kill -0 "$(cat /run/apo/wireguard-go.pid)" 2>/dev/null; then
+    echo "apo-wg-up: wireguard-go exited; restarting it" >&2
+    tail -n 5 /run/apo/wireguard-go.log >&2 || true
+    link
+    continue
+  fi
   hs=$(wg show wg0 latest-handshakes | awk '{print $2; exit}')
   if [ $(( $(date +%s) - ${hs:-0} )) -gt 180 ]; then
     echo "apo-wg-up: no handshake for 3m; rebinding" >&2

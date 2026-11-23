@@ -31,6 +31,7 @@ import (
 	"apothecary/internal/platform/config"
 	"apothecary/internal/platform/filestore"
 	"apothecary/internal/ports/browserport"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/notifyport"
 	"apothecary/internal/project/automation"
 	"apothecary/internal/project/channels"
@@ -53,20 +54,22 @@ import (
 // assertions check, at the composition root, that what main hands them
 // satisfies it.
 var (
-	_ automation.Runs    = (*engine.Engine)(nil)
-	_ automation.MRs     = (*mrs.Service)(nil)
-	_ envcheck.Flows     = (*engine.Engine)(nil)
-	_ engine.EnvTeardown = (*egress.Service)(nil)
-	_ engine.EnvTeardown = (*runports.Service)(nil)
-	_ engine.RunPorts    = (*runports.Service)(nil)
-	_ engine.EnvTeardown = (*browsermcp.Service)(nil)
-	_ services.Events    = (*engine.Engine)(nil)
-	_ services.Exposer   = (*runports.Service)(nil)
-	_ egress.AuditStore  = (*pgstore.Store)(nil)
-	_ ask.Engine         = (*engine.Engine)(nil)
-	_ ask.Store          = (*pgstore.Store)(nil)
-	_ analytics.Store    = (*pgstore.Store)(nil)
-	_ notices.Store      = (*pgstore.Store)(nil)
+	_ automation.Runs     = (*engine.Engine)(nil)
+	_ automation.MRs      = (*mrs.Service)(nil)
+	_ envcheck.Flows      = (*engine.Engine)(nil)
+	_ engine.EnvTeardown  = (*egress.Service)(nil)
+	_ engine.EnvSleepHook = (*egress.Service)(nil)
+	_ engine.EnvSleepHook = (*runports.Service)(nil)
+	_ engine.EnvTeardown  = (*runports.Service)(nil)
+	_ engine.RunPorts     = (*runports.Service)(nil)
+	_ engine.EnvTeardown  = (*browsermcp.Service)(nil)
+	_ services.Events     = (*engine.Engine)(nil)
+	_ services.Exposer    = (*runports.Service)(nil)
+	_ egress.AuditStore   = (*pgstore.Store)(nil)
+	_ ask.Engine          = (*engine.Engine)(nil)
+	_ ask.Store           = (*pgstore.Store)(nil)
+	_ analytics.Store     = (*pgstore.Store)(nil)
+	_ notices.Store       = (*pgstore.Store)(nil)
 )
 
 // app is the daemon, built: what serving and the background loops need.
@@ -194,8 +197,8 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// The daemon door under privileged sandboxes is the operator's explicit
 	// call (README, "Docker in workspaces"): say so once, where the choice is
 	// read off the deployment, not discovered from a run.
-	if boot.WorkspaceDocker == "on" && boot.K8s.Privileged != "off" {
-		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with privileged sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on its node")
+	if rt := uncontainedRuntime(boot.K8s.Runtime, boot.K8s.Runtimes); boot.WorkspaceDocker == "on" && rt != "" {
+		log.Warn("APOTHECARY_WORKSPACE_DOCKER=on with "+string(rt)+" sandboxes: a workspace whose devcontainer takes the sandbox's docker daemon (docker-outside-of-docker) runs as root on its node", "runtime", rt)
 	}
 	// The keeper is the one party that redeems provider refresh tokens
 	// (docs/model-providers-plan.md): harness credentials are opened through
@@ -212,9 +215,18 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	// the database and read on every admission: a change applies to the next
 	// run, no restart. Unset = the engine's defaults.
 	limits := engine.StoredLimits{Store: store}
+	// A run's sandbox size is its project's under the instance's default and
+	// ceiling, read on every resolve like the caps.
+	resolver.SetSandboxSizes(func(ctx context.Context) (envport.SandboxPolicy, error) {
+		l, err := limits.Limits(ctx)
+		return l.Sandbox, err
+	})
 	runs := &run.Reader{Store: store}
 	mrSvc := mrs.New(resolver, runs)
 	sampler := resources.New(runs, resolver, nil, log)
+	if err := sampler.RegisterMetrics(otel.Meter("apothecaryd")); err != nil {
+		log.Warn("sandbox memory metrics", "err", err)
+	}
 	envSt := envstate.New(runs, resolver, nil, log)
 	egressSvc := egress.New(runs, resolver, store) // durable egress audit trail (pgstore)
 	egressSvc.Log = log
@@ -355,6 +367,10 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		Notices:  notes,
 		Log:      log,
 	})
+	// Every connection to an exposed port is use of its run (stop-on-idle).
+	portRelay.Track = e.Use().PortConn
+	// A connection to an exposure kept across a sleep wakes its workspace.
+	portRelay.Wake = func(ctx context.Context, runID string) error { return e.WakeEnv(ctx, runID, engine.WokeByPort) }
 	egressSvc.ActiveRuns = e.ActiveRunIDs
 	wsSvc := wsinfo.New(runs, resolver, envSt)
 	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
@@ -429,7 +445,9 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	if err != nil {
 		return nil, nil, err
 	}
-	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Authorizer: doorAuthz{az}, Advertise: advertise, Log: log})
+	door, err := sshdoor.New(sshdoor.Config{HostKey: hostKey, DoorKey: doorKey, Keys: authsvc, Targets: sshTargets{wsSvc}, Authorizer: doorAuthz{az}, Advertise: advertise, Log: log,
+		Wake: func(ctx context.Context, runID string) error { return e.WakeEnv(ctx, runID, engine.WokeBySSH) },
+		Use:  e.Use().Busy})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -454,6 +472,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	api.Conf = conf
 	api.Kinds = reg
 	api.Ops = resolver
+	api.Runtimes = resolver
 	api.Sources = resolver // ticket sources the API's ticket factory reads
 	api.Live = live        // the same cache the engine and the automations read
 	api.Trackers = resolver
@@ -486,4 +505,20 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		keeper: keeper, attachments: attachments, blobs: blobs,
 		envSt: envSt, sampler: sampler, egressSvc: egressSvc, mrSvc: mrSvc, tickets: ticketFactory, notes: notes,
 	}, closeAll, nil
+}
+
+// uncontainedRuntime is the first runtime the deployment offers (its
+// default, then its list) whose sandbox root is its node's root, by the
+// runtime's trait, never its name; "" when every one is contained.
+func uncontainedRuntime(def string, listed []string) envport.Runtime {
+	for _, name := range append([]string{def}, listed...) {
+		rt := envport.Runtime(name)
+		if name == "" {
+			rt = envport.RuntimePrivileged
+		}
+		if !rt.Capabilities().Contained {
+			return rt
+		}
+	}
+	return ""
 }

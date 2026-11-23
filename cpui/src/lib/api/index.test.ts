@@ -769,6 +769,8 @@ describe('what each call sends', () => {
 				],
 				browser: { enabled: true },
 				docker: true,
+				size: { milli_cpu: 2500, memory_mib: 6144 },
+				runtime: 'sysbox',
 				egress_mode: 'deny',
 				editor: {
 					theme: 't',
@@ -804,6 +806,14 @@ describe('what each call sends', () => {
 			await projects.create(draft as ProjectDraft);
 			const body = fn.mock.calls[0][0].body;
 			expect(body.workspace.services).toEqual([{ name: 's', start: 'run' }]);
+		});
+
+		it('sends the provisioner’s default as no runtime', async () => {
+			const fn = reply('createProject', answer({ id: 'p' }));
+			reply('getProject', answer({ ...wireProject, workspace: { runtime: '' } }));
+			const draft = await projects.get('p');
+			await projects.create(draft as ProjectDraft);
+			expect(fn.mock.calls[0][0].body.workspace.runtime).toBeUndefined();
 		});
 
 		it('leaves an unset egress mode out', async () => {
@@ -1347,9 +1357,14 @@ describe('what each call sends', () => {
 			const fn = reply('setLimits', answer({ max_concurrent_runs: -1, max_environments: 2 }));
 			await expect(
 				system.setLimits({ maxConcurrentRuns: null, maxEnvironments: 2 })
-			).resolves.toEqual({ maxConcurrentRuns: null, maxEnvironments: 2 });
+			).resolves.toMatchObject({ maxConcurrentRuns: null, maxEnvironments: 2 });
+			const unset = { milli_cpu: 0, memory_mib: 0 };
 			expect(fn).toHaveBeenCalledWith({
-				body: { max_concurrent_runs: -1, max_environments: 2 }
+				body: {
+					max_concurrent_runs: -1,
+					max_environments: 2,
+					sandbox: { default: unset, ceiling: unset, idle_minutes: 0 }
+				}
 			});
 		});
 
@@ -2235,7 +2250,25 @@ describe('the rest of the surface', () => {
 
 	it('reads a negative cap as no cap', async () => {
 		reply('getLimits', answer({ max_concurrent_runs: -1, max_environments: 2 }));
-		expect(await system.limits()).toEqual({ maxConcurrentRuns: null, maxEnvironments: 2 });
+		expect(await system.limits()).toMatchObject({ maxConcurrentRuns: null, maxEnvironments: 2 });
+	});
+
+	it('reads the runtime offer', async () => {
+		reply('getRuntimeOffer', answer({ offered: false, default: '', approved: [] }));
+		await expect(system.runtimeOffer()).resolves.toMatchObject({ offered: false, approved: [] });
+	});
+
+	it('reads a workshop’s sandbox usage, newest first, empty when there is none', async () => {
+		const fn = reply(
+			'getSandboxUsage',
+			answer({ runs: [{ run_id: 'r', peak_mem: 1, mem_limit: 2, oom_kills: 0, at: 'T' }] })
+		);
+		await expect(projects.sandboxUsage('p')).resolves.toEqual([
+			{ runId: 'r', peakMem: 1, memLimit: 2, oomKills: 0, at: 'T' }
+		]);
+		expect(fn).toHaveBeenCalledWith({ path: { id: 'p' } });
+		reply('getSandboxUsage', answer({ runs: null }));
+		await expect(projects.sandboxUsage('p')).resolves.toEqual([]);
 	});
 });
 

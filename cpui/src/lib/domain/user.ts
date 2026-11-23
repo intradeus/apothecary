@@ -3,6 +3,8 @@
 // what it may do on the instance, and a workshop's owner shares it with
 // others (project.ts: ProjectAccess).
 
+import type { SandboxPolicy } from './sandbox';
+
 /** An instance role: admin manages accounts and the instance, member owns
  *  workshops, guest works only in workshops shared with it. */
 export type UserRole = 'admin' | 'member' | 'guest';
@@ -119,4 +121,6 @@ export interface SshKey {
 export interface Limits {
 	maxConcurrentRuns: number | null;
 	maxEnvironments: number | null;
+	/** The sandbox sizing policy; absent reads as nothing set. */
+	sandbox?: SandboxPolicy;
 }

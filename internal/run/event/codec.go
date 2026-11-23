@@ -54,6 +54,8 @@ var registry = map[Type]func() Payload{
 
 	TypeEnvRebuildStarted:   func() Payload { return &EnvRebuildStarted{} },
 	TypeEnvRebuildCompleted: func() Payload { return &EnvRebuildCompleted{} },
+	TypeEnvSlept:            func() Payload { return &EnvSlept{} },
+	TypeEnvWoke:             func() Payload { return &EnvWoke{} },
 	TypeEnvRebuildFailed:    func() Payload { return &EnvRebuildFailed{} },
 
 	TypeServiceStarted: func() Payload { return &ServiceStarted{} },

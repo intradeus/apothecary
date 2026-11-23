@@ -41,7 +41,14 @@ type Engine interface {
 	RunFlow(ctx context.Context, v run.View) (*flow.Flow, error)
 	RunToken(runID string) string
 	DeliverAskFiles(ctx context.Context, envp envport.EnvProvisioner, envID, runID, userID string, ids []string) (paths []string, undo func(), err error)
+	// WakeEnv starts the run's workspace if it was stopped when idle; an
+	// answer in progress holds it (HoldEnv) until done (stop-on-idle).
+	WakeEnv(ctx context.Context, runID, by string) error
+	HoldEnv(runID string) (release func())
 }
+
+// wokeByAsk: a question woke the workspace (event.EnvWoke.By).
+const wokeByAsk = "ask"
 
 // Service runs the Ask panes of every run.
 type Service struct {
@@ -515,17 +522,27 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	if len(text) > maxMessageLen {
 		return Message{}, fmt.Errorf("the question is longer than %d bytes", maxMessageLen)
 	}
+	// Held before the wake: a sweep stopping the workspace now is waited
+	// out, and one about to leaves it up.
+	hold := svc.Engine.HoldEnv(runID)
+	if err := svc.Engine.WakeEnv(ctx, runID, wokeByAsk); err != nil {
+		hold()
+		return Message{}, err
+	}
 	s, err := svc.setup(ctx, runID)
 	if err != nil {
+		hold()
 		return Message{}, err
 	}
 	if s.reason != "" {
+		hold()
 		s.release()
 		return Message{}, fmt.Errorf("%w: %s", ErrOff, s.reason)
 	}
 	a := svc.state(runID)
 	th, fresh, err := svc.findThread(ctx, s, a, threadID)
 	if err != nil {
+		hold()
 		s.release()
 		return Message{}, err
 	}
@@ -538,12 +555,14 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	t := a.thread(th.ID)
 	if t.busy {
 		svc.mu.Unlock()
+		hold()
 		s.release()
 		return Message{}, ErrBusy
 	}
 	t.busy = true
 	svc.mu.Unlock()
 	free := func() {
+		hold()
 		svc.mu.Lock()
 		t.busy = false
 		if fresh {
@@ -575,7 +594,7 @@ func (svc *Service) Ask(ctx context.Context, runID, threadID, userID, text strin
 	}
 	svc.hub.publish(runID, AskFrame{Kind: "message", ThreadID: th.ID, Message: &q})
 	svc.hub.publish(runID, AskFrame{Kind: "state", ThreadID: th.ID, Busy: true, Model: model})
-	go svc.answer(s, a, t, th, model, withFilesNote(text, paths))
+	go svc.answer(s, a, t, th, model, withFilesNote(text, paths), hold)
 	return q, nil
 }
 
@@ -597,8 +616,9 @@ func withFilesNote(text string, paths []string) string {
 // answer runs one question through its thread's session — opened on the
 // thread's first, continued after — and records what came back. Detached
 // from the request: the asker may close the page and read the answer later.
-func (svc *Service) answer(s *askSetup, a *askRun, t *askThread, th Thread, model, question string) {
+func (svc *Service) answer(s *askSetup, a *askRun, t *askThread, th Thread, model, question string, hold func()) {
 	defer s.release()
+	defer hold()
 	runID := s.v.RunID
 	ctx, cancel := context.WithTimeout(context.Background(), askAnswerTimeout)
 	defer cancel()

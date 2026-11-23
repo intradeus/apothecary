@@ -325,4 +325,25 @@ describe('ResourceGraphs', () => {
 			expect(svg.querySelector('circle')).not.toBeInTheDocument();
 		});
 	});
+
+	describe('a process killed at the memory limit', () => {
+		it('says so, with the limit, from the newest sample', () => {
+			render(ResourceGraphs, {
+				samples: series({ oomKills: 0 }, { oomKills: 2, memLimit: 4 * GiB })
+			});
+			expect(
+				screen.getByText(/2 processes in this sandbox were killed at its memory limit \(4\.00 GB\)/)
+			).toBeInTheDocument();
+		});
+
+		it('says so even before there is a line to draw', () => {
+			render(ResourceGraphs, { samples: series({ oomKills: 1, memLimit: GiB }) });
+			expect(screen.getByText(/1 process in this sandbox was killed/)).toBeInTheDocument();
+		});
+
+		it('says nothing when none was', () => {
+			render(ResourceGraphs, { samples: series({}, {}) });
+			expect(screen.queryByText(/killed at its memory limit/)).not.toBeInTheDocument();
+		});
+	});
 });

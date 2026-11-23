@@ -3,6 +3,8 @@
 	import type { ResourceSample } from '$lib/domain';
 	import { counterRates, fmtBytes, fmtPct, fmtRate, fmtTime } from '$lib/core/format';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
+	import Callout from '$lib/ui/Callout.svelte';
+	import { I } from '$lib/design/icons';
 
 	// Charts of the run's workspace resource usage (CPU / memory /
 	// network) from the engine's ~10s sample window. Hand-rolled SVG: the
@@ -19,6 +21,10 @@
 	let hoverIdx = $state<number | null>(null);
 
 	const times = $derived(samples.map((s) => Date.parse(s.at)));
+	// Processes the kernel killed at the sandbox's memory limit: a run that
+	// fails for no reason in its own log often failed here.
+	const oom = $derived(samples.at(-1)?.oomKills ?? 0);
+	const oomLimit = $derived(samples.at(-1)?.memLimit ?? 0);
 
 	type Series = { label: string; color: string; vals: (number | null)[]; dash?: boolean };
 	type Chart = {
@@ -171,6 +177,11 @@
 				: windowLabel}</span
 		>
 	</div>
+	{#if oom > 0}
+		<Callout hue="danger" glyph={I.warn}>
+			{t('runview.graphs.oom', { count: oom, limit: bytes(oomLimit) })}
+		</Callout>
+	{/if}
 	{#if samples.length < 2}
 		<EmptyState
 			compact

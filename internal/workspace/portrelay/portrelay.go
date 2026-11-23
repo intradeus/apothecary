@@ -84,6 +84,13 @@ type Manager struct {
 
 	// domain/scheme switch exposures to host routing (RouteByHost).
 	domain, scheme string
+
+	// Track, when set, wraps each exposure's port before it is served: what
+	// stop-on-idle counts as use (every connection holds the run).
+	Track func(runID string, pc envport.PortConn) envport.PortConn
+	// Wake, when set, starts a run's workspace stopped when idle: what a
+	// connection to an exposure kept across the sleep (Sleep) does first.
+	Wake func(ctx context.Context, runID string) error
 }
 
 // RouteByHost serves every exposure at <port>-<run label>.<domain> through
@@ -142,8 +149,8 @@ func (m *Manager) Lookup(host string) (runID string, port int, pc envport.PortCo
 		if RunLabel(id) != run {
 			continue
 		}
-		if ex, ok := exs[port]; ok {
-			return id, port, ex.pc, true
+		if _, ok := exs[port]; ok {
+			return id, port, current{m: m, runID: id, port: port}, true
 		}
 	}
 	return "", 0, nil, false
@@ -249,6 +256,9 @@ func (m *Manager) ForHost(raw, reqHost string) string {
 // before (persisted), falling back to a kernel-picked port if none is saved
 // or it is now taken.
 func (m *Manager) Expose(runID string, port int, pc envport.PortConn) (string, error) {
+	if m.Track != nil {
+		pc = m.Track(runID, pc)
+	}
 	m.mu.Lock()
 	if ex, ok := m.byRun[runID][port]; ok {
 		m.mu.Unlock()
@@ -294,7 +304,7 @@ func (m *Manager) Expose(runID string, port int, pc envport.PortConn) (string, e
 	store := m.store
 	m.mu.Unlock()
 
-	go serve(ln, pc)
+	go serve(ln, current{m: m, runID: runID, port: port})
 	// Best-effort persist OUTSIDE the lock: a slow DB must never block other
 	// exposures, and a failure only costs port stability across the next
 	// restart, never the exposure itself.
@@ -362,6 +372,79 @@ func (m *Manager) teardown(runID string) {
 		_ = ex.pc.Close()
 	}
 }
+
+// Sleep keeps a run's exposures while its workspace is stopped when idle:
+// the listeners and URLs stay, their paths into the stopped workspace close,
+// and the next connection to one wakes it (Wake) and is served by the
+// exposure the wake opens again on the same host port (Reset, then the
+// re-exposure of SavedPorts).
+func (m *Manager) Sleep(runID string) {
+	m.mu.Lock()
+	var gone []envport.PortConn
+	for port, ex := range m.byRun[runID] {
+		if _, ok := ex.pc.(dormant); !ok {
+			gone = append(gone, ex.pc)
+			ex.pc = dormant{m: m, runID: runID, port: port}
+		}
+	}
+	m.mu.Unlock()
+	for _, pc := range gone {
+		_ = pc.Close()
+	}
+}
+
+// current dials whatever serves the run's port when a connection arrives:
+// the exposure's own path, or, while the workspace sleeps, the wake.
+type current struct {
+	m     *Manager
+	runID string
+	port  int
+}
+
+func (c current) pc() (envport.PortConn, bool) {
+	c.m.mu.Lock()
+	defer c.m.mu.Unlock()
+	ex, ok := c.m.byRun[c.runID][c.port]
+	if !ok {
+		return nil, false
+	}
+	return ex.pc, true
+}
+
+func (c current) Dial(ctx context.Context) (net.Conn, error) {
+	pc, ok := c.pc()
+	if !ok {
+		return nil, fmt.Errorf("port %d of run %s is no longer exposed", c.port, c.runID)
+	}
+	return pc.Dial(ctx)
+}
+
+// Close is the exposure's to do (teardown); a dial-time view owns nothing.
+func (current) Close() error { return nil }
+
+// dormant is an exposure's path while its workspace sleeps: a dial wakes
+// the workspace, then goes through the exposure the wake opened.
+type dormant struct {
+	m     *Manager
+	runID string
+	port  int
+}
+
+func (d dormant) Dial(ctx context.Context) (net.Conn, error) {
+	if d.m.Wake == nil {
+		return nil, fmt.Errorf("port %d: the workspace is stopped", d.port)
+	}
+	if err := d.m.Wake(ctx, d.runID); err != nil {
+		return nil, fmt.Errorf("port %d: wake the workspace: %w", d.port, err)
+	}
+	pc, ok := current{m: d.m, runID: d.runID, port: d.port}.pc()
+	if _, still := pc.(dormant); !ok || still {
+		return nil, fmt.Errorf("port %d did not come back with the workspace", d.port)
+	}
+	return pc.Dial(ctx)
+}
+
+func (dormant) Close() error { return nil }
 
 // Reset tears down a run's live exposures but KEEPS its saved allocation:
 // the environment was recreated in place (Rebuild), so the in-container

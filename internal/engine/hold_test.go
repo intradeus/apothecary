@@ -1062,10 +1062,11 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		return h.events(t, runID)
 	}
 	// inOpeningWindow acts while the loop is stalled on its way to the
-	// opening prompt, once the run shows the hold.
-	inOpeningWindow := func(t *testing.T, h *harness, s *stallStore, runID string, act func() error) {
+	// opening prompt, once the run shows the hold, and lets the loop go on
+	// once act is parked in fn, waiting on it.
+	inOpeningWindow := func(t *testing.T, h *harness, s *stallStore, runID, fn string, act func() error) {
 		t.Helper()
-		err := inWindow(t, s, func() error {
+		err := inWindowParked(t, s, fn, func() error {
 			if v, err := h.e.store.Events(context.Background(), runID, 0); err != nil {
 				return err
 			} else if hold := run.Reduce(v).Hold; hold == nil || hold.UserID != "owner" {
@@ -1086,7 +1087,9 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 			t.Fatal(err)
 		}
 		var id string
-		inOpeningWindow(t, h, s, runID, func() (err error) {
+		// The send is on its way into the loop's unbuffered channel when the
+		// loop drains it for the prompt (takeOpeningMessages).
+		inOpeningWindow(t, h, s, runID, "(*Engine).messageLive", func() (err error) {
 			id, err = h.e.SendMessage(runID, "owner", "smaller, please", nil)
 			return err
 		})
@@ -1128,7 +1131,8 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 			t.Fatal(err)
 		}
 		var id string
-		inOpeningWindow(t, h, s, runID, func() (err error) {
+		// The send waits on the opening lock the prompt's write holds.
+		inOpeningWindow(t, h, s, runID, "(*Engine).SendMessage", func() (err error) {
 			if id, err = h.e.SendMessage(runID, "owner", "smaller, please", nil); err != nil {
 				return err
 			}
@@ -1176,7 +1180,7 @@ func TestStartHeldAdmitsTheOwnerBeforeItsPrompt(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		inOpeningWindow(t, h, s, runID, func() error { return h.e.Release(runID, "owner") })
+		inOpeningWindow(t, h, s, runID, "(*Engine).holdLive", func() error { return h.e.Release(runID, "owner") })
 		evs := finish(t, h, runID)
 		want := "hold_taken agent_prompted:stage hold_opened hold_released agent_prompted:handback stage_completed"
 		if got := heldOrder(evs); got != want {
@@ -1433,7 +1437,7 @@ func TestStartHeldOpeningPromptLandsWhole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = inWindow(t, s, func() error {
+	err = inWindowParked(t, s, "(*Engine).messageLive", func() error {
 		_, err := h.e.SendMessage(runID, "owner", "smaller, please", nil)
 		return err
 	})

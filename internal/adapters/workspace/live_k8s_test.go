@@ -16,6 +16,21 @@ package workspace
 //   - APOTHECARY_LIVE_KEEP=1 to leave the namespace for inspection.
 //   - APOTHECARY_LIVE_PULL_POLICY (default Always): IfNotPresent when the
 //     images were imported into the cluster's nodes instead of pushed.
+//   - APOTHECARY_LIVE_WG_USERSPACE=1 to run each sandbox's tunnel as
+//     wireguard-go (the Kata guest's path) on a kernel with the module.
+//   - APOTHECARY_LIVE_RUNTIME (default privileged): the sandboxes' runtime.
+//     kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
+//     its sandboxes are sized, on emptyDir disks, and tunnel through
+//     wireguard-go (the stock guest kernel has no WireGuard).
+//   - APOTHECARY_LIVE_VM_STORAGE_CLASS: a class of raw block volumes for a
+//     kata sandbox's claim (the rig's apo-block); then its lifecycle sleeps
+//     and wakes like the others'. Unset, a kata sandbox is on disks of its
+//     own and the test checks that it refuses to sleep.
+//   - APOTHECARY_LIVE_NESTED_K8S=<k3s image>: also start a Kubernetes node
+//     inside the sandbox and a user-namespaced pod on it (liveNestedKubernetes),
+//     what this repository's own sandbox suites need. Only for a runtime that
+//     gives both (privileged, kata); task sandbox:test:kata sets it, and a
+//     kata run without it skips through livetest.
 //
 // The test runs OUTSIDE the cluster, like an engine on a laptop: it reaches
 // pods through kubectl port-forward. Pods cannot reach a docker host's own
@@ -146,6 +161,17 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	}
 	img := func(name string) string { return prefix + "/" + name + ":local" }
 	gateway := os.Getenv("APOTHECARY_LIVE_GATEWAY") != "0"
+	runtime := envport.RuntimePrivileged
+	if v := os.Getenv("APOTHECARY_LIVE_RUNTIME"); v != "" {
+		var err error
+		if runtime, err = envport.ParseRuntime(v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vm := runtime == envport.RuntimeKata
+	if _, err := os.Stat("/dev/kvm"); vm && err != nil {
+		livetest.Skip(t, "APOTHECARY_LIVE_RUNTIME=kata without /dev/kvm here: the Kata rig runs on this host's KVM")
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 
@@ -180,8 +206,12 @@ func TestLiveK8sLifecycle(t *testing.T) {
 			EngineNamespace: ns,
 			Forward:         true,
 			Storage:         "pvc",
-			Privileged:      true,
+			VMStorageClass:  os.Getenv("APOTHECARY_LIVE_VM_STORAGE_CLASS"),
+			Runtime:         runtime,
 			Firewall:        gateway,
+			// The tunnel either way: kernel WireGuard by default, userspace
+			// when asked.
+			WireGuardUserspace: os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") == "1",
 		},
 	})
 	defer a.Close()
@@ -195,6 +225,10 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		// git port, the escape hatch's job.
 		EgressDomains:      builtin.EgressDefaults(),
 		EgressAllowedPorts: []int{9418},
+	}
+	if vm {
+		// The pod's limits size the VM.
+		spec.Size = envport.SandboxSize{MilliCPU: 4000, MemoryMiB: 8192}
 	}
 	start := time.Now()
 	env, err := a.Provision(ctx, spec)
@@ -222,6 +256,17 @@ func TestLiveK8sLifecycle(t *testing.T) {
 
 	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvRunning {
 		t.Fatalf("status = %s %v", st, err)
+	}
+	if gateway {
+		// The tunnel is the WireGuard asked for: the wg container records it
+		// on the pod's shared /run/apo.
+		want := "kernel"
+		if os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") == "1" || vm {
+			want = "userspace"
+		}
+		if mode := kubectl(t, c, "", "exec", name, "-c", "sandbox", "--", "cat", "/run/apo/wg-mode"); mode != want {
+			t.Errorf("tunnel = %q WireGuard, want %q", mode, want)
+		}
 	}
 	res, err := a.Exec(ctx, env, envport.Command{Script: `echo "$SMOKE"; cat "$HOME/repo/file.txt"; test -f /tmp/pc-ran && echo hooks-ran`})
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Output, "live-42") ||
@@ -405,6 +450,154 @@ func TestLiveK8sLifecycle(t *testing.T) {
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
 	}
+	// Nested Kubernetes, before a sleep replaces the pod.
+	nestedImage := os.Getenv("APOTHECARY_LIVE_NESTED_K8S")
+	if caps := runtime.Capabilities(); nestedImage != "" && caps.NestedKubernetes && caps.UserNamespaces {
+		liveNestedKubernetes(ctx, t, a.host.(*k8sHost), name, nestedImage)
+	}
+	// Stop-on-idle: a sandbox on a claim (a VM's raw-block one included)
+	// sleeps and wakes; a VM's on disks of its own is refused, by design, and
+	// that refusal is what is checked — never a quiet pass over the part
+	// that did not run.
+	if err := a.CanSleep(runtime); vm && os.Getenv("APOTHECARY_LIVE_VM_STORAGE_CLASS") == "" {
+		if err == nil {
+			t.Error("a sandbox on emptyDir storage says it can sleep: its checkout would go with the pod")
+		} else {
+			t.Logf("sleep and wake: not part of a %s sandbox's lifecycle without a VM storage class (%v)", runtime, err)
+		}
+	} else if err != nil {
+		t.Errorf("a sandbox on a claim cannot sleep: %v", err)
+	} else {
+		liveSleepWake(ctx, t, a, c, env, spec)
+	}
+	// Last, so a skip cuts nothing else short: under kata the nested check
+	// is the point of the suite (what the runtime is chosen for).
+	if vm && nestedImage == "" {
+		livetest.Skip(t, "APOTHECARY_LIVE_NESTED_K8S unset: a kata sandbox's nested Kubernetes went unchecked (task sandbox:test:kata sets it)")
+	}
+}
+
+// liveNestedKubernetes is what this repository's own sandbox suites ask of
+// a sandbox (task sandbox:test:k8s inside it): a Kubernetes node on the
+// sandbox's docker daemon, and on it a pod with a user namespace of its own
+// (hostUsers: false, the assistant pod's shape), mapped wherever the nested
+// kubelet picks in the 32-bit id space. Under sysbox that pod cannot start
+// (the sandbox owns 65536 ids); a runtime that claims UserNamespaces must
+// run it. The node's images come through the run's gateway (Docker Hub is
+// among the egress defaults).
+func liveNestedKubernetes(ctx context.Context, t *testing.T, h *k8sHost, name, image string) {
+	t.Helper()
+	const script = `set -eu
+docker rm -f apo-nested >/dev/null 2>&1 || true
+docker run -d --name apo-nested --privileged --tmpfs /run --tmpfs /var/run "$1" \
+  server --disable=traefik,metrics-server,servicelb,local-storage,coredns >/dev/null
+k() { docker exec -i apo-nested kubectl "$@"; }
+i=0
+until k get nodes 2>/dev/null | grep -q ' Ready'; do
+  i=$((i + 1)); [ "$i" -lt 150 ] || { echo "the nested node is not Ready"; docker logs --tail 40 apo-nested; exit 1; }
+  sleep 2
+done
+echo "nested node Ready after $((i * 2))s"
+i=0
+until k apply -f - >/dev/null 2>&1 <<'EOF'
+apiVersion: v1
+kind: Pod
+metadata: {name: userns, namespace: default}
+spec:
+  hostUsers: false
+  restartPolicy: Never
+  containers:
+    - name: c
+      image: busybox:1.37
+      command: [cat, /proc/self/uid_map]
+EOF
+do
+  i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the pod was never accepted"; exit 1; }
+  sleep 2
+done
+k wait --for=jsonpath='{.status.phase}'=Succeeded pod/userns --timeout=300s >/dev/null ||
+  { k describe pod userns | tail -n 25; exit 1; }
+echo "uid_map: $(k logs userns)"
+docker rm -f apo-nested >/dev/null
+`
+	start := time.Now()
+	out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script, "sh", image}, nil, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("nested Kubernetes in the sandbox (exit %d, %v):\n%s%s", code, err, out, stderr)
+	}
+	// The pod's first mapping: inside id 0 at an outside id the nested
+	// kubelet chose, never the sandbox's own 0.
+	var inside, outside, count uint64
+	line := strings.TrimSpace(string(out)[strings.LastIndex(string(out), "uid_map:")+len("uid_map:"):])
+	if _, err := fmt.Sscan(line, &inside, &outside, &count); err != nil || inside != 0 || outside == 0 {
+		t.Fatalf("the nested pod is not user-namespaced: %q (%v)", line, err)
+	}
+	t.Logf("nested Kubernetes: %s; the pod mapped 0 at %d (%d ids), %s in all",
+		strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0], outside, count, time.Since(start).Truncate(time.Second))
+}
+
+// liveSleepWake: the run sleeps (its pod deleted, its claim kept) and wakes
+// by provisioning its spec again, with the same workspace container (no
+// rebuild), the checkout as it was, and the project's own containers — one
+// started beside the workspace on the sandbox's docker, with a restart
+// policy, as a project's services are — running again.
+func liveSleepWake(ctx context.Context, t *testing.T, a *Adapter, c *kube.Client, env envport.EnvID, spec envport.EnvSpec) {
+	t.Helper()
+	name := string(env)
+	h := a.host.(*k8sHost)
+	inner := func(script string) string {
+		t.Helper()
+		out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script}, nil, nil)
+		if err != nil || code != 0 {
+			t.Fatalf("%s: exit %d %v %s", script, code, err, stderr)
+		}
+		return strings.TrimSpace(string(out))
+	}
+	if _, err := a.Exec(ctx, env, envport.Command{Script: "echo kept > .apo-live-sleep"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.containerID(ctx, name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The workspace's own image is on the sandbox's docker already: nothing
+	// is pulled for the project container.
+	image := inner("docker inspect -f '{{.Config.Image}}' " + before)
+	service := inner("docker run -d --restart unless-stopped --name apo-live-service " + image + " sleep 2147483647")
+	if err := a.Sleep(ctx, env); err != nil {
+		t.Fatalf("sleep: %v", err)
+	}
+	var pod kube.Pod
+	if found, _ := c.Get(ctx, "pod", name, &pod); found {
+		t.Fatal("the pod survived Sleep")
+	}
+	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvAsleep {
+		t.Fatalf("asleep: status = %s %v", st, err)
+	}
+	start := time.Now()
+	if _, err := a.Provision(ctx, spec); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	t.Logf("woke in %s", time.Since(start).Truncate(time.Second))
+	if st, err := a.Status(ctx, env); err != nil || st != envport.EnvRunning {
+		t.Fatalf("awake: status = %s %v", st, err)
+	}
+	if after, err := a.containerID(ctx, name); err != nil || after != before {
+		t.Errorf("workspace container %s before sleep, %s after (%v): rebuilt", before, after, err)
+	}
+	if res, err := a.Exec(ctx, env, envport.Command{Script: "cat .apo-live-sleep"}); err != nil || !strings.Contains(res.Output, "kept") {
+		t.Errorf("checkout after waking: %+v %v", res, err)
+	}
+	var state string
+	for i := 0; i < 30; i++ {
+		if state = inner("docker inspect -f '{{.Id}} {{.State.Running}}' apo-live-service"); state == service+" true" {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if state != service+" true" {
+		t.Errorf("the project's container after waking: %q, want %s running", state, service)
+	}
 }
 
 // liveNoCrossRun: a second run of the same project is a peer on the same
@@ -416,6 +609,12 @@ func liveNoCrossRun(ctx context.Context, t *testing.T, a *Adapter, h *k8sHost, n
 	t.Helper()
 	peer := name + "-b"
 	spec.RunID, spec.Name = "01LIVE"+peer, peer
+	if !spec.Size.IsZero() {
+		// The peer only listens and answers: a VM of the first run's size
+		// beside it would not fit the runner (two 8 GiB Kata VMs and their
+		// overhead are more than a 16 GB CI runner's node holds).
+		spec.Size = envport.SandboxSize{MilliCPU: 1000, MemoryMiB: 2048}
+	}
 	env, err := a.Provision(ctx, spec)
 	if err != nil {
 		t.Fatalf("provision the second run: %v", err)

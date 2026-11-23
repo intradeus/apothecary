@@ -6,32 +6,38 @@ import (
 	"time"
 
 	"apothecary/internal/engine/ask"
+	"apothecary/internal/ports/envport"
 )
 
 func TestLimits(t *testing.T) {
 	s := open(t)
 	ctx := context.Background()
-	if runs, envs, ok, err := s.LoadLimits(ctx); err != nil || ok || runs != 0 || envs != 0 {
-		t.Fatalf("no row = %d, %d, %v, %v", runs, envs, ok, err)
+	if runs, envs, sz, ok, err := s.LoadLimits(ctx); err != nil || ok || runs != 0 || envs != 0 || sz != (envport.SandboxPolicy{}) {
+		t.Fatalf("no row = %d, %d, %+v, %v, %v", runs, envs, sz, ok, err)
 	}
-	if err := s.SaveLimits(ctx, 4, -1); err != nil {
+	sizes := envport.SandboxPolicy{Default: envport.SandboxSize{MilliCPU: 2000, MemoryMiB: 4096}, Ceiling: envport.SandboxSize{MilliCPU: 8000, MemoryMiB: 16384}, IdleMinutes: 45}
+	if err := s.SaveLimits(ctx, 4, -1, envport.SandboxPolicy{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.SaveLimits(ctx, -1, 8); err != nil {
+	if err := s.SaveLimits(ctx, -1, 8, sizes); err != nil {
 		t.Fatal(err)
 	}
-	runs, envs, ok, err := s.LoadLimits(ctx)
-	if err != nil || !ok || runs != -1 || envs != 8 {
-		t.Fatalf("after two saves = %d, %d, %v, %v (one row, last wins)", runs, envs, ok, err)
+	runs, envs, sz, ok, err := s.LoadLimits(ctx)
+	if err != nil || !ok || runs != -1 || envs != 8 || sz != sizes {
+		t.Fatalf("after two saves = %d, %d, %+v, %v, %v (one row, last wins)", runs, envs, sz, ok, err)
 	}
 	// The schema is the last word on what a cap can be.
-	for _, c := range [][2]int{{0, 1}, {1, 0}, {-2, 1}} {
-		if err := s.SaveLimits(ctx, c[0], c[1]); err == nil {
-			t.Errorf("SaveLimits(%d, %d) accepted", c[0], c[1])
+	for _, c := range []struct {
+		runs, envs int
+		sz         envport.SandboxPolicy
+	}{{0, 1, sizes}, {1, 0, sizes}, {-2, 1, sizes}, {1, 1, envport.SandboxPolicy{Default: envport.SandboxSize{MilliCPU: -1}}},
+		{1, 1, envport.SandboxPolicy{Ceiling: envport.SandboxSize{MemoryMiB: -1}}}, {1, 1, envport.SandboxPolicy{IdleMinutes: -1}}} {
+		if err := s.SaveLimits(ctx, c.runs, c.envs, c.sz); err == nil {
+			t.Errorf("SaveLimits(%+v) accepted", c)
 		}
 	}
-	if runs, envs, _, _ := s.LoadLimits(ctx); runs != -1 || envs != 8 {
-		t.Errorf("refused save wrote: %d, %d", runs, envs)
+	if runs, envs, sz, _, _ := s.LoadLimits(ctx); runs != -1 || envs != 8 || sz != sizes {
+		t.Errorf("refused save wrote: %d, %d, %+v", runs, envs, sz)
 	}
 }
 

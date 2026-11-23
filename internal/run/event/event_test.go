@@ -121,6 +121,9 @@ func TestJSONKeysMatchSpec(t *testing.T) {
 		{&RunUnpaused{}, `{}`},
 		{&EnvDestroyed{EnvID: "e"}, `{"env_id":"e"}`},
 		{&EnvDestroyFailed{EnvID: "e", Error: "boom"}, `{"env_id":"e","error":"boom"}`},
+		{&EnvSlept{EnvID: "e", IdleMinutes: 30}, `{"env_id":"e","idle_minutes":30}`},
+		{&EnvWoke{EnvID: "e", By: "terminal"}, `{"env_id":"e","by":"terminal"}`},
+		{&EnvWoke{EnvID: "e", By: "stage", Error: "no node"}, `{"env_id":"e","by":"stage","error":"no node"}`},
 	}
 	for _, tc := range cases {
 		got, err := json.Marshal(tc.p)
@@ -206,7 +209,7 @@ func TestEveryRegisteredTypeRoundTrips(t *testing.T) {
 		&EnvRebuildCompleted{}, &EnvRebuildFailed{}, &ServiceStarted{}, &ServiceReady{}, &ServiceStopped{},
 		&ServiceFailed{}, &AgentSession{}, &AgentPrompted{}, &AgentMessage{}, &AgentTool{}, &AgentPlan{},
 		&AgentNotice{}, &MessageQueued{}, &MessageDelivered{}, &HoldTaken{Start: true}, &HoldReleased{}, &HoldOpened{},
-		&HandEdits{},
+		&HandEdits{}, &EnvSlept{}, &EnvWoke{},
 	}
 	seen := map[Type]bool{}
 	for _, p := range payloads {

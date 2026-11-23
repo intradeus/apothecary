@@ -11,6 +11,9 @@
 		| 'stopped'
 		| 'unknown'
 		| 'broken'
+		| 'asleep'
+		| 'sleeping'
+		| 'waking'
 		| 'none';
 
 	/** The workspace axis of a run (DESIGN 3.2), reconciled from the run state,
@@ -24,6 +27,8 @@
 		if (envStatus === 'rebuilding') return 'rebuilding';
 		if (envStatus === 'destroying') return 'destroying';
 		if (envStatus === 'error') return 'error';
+		if (envStatus === 'sleeping') return 'sleeping';
+		if (envStatus === 'waking') return 'waking';
 		if (state === 'provisioning' || envStatus === 'provisioning') return 'provisioning';
 		if (!envId) return 'none';
 		switch (envStatus) {
@@ -39,6 +44,8 @@
 				return 'unknown';
 			case 'broken':
 				return 'broken';
+			case 'asleep':
+				return 'asleep';
 			default:
 				// Not reconciled yet: assume live rather than flash "no workspace".
 				return 'live';
@@ -77,6 +84,9 @@
 				stopped: 'hue-muted',
 				unknown: 'hue-warning',
 				broken: 'hue-danger',
+				asleep: 'hue-muted',
+				sleeping: 'hue-running',
+				waking: 'hue-running',
 				none: 'faint'
 			} as const
 		)[v]
@@ -85,7 +95,7 @@
 	const dot = $derived(
 		v === 'live'
 			? 'live-dot'
-			: v === 'stopped'
+			: v === 'stopped' || v === 'asleep'
 				? 'ldot hollow'
 				: v === 'unknown' || v === 'broken' || v === 'none'
 					? 'ldot dashed'
@@ -97,12 +107,19 @@
 			? t('ui.ws.unreachable')
 			: v === 'broken'
 				? t('ui.ws.broken')
-				: envId
-					? t('ui.ws.tipEnv', { word, env: envId })
-					: t('ui.ws.tip', { word })
+				: v === 'asleep'
+					? t('ui.ws.asleep')
+					: envId
+						? t('ui.ws.tipEnv', { word, env: envId })
+						: t('ui.ws.tip', { word })
 	);
 	const pulsing = $derived(
-		v === 'starting' || v === 'provisioning' || v === 'rebuilding' || v === 'destroying'
+		v === 'starting' ||
+			v === 'provisioning' ||
+			v === 'rebuilding' ||
+			v === 'destroying' ||
+			v === 'sleeping' ||
+			v === 'waking'
 	);
 </script>
 

@@ -17,10 +17,12 @@ vi.mock('$lib/api', () => ({
 			update: vi.fn(),
 			startEnvCheck: vi.fn(),
 			browser: vi.fn(),
-			secrets: vi.fn()
+			secrets: vi.fn(),
+			sandboxUsage: vi.fn()
 		},
 		integrations: { repos: vi.fn() },
-		egress: { defaults: vi.fn() }
+		egress: { defaults: vi.fn() },
+		system: { runtimeOffer: vi.fn() }
 	}
 }));
 
@@ -86,6 +88,12 @@ const step = (name: RegExp) =>
 
 beforeEach(() => {
 	vi.resetAllMocks();
+	vi.mocked(api.projects.sandboxUsage).mockResolvedValue([]);
+	vi.mocked(api.system.runtimeOffer).mockResolvedValue({
+		offered: false,
+		default: '',
+		approved: []
+	});
 	vi.mocked(api.projects.create).mockImplementation(async (d) => stored({ name: d.name }));
 	vi.mocked(api.projects.update).mockImplementation(async (id, d) => stored({ id, name: d.name }));
 	vi.mocked(api.projects.browser).mockResolvedValue({
@@ -123,7 +131,10 @@ describe('ProjectForm, draft()', () => {
 				},
 				services: [{ name: 'web', start: 'go', ports: [] }],
 				browserEnabled: true,
-				docker: true
+				docker: true,
+				size: { cpus: 2.5, memoryGiB: null },
+				runtime: 'sysbox',
+				idleMinutes: 45
 			}
 		} as Partial<Project>);
 		await userEvent.click(envcheck());
@@ -170,7 +181,10 @@ describe('ProjectForm, draft()', () => {
 					}
 				],
 				browserEnabled: true,
-				docker: true
+				docker: true,
+				size: { cpus: 2.5, memoryGiB: null },
+				runtime: 'sysbox',
+				idleMinutes: 45
 			},
 			defaultFlow: 'mine'
 		});

@@ -1123,7 +1123,7 @@ func (s *Server) getLimits(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, LimitsInfo{MaxConcurrentRuns: l.MaxConcurrentRuns, MaxEnvironments: l.MaxEnvironments})
+	writeJSON(w, http.StatusOK, LimitsInfo{MaxConcurrentRuns: l.MaxConcurrentRuns, MaxEnvironments: l.MaxEnvironments, Sandbox: l.Sandbox})
 }
 
 func (s *Server) currentLimits(ctx context.Context) (engine.Limits, error) {
@@ -1143,7 +1143,7 @@ func (s *Server) setLimits(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &in) {
 		return
 	}
-	l := engine.Limits{MaxConcurrentRuns: in.MaxConcurrentRuns, MaxEnvironments: in.MaxEnvironments}
+	l := engine.Limits{MaxConcurrentRuns: in.MaxConcurrentRuns, MaxEnvironments: in.MaxEnvironments, Sandbox: in.Sandbox}
 	if err := engine.ValidateLimits(l); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return

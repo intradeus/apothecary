@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -196,12 +197,38 @@ type K8s struct {
 	// BrowserProxyAddr how a browser pod reaches it
 	// (APOTHECARY_K8S_BROWSER_PROXY_ADDR, default the engine URL's host:7071).
 	BrowserProxyListen, BrowserProxyAddr string
-	// RuntimeClass and Privileged are the sandbox shape a Kubernetes
-	// provisioner integration gets when it leaves its own fields empty:
-	// APOTHECARY_K8S_RUNTIME_CLASS (e.g. sysbox-runc) and
-	// APOTHECARY_K8S_PRIVILEGED (on|off, default on). Privileged off needs a
-	// runtime class that nests dockerd unprivileged.
-	RuntimeClass, Privileged string
+	// Runtime is the sandbox runtime a Kubernetes provisioner integration
+	// gets when it leaves its own empty (APOTHECARY_K8S_RUNTIME, one of
+	// SandboxRuntimes; default privileged). RuntimeClass
+	// (APOTHECARY_K8S_RUNTIME_CLASS) names a RuntimeClass other than the
+	// runtime's own. The older APOTHECARY_K8S_PRIVILEGED (on|off) still
+	// works when APOTHECARY_K8S_RUNTIME is unset: on is privileged, off (with
+	// a runtime class) is sysbox.
+	Runtime, RuntimeClass string
+	// Runtimes are the runtimes projects may choose among
+	// (APOTHECARY_K8S_RUNTIMES, comma-separated, each one of SandboxRuntimes):
+	// the ones this cluster's nodes can run. Unset (nil): each integration
+	// approves its own default alone; set, it must include Runtime.
+	Runtimes []string
+}
+
+// SandboxRuntimes are the runtime names APOTHECARY_K8S_RUNTIME accepts: the
+// port's (envport.Runtimes), which a test in cmd/apothecaryd holds equal.
+var SandboxRuntimes = []string{"kata", "privileged", "sysbox"}
+
+// legacyRuntime is the runtime the older pair names: privileged on (or
+// unset) is privileged; off needs a runtime class and is sysbox.
+func legacyRuntime(privileged, class string) (string, error) {
+	switch privileged {
+	case "", "on":
+		return "privileged", nil
+	case "off":
+		if class == "" {
+			return "", fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED=off needs APOTHECARY_K8S_RUNTIME_CLASS, a runtime class that nests dockerd unprivileged (e.g. sysbox-runc); or set APOTHECARY_K8S_RUNTIME=sysbox")
+		}
+		return "sysbox", nil
+	}
+	return "", fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED must be on or off, got %q", privileged)
 }
 
 // DefaultProtectCIDRs are k3s's default pod and service ranges plus
@@ -300,15 +327,34 @@ func FromEnv() (*Boot, error) {
 		BrowserProxyListen: getenvDefault("APOTHECARY_K8S_BROWSER_PROXY_LISTEN", ":7071"),
 		BrowserProxyAddr:   strings.TrimSpace(os.Getenv("APOTHECARY_K8S_BROWSER_PROXY_ADDR")),
 		RuntimeClass:       strings.TrimSpace(os.Getenv("APOTHECARY_K8S_RUNTIME_CLASS")),
-		Privileged:         strings.TrimSpace(os.Getenv("APOTHECARY_K8S_PRIVILEGED")),
+		Runtime:            strings.ToLower(strings.TrimSpace(os.Getenv("APOTHECARY_K8S_RUNTIME"))),
 	}
-	switch b.K8s.Privileged {
-	case "", "on", "off":
-	default:
-		return nil, fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED must be on or off, got %q", b.K8s.Privileged)
+	if privileged := strings.TrimSpace(os.Getenv("APOTHECARY_K8S_PRIVILEGED")); b.K8s.Runtime == "" {
+		rt, err := legacyRuntime(privileged, b.K8s.RuntimeClass)
+		if err != nil {
+			return nil, err
+		}
+		b.K8s.Runtime = rt
+	} else if !slices.Contains(SandboxRuntimes, b.K8s.Runtime) {
+		return nil, fmt.Errorf("config: APOTHECARY_K8S_RUNTIME must be one of %s, got %q", strings.Join(SandboxRuntimes, ", "), b.K8s.Runtime)
+	} else if privileged != "" && (privileged == "on") != (b.K8s.Runtime == "privileged") {
+		// The runtime wins only where the older setting agrees with it.
+		return nil, fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED=%s contradicts APOTHECARY_K8S_RUNTIME=%s: drop APOTHECARY_K8S_PRIVILEGED", privileged, b.K8s.Runtime)
 	}
-	if b.K8s.Privileged == "off" && b.K8s.RuntimeClass == "" {
-		return nil, fmt.Errorf("config: APOTHECARY_K8S_PRIVILEGED=off needs APOTHECARY_K8S_RUNTIME_CLASS, a runtime class that nests dockerd unprivileged (e.g. sysbox-runc)")
+	// Unset stays unset: an integration that picks another default runtime
+	// then approves that one alone, never this one behind its back.
+	if listed := splitComma(strings.ToLower(os.Getenv("APOTHECARY_K8S_RUNTIMES"))); len(listed) > 0 {
+		for _, r := range listed {
+			if !slices.Contains(SandboxRuntimes, r) {
+				return nil, fmt.Errorf("config: APOTHECARY_K8S_RUNTIMES must list runtimes among %s, got %q", strings.Join(SandboxRuntimes, ", "), r)
+			}
+			if !slices.Contains(b.K8s.Runtimes, r) {
+				b.K8s.Runtimes = append(b.K8s.Runtimes, r)
+			}
+		}
+		if !slices.Contains(b.K8s.Runtimes, b.K8s.Runtime) {
+			return nil, fmt.Errorf("config: APOTHECARY_K8S_RUNTIMES (%s) must include the default runtime APOTHECARY_K8S_RUNTIME=%s", strings.Join(b.K8s.Runtimes, ","), b.K8s.Runtime)
+		}
 	}
 	if raw := os.Getenv("APOTHECARY_K8S_PROTECT_CIDRS"); raw != "" {
 		b.K8s.ProtectCIDRs = splitComma(raw)

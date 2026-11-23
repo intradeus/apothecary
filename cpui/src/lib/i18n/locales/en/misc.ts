@@ -480,6 +480,48 @@ export default {
 	'form.project.docker': 'Docker in workspaces',
 	'form.project.dockerHelp':
 		'Give this workshop’s workspaces their run’s own docker daemon — testcontainers, docker compose, docker run — by adding the standard docker-outside-of-docker feature to the build. A repo that declares the feature itself needs nothing here. The instance’s daemon door decides whether it is allowed: open by itself under an unprivileged sandbox, by the operator’s setting otherwise.',
+	'form.project.runtime': 'Sandbox runtime',
+	'form.project.idle': 'Stop when idle',
+	'form.project.idleDefault': "The instance's default",
+	'form.project.idleAfterN': 'after {m} min',
+	'form.project.idleNeverWord': 'never',
+	'form.project.idleNever': 'Never: keep its sandboxes up',
+	'form.project.idleAfter': 'After minutes of its own',
+	'form.project.idleMinutes': 'Minutes unused',
+	'form.project.idleInvalid': 'A whole number of minutes, at least 1.',
+	'form.project.idleRefused':
+		'This provisioner cannot keep a stopped sandbox ({why}): the save will be refused.',
+	'form.project.idleUnavailable': 'Sandboxes here are never stopped when idle: {why}.',
+	'form.project.idleHelp':
+		'A sandbox nobody uses (no agent working, no terminal, editor, port or SSH connection) is stopped after this long, its checkout and containers kept. The next use starts it again in seconds; processes it ran start again from the hooks.',
+	'form.project.runtimeHelp':
+		'What isolates this workshop’s sandboxes from the machine they run on, among the runtimes an admin approved on the provisioner. Applies to the next run’s sandbox, or a rebuild — never to one already running. A rebuild cannot apply it to a sandbox whose disks go with its pod (emptydir storage, kata without a VM storage class), or between kata and another runtime: there it waits for the next run.',
+	'form.project.rtDefault': 'The default ({name})',
+	'form.project.rtNested': 'docker inside',
+	'form.project.rtKube': 'Kubernetes inside',
+	'form.project.rtUserns': 'user namespaces inside',
+	'form.project.rtContained': 'contained from its node',
+	'form.project.rtNodeRoot': 'root on its node',
+	'form.project.rtWithdrawn': 'no longer approved',
+	'form.project.rt_notApproved':
+		'{name} is not approved on this instance: pick one that is, or the save will be refused.',
+	'form.project.rt_noDocker':
+		'{name} cannot run docker inside the sandbox, which Docker in workspaces needs: pick another runtime, or the save will be refused.',
+	'form.project.size': 'Sandbox size',
+	'form.project.sizeHelp':
+		'What each run’s sandbox may use. Memory is reserved at its limit, so a sandbox that needs more than it is given has processes killed (the run’s workspace log says so); CPU is a limit. Empty fields take the instance’s default, else the ceiling as a limit only. Applies to the next run’s sandbox, or a rebuild — never to one already running. A rebuild cannot apply it to a sandbox whose disks go with its pod (emptydir storage, kata without a VM storage class), or between kata and another runtime: there it waits for the next run.',
+	'form.project.sizeDefault': 'default {v} {unit}',
+	'form.project.sizeNoLimit': 'no limit',
+	'form.project.sizeUpTo': 'up to {v} {unit}',
+	'form.project.sizeOverCeiling':
+		'Above this instance’s ceiling ({cpus} CPUs, {memory} GiB, System → Limits): the save will be refused.',
+	'form.project.sizeCapped':
+		'Above this instance’s ceiling, lowered since it was set ({cpus} CPUs, {memory} GiB, System → Limits): its sandboxes get the ceiling.',
+	'form.project.sizeUsage_one': 'Its last run peaked at {peak} of memory.',
+	'form.project.sizeUsage_other': 'Its last {count} runs peaked at {peak} of memory.',
+	'form.project.sizeOOM_one': '{count} process was killed at the memory limit',
+	'form.project.sizeOOM_other': '{count} processes were killed at the memory limit',
+	'form.project.sizeNoUsage': 'No run of this workshop has been measured since the engine started.',
 	'form.project.extensions': 'code-server extensions',
 	'form.project.extensionsHelp':
 		"VS Code extension ids from Open VSX, installed the first time the browser editor opens in a run (together with the repo's devcontainer customizations, and each harness's own extension — Codex, opencode, Claude Code — signed in like its agent) — no rebuild.",

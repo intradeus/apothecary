@@ -304,16 +304,18 @@ func TestPingAccessors(t *testing.T) {
 // never bricks admission.
 type limitsStore struct {
 	runs, envs int
+	sandbox    envport.SandboxPolicy
 	ok         bool
 	err        error
 	saved      []int
+	savedSizes envport.SandboxPolicy
 }
 
-func (s *limitsStore) LoadLimits(context.Context) (int, int, bool, error) {
-	return s.runs, s.envs, s.ok, s.err
+func (s *limitsStore) LoadLimits(context.Context) (int, int, envport.SandboxPolicy, bool, error) {
+	return s.runs, s.envs, s.sandbox, s.ok, s.err
 }
-func (s *limitsStore) SaveLimits(_ context.Context, runs, envs int) error {
-	s.saved = []int{runs, envs}
+func (s *limitsStore) SaveLimits(_ context.Context, runs, envs int, sandbox envport.SandboxPolicy) error {
+	s.saved, s.savedSizes = []int{runs, envs}, sandbox
 	return nil
 }
 
@@ -325,7 +327,8 @@ func TestStoredLimits(t *testing.T) {
 		t.Errorf("unset limits = %+v, %v", l, err)
 	}
 	s.runs, s.envs, s.ok = 7, Unlimited, true
-	if l, _ = (StoredLimits{s}).Limits(ctx); l.MaxConcurrentRuns != 7 || l.MaxEnvironments != Unlimited || l.EnvsCapped() {
+	s.sandbox = envport.SandboxPolicy{Default: envport.SandboxSize{MemoryMiB: 4096}}
+	if l, _ = (StoredLimits{s}).Limits(ctx); l.MaxConcurrentRuns != 7 || l.MaxEnvironments != Unlimited || l.EnvsCapped() || l.Sandbox != s.sandbox {
 		t.Errorf("stored limits = %+v", l)
 	}
 	s.err = errors.New("db down")
@@ -337,14 +340,20 @@ func TestStoredLimits(t *testing.T) {
 			t.Errorf("%+v: %v", bad, err)
 		}
 	}
+	overCeiling := Limits{MaxConcurrentRuns: 1, MaxEnvironments: 1, Sandbox: envport.SandboxPolicy{
+		Default: envport.SandboxSize{MemoryMiB: 9000}, Ceiling: envport.SandboxSize{MemoryMiB: 8192}}}
+	if err := (StoredLimits{s}).Set(ctx, overCeiling); err == nil || !strings.Contains(err.Error(), "above the ceiling") {
+		t.Errorf("a default above the ceiling: %v", err)
+	}
 	if s.saved != nil {
 		t.Errorf("a refused limit was saved: %v", s.saved)
 	}
-	if err := (StoredLimits{s}).Set(ctx, Limits{MaxConcurrentRuns: Unlimited, MaxEnvironments: 3}); err != nil {
+	sizes := envport.SandboxPolicy{Ceiling: envport.SandboxSize{MilliCPU: 8000}}
+	if err := (StoredLimits{s}).Set(ctx, Limits{MaxConcurrentRuns: Unlimited, MaxEnvironments: 3, Sandbox: sizes}); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.saved) != 2 || s.saved[0] != Unlimited || s.saved[1] != 3 {
-		t.Errorf("saved = %v", s.saved)
+	if len(s.saved) != 2 || s.saved[0] != Unlimited || s.saved[1] != 3 || s.savedSizes != sizes {
+		t.Errorf("saved = %v, %+v", s.saved, s.savedSizes)
 	}
 }
 

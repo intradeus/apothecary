@@ -6,9 +6,12 @@ import (
 	"testing"
 )
 
-type nopConn struct{ closed bool }
+type nopConn struct {
+	closed bool
+	dials  int
+}
 
-func (n *nopConn) Dial(context.Context) (net.Conn, error) { return nil, nil }
+func (n *nopConn) Dial(context.Context) (net.Conn, error) { n.dials++; return nil, nil }
 func (n *nopConn) Close() error                           { n.closed = true; return nil }
 
 func TestHostRoutedExposure(t *testing.T) {
@@ -28,8 +31,12 @@ func TestHostRoutedExposure(t *testing.T) {
 	}
 	for _, host := range []string{"3000-r5t1w6y0ab.apps.example.com", "3000-R5T1W6Y0AB.apps.example.com:443"} {
 		gotRun, port, got, ok := m.Lookup(host)
-		if !ok || gotRun != run || port != 3000 || got != pc {
+		if !ok || gotRun != run || port != 3000 {
 			t.Fatalf("Lookup(%s) = %s %d %v %v", host, gotRun, port, got, ok)
+		}
+		before := pc.dials
+		if _, err := got.Dial(context.Background()); err != nil || pc.dials != before+1 || got.Close() != nil {
+			t.Fatalf("Lookup(%s) dials elsewhere: %v", host, err)
 		}
 	}
 	for _, host := range []string{"apps.example.com", "3001-r5t1w6y0ab.apps.example.com", "3000-r5t1w6y0ab.evil.com",

@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"apothecary/internal/engine"
 	"errors"
 	"net/http"
 	"strings"
@@ -21,6 +22,9 @@ func (s *Server) postExposePort(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.Port < 1 || body.Port > 65535 {
 		writeErr(w, http.StatusBadRequest, "port must be 1-65535")
+		return
+	}
+	if !s.useFor(w, r, engine.WokeByPort) {
 		return
 	}
 	url, err := s.Ports.Expose(r.Context(), r.PathValue("id"), body.Port)
@@ -49,6 +53,9 @@ func (s *Server) reach(r *http.Request, url string) string {
 // its browser URL (the run-page "Open editor" path). Blocks while code-server
 // boots on first open; idempotent thereafter.
 func (s *Server) postOpenEditor(w http.ResponseWriter, r *http.Request) {
+	if !s.useFor(w, r, engine.WokeByEditor) {
+		return
+	}
 	url, err := s.Ports.OpenEditor(r.Context(), r.PathValue("id"))
 	if err != nil {
 		msg := err.Error()

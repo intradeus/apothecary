@@ -27,7 +27,9 @@ itself, in a namespace of its own:
 - **NetworkPolicy enforcement** (k3s has it built in; most CNIs do). Without
   it the sandbox could route around its gateway.
 - The **`wireguard` kernel module** on the nodes (in-tree since Linux 5.6;
-  loaded on demand).
+  loaded on demand). Where a sandbox's kernel has none (a Kata guest's), the
+  sandbox runs `wireguard-go` instead, on its own; the gateway still needs
+  the module.
 - Nodes may confine `/usr/bin/wg` with AppArmor (Ubuntu 26.04 ships
   `/etc/apparmor.d/wg`, which also attaches to a privileged container's `wg`):
   nothing to do, the tunnel reads its key from `/etc/wireguard`, the one place
@@ -37,13 +39,14 @@ itself, in a namespace of its own:
   (`echo '/secrets/wg/** r,' | sudo tee -a /etc/apparmor.d/local/wg && sudo
   apparmor_parser -r /etc/apparmor.d/wg`).
 - **[sysbox](https://github.com/nestybox/sysbox) on the nodes that run
-  sandboxes** (the chart's default: `workspaces.runtimeClassName:
-  sysbox-runc`, privileged off). The RuntimeClass's own scheduling
+  sandboxes**, for the chart's default runtime (`workspaces.runtime:
+  sysbox`, RuntimeClass `sysbox-runc`; the others are in
+  [Sandbox runtimes](#sandbox-runtimes)). The RuntimeClass's own scheduling
   (`nodeSelector`, `tolerations`) places sandbox pods on those nodes. This is
   also what opens the [daemon door](../README.md#docker-in-workspaces) under
   `APOTHECARY_WORKSPACE_DOCKER=auto`. A cluster of your own without sysbox
   (k3d, a dev box) can run sandboxes privileged instead
-  (`workspaces.privileged: true`): sandbox root is then root on its node.
+  (`workspaces.runtime: privileged`): sandbox root is then root on its node.
   Under a runtime class the sandbox pod
   is also created with `hostUsers: false`, sysbox's documented pod shape on
   Kubernetes: a user namespace of the pod's own, made by the kubelet and
@@ -146,6 +149,161 @@ itself, in a namespace of its own:
     `alb.ingress.kubernetes.io/target-type: ip`, because the engine's
     Service is ClusterIP.
   - Images can be mirrored to ECR with `image.overrides`.
+  - **Kata on EKS needs KVM on the sandbox nodes**, which ordinary EC2
+    instances do not expose: bare-metal instances (`*.metal`), or an
+    instance type that offers nested virtualization with it turned on (C8i,
+    M8i or R8i; in the launch template, or Karpenter's
+    `cpuOptions.nestedVirtualization`). amd64 only: the pinned Kata release
+    is amd64's, so no Graviton. On any other node a Kata sandbox never
+    starts. Not tried yet: check that a Kata pod reaches ClusterIP services
+    (sandboxes reach the engine and their gateway that way) before relying
+    on it.
+
+## Sandbox runtimes
+
+What isolates a run's sandbox. The deployment names a default
+(`workspaces.runtime`) and the runtimes its nodes run
+(`workspaces.runtimes`); an admin may narrow those on the provisioner
+(System → Provisioner, whose Test starts a pod under each), and a workshop
+picks among them (Settings → Workspace).
+
+| Runtime | Isolation | Nodes need | Storage | Stops when idle |
+|---|---|---|---|---|
+| `sysbox` (default) | containers in a user namespace of the pod's own; root in the sandbox is an unprivileged uid on the node | sysbox ≥ 0.7, containerd ≥ 2.0.5, kernel ≥ 6.3 ([above](#cluster-requirements)) | `pvc` or `emptydir` | with `pvc` |
+| `kata` | a VM per sandbox (Kata Containers, Cloud Hypervisor); the sandbox is privileged inside its own guest kernel, never on the node | KVM (`/dev/kvm`), Kata ≥ 4.4 with a `kata` RuntimeClass | a raw-block claim from the provisioner's VM storage class, else disks of its own in its VM | with a VM storage class |
+| `privileged` | none: sandbox root is root on its node | nothing | `pvc` or `emptydir` | with `pvc` |
+
+All three run docker inside, compose and k3d included.
+
+### Installing Kata
+
+Kata is the cluster's to install; the chart only makes its RuntimeClass,
+when asked (step 4). On a one-node k3s
+box, `deploy/k3s/install.sh --kata` does steps 1 to 4 below and step 5's
+chart setting, and smoke-tests a Kata pod. `deploy/kata/rig.sh` is another
+worked example (a throwaway k3s node in docker, what `task
+sandbox:test:kata` and CI run on). Both take the release and its checksum
+from `deploy/kata/kata.env`, and step 2's edits from
+`deploy/kata/configure.sh`. On a real node by hand:
+
+1. Unpack Kata's static release (`kata-static-<version>-amd64.tar.zst`)
+   into `/opt/kata`.
+2. Copy `share/defaults/kata-containers/runtime-rs/configuration-clh-runtime-rs.toml`
+   to `configuration-apothecary.toml` beside it and set:
+
+   ```toml
+   emptydir_mode = "block-plain"          # each emptyDir an ext4 disk in the guest
+   static_sandbox_resource_mgmt = true    # the VM is the pod's limits, no more
+   reclaim_guest_freed_memory = true      # freed guest memory goes back to the node
+   mem_agent_enable = true
+   memcg_period_secs = 30
+   compact_period_secs = 30
+   ```
+
+3. Add the runtime to containerd (k3s: in
+   `/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl`, after
+   `{{ template "base" . }}`):
+
+   ```toml
+   [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata]
+     runtime_type = "io.containerd.kata.v2"
+     runtime_path = "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2"
+     privileged_without_host_devices = true
+     [plugins."io.containerd.cri.v1.runtime".containerd.runtimes.kata.options]
+       ConfigPath = "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-apothecary.toml"
+   ```
+
+   `privileged_without_host_devices` is what keeps a privileged sandbox
+   from the node's devices: it gets its VM's.
+4. Create the RuntimeClass, with the VM's own memory and CPU as overhead
+   (the scheduler counts it, the pod's cgroup holds it):
+
+   ```yaml
+   apiVersion: node.k8s.io/v1
+   kind: RuntimeClass
+   metadata: {name: kata}
+   handler: kata
+   overhead:
+     podFixed: {cpu: 250m, memory: 320Mi}
+   ```
+
+   Add a `scheduling` block if only some nodes have Kata. Or let the chart
+   make it: `workspaces.kataRuntimeClass.create=true`, with the Kata
+   nodes' labels in its `nodeSelector` and their taints in its
+   `tolerations` (`charts/apothecary/ci/kata-values.yaml`). The class is
+   cluster-wide, so one release per cluster makes it; leave it off where
+   `install.sh --kata` made its own.
+5. Deploy with `--set workspaces.runtimes='{sysbox,kata}'` (or
+   `workspaces.runtime=kata` for Kata by default), and on the provisioner
+   set a `storage_size`. Its storage (`pvc` by default) stays the other
+   runtimes'. A Kata RuntimeClass of another name goes in the provisioner's
+   runtime class as `kata=<class>` (a class alone is the default
+   runtime's).
+6. For Kata sandboxes that survive their pod (stopping when idle, a node
+   restart), set the provisioner's **VM storage class** to a class that
+   provisions raw block volumes (`volumeMode: Block`: EBS gp3, TopoLVM,
+   Longhorn, Ceph RBD; k3s's `local-path` cannot). Each Kata sandbox then
+   gets the run's claim (`storage_size`) as one disk in its VM, which the
+   sandbox formats on first use and mounts for its checkout and inner
+   docker. Without it, a Kata sandbox gets two emptyDirs of its own, disks
+   in its VM that go with its pod. A filesystem claim is never used for
+   Kata: it would reach the VM over virtio-fs, where docker cannot keep its
+   layers.
+
+**Kata sandboxes must be sized** (System → Limits sets a default, a workshop
+its own): an unsized one is refused, not given Kata's 2 GB default. Without
+a VM storage class, each of a Kata sandbox's two disks (checkout, inner
+docker) holds up to `storage_size`: the guest sees the node's whole disk,
+and the kubelet evicts the pod once either holds more (CI's kata suite
+checks it), so leave the node's disk room for that. With one, the claim's
+size is the disk's.
+
+**On EKS**, see [the EKS requirements](#cluster-requirements): Kata needs
+KVM on the sandbox nodes.
+
+### Sizing
+
+A sandbox's size (CPUs, memory) is its pod's limits: the workshop's own,
+else the instance default, never above the instance ceiling (System →
+Limits). A sized pod requests all of its memory and a quarter of its CPUs
+(at least 100m), so **the scheduler plans capacity by memory limits**, and
+CPU is shared: sandboxes mostly wait on people and agents.
+
+Under **Kata**, the RuntimeClass overhead comes on top of each pod, and the
+VM is the limit: the guest gets exactly the memory and one vCPU more than
+the CPUs. A node with 64 GiB holds about seven 8 GiB Kata sandboxes once the
+overhead and the system's share are counted. Under sysbox and privileged an
+unsized sandbox may use what the node has, or, under a ceiling, up to the
+ceiling: it is limited there and requests only 100m and 1 GiB, so a large
+ceiling never makes it unschedulable. Under Kata an unsized sandbox is
+refused (a ceiling alone does not size a VM). Each sandbox's tunnel and
+relay sidecars request 10m and 32 MiB more.
+
+A new size or runtime applies to the next run's sandbox, or a rebuild: a
+rebuild replaces the pod when its shape changed and the run's checkout is
+on its claim (`pvc`, or a Kata sandbox's block claim). On `emptydir`
+storage, Kata without a VM storage class, and between Kata and another
+runtime (a disk for one, a filesystem for the other), a rebuild keeps the
+pod and says the change waits for the next run.
+
+The run page's graphs show what a sandbox reached against its limit, and a
+workshop's Settings → Workspace lists its recent runs' peaks: the evidence
+for its size. A process killed at the memory limit, or the sandbox
+container killed and restarted, is told in the run's workspace log.
+
+### Stopping idle sandboxes
+
+A sandbox nobody uses (no stage working, no terminal, editor, exposed port,
+SSH session or question to the assistant) can be stopped after a period:
+System → Limits sets the instance default (empty: never), a workshop its
+own or never. The pod is deleted; its volumes and the gateway stay, and the
+sandbox still counts toward `max_environments`. Its next use (a stage, the
+terminal, the editor, a port, SSH, the run page's **Wake**) starts a pod on
+the same volumes in seconds; processes it ran start again from the
+project's hooks. With `emptydir` storage, or under Kata without a VM
+storage class (its disks are then its VM's own), there is nothing to keep,
+so those sandboxes are never stopped: the form says why for the workshop's
+runtime, and refuses minutes there.
 
 ## A local cluster
 

@@ -272,7 +272,7 @@ func newDoorRig(t *testing.T) *doorRig {
 }
 
 // newDoorRigWith is a door whose key lookups go through wrap.
-func newDoorRigWith(t *testing.T, wrap func(KeyAuth) KeyAuth) *doorRig {
+func newDoorRigWith(t *testing.T, wrap func(KeyAuth) KeyAuth, set ...func(*Config)) *doorRig {
 	t.Helper()
 	seed := make([]byte, 32)
 	_, _ = rand.Read(seed)
@@ -294,7 +294,11 @@ func newDoorRigWith(t *testing.T, wrap func(KeyAuth) KeyAuth) *doorRig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	door, err := New(Config{HostKey: hostKey, DoorKey: doorKey, Keys: wrap(keys.svc), Targets: ts, Authorizer: policy{az}, Advertise: "door.example:2222"})
+	cfg := Config{HostKey: hostKey, DoorKey: doorKey, Keys: wrap(keys.svc), Targets: ts, Authorizer: policy{az}, Advertise: "door.example:2222"}
+	for _, f := range set {
+		f(&cfg)
+	}
+	door, err := New(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -852,4 +856,64 @@ func TestDoorWithoutAListener(t *testing.T) {
 	if h, p := d.Address(); h != "" || p != 0 {
 		t.Errorf("Address = %q:%d", h, p)
 	}
+}
+
+// A session wakes its run's workspace before the door dials it, and holds
+// the run for as long as it lasts; one that will not wake ends the
+// connection.
+func TestDoorWakesAndHoldsTheWorkspace(t *testing.T) {
+	var mu sync.Mutex
+	var woke []string
+	var wakeErr error
+	held, released := 0, 0
+	rig := newDoorRigWith(t, func(k KeyAuth) KeyAuth { return k }, func(c *Config) {
+		c.Wake = func(_ context.Context, runID string) error {
+			mu.Lock()
+			defer mu.Unlock()
+			woke = append(woke, runID)
+			return wakeErr
+		}
+		c.Use = func(string) func() {
+			mu.Lock()
+			held++
+			mu.Unlock()
+			return func() { mu.Lock(); released++; mu.Unlock() }
+		}
+	})
+	client, err := rig.connect(t, "apo-alice-run", rig.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ses, err := client.NewSession()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	if len(woke) != 1 || woke[0] != "r1" || held != 1 || released != 0 {
+		t.Errorf("woke %v, held %d, released %d", woke, held, released)
+	}
+	wakeErr = errors.New("no node has room")
+	mu.Unlock()
+	ses.Close()
+	client.Close()
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return released == 1 })
+
+	client, err = rig.connect(t, "apo-alice-run", rig.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.NewSession(); err == nil {
+		t.Error("a session on a workspace that would not wake")
+	}
+	waitFor(t, func() bool { mu.Lock(); defer mu.Unlock(); return released == 2 })
+}
+
+func waitFor(t *testing.T, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(10 * time.Millisecond) {
+		if cond() {
+			return
+		}
+	}
+	t.Fatal("condition not met in 5s")
 }

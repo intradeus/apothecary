@@ -45,6 +45,7 @@ import (
 	"apothecary/internal/workitem/items"
 	"apothecary/internal/workspace/checkout"
 	"apothecary/internal/workspace/envstate"
+	"apothecary/internal/workspace/idle"
 	"apothecary/internal/workspace/runports"
 	"apothecary/internal/workspace/wsname"
 )
@@ -87,6 +88,9 @@ type Config struct {
 type Limits struct {
 	MaxConcurrentRuns int
 	MaxEnvironments   int
+	// Sandbox is the sandbox sizing policy: the default size and the
+	// ceiling a project's own size is held to. Unset: no limits.
+	Sandbox envport.SandboxPolicy
 }
 
 // Unlimited is the Limits value meaning "no cap".
@@ -194,6 +198,8 @@ type Engine struct {
 
 	// envState is the workspace op gate and reconciled container statuses.
 	envState *envstate.Store
+	// use tracks what holds each run's sandbox, for stop-on-idle (sleep.go).
+	use *idle.Tracker
 	// teardown is told about every env destroy, in registration order.
 	teardown []EnvTeardown
 
@@ -596,6 +602,7 @@ func New(d Deps) *Engine {
 		teardown:       d.Teardown,
 		tickets:        d.Tickets,
 		notices:        d.Notices,
+		use:            idle.NewAt(d.Clock),
 		handles:        map[string]*runHandle{},
 		pings:          map[string]*Ping{},
 		tokens:         map[string]string{},
@@ -1334,6 +1341,7 @@ func (e *Engine) destroyEnv(ctx context.Context, v run.View) (derr error) {
 	for _, h := range e.teardown {
 		h.Forget(v.RunID)
 	}
+	e.use.Forget(v.RunID)
 	if v.ProjectID == "" {
 		return fmt.Errorf("run %s has no project (pre-v2); destroy its environment manually", v.RunID)
 	}

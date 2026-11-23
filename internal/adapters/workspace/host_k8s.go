@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,14 +47,35 @@ type KubeConfig struct {
 	// Forward reaches pods through kubectl port-forward (an engine outside
 	// the cluster) instead of directly by pod IP.
 	Forward bool
-	// Storage: "pvc" (default; survives a pod restart) or "emptydir".
+	// Storage: "pvc" (default; survives a pod restart) or "emptydir", for
+	// every runtime but a VM one (runtime.go, the vm trait), whose storage is
+	// VMStorageClass's.
 	Storage, StorageClass, StorageSize string
-	// Privileged sandboxes (default) — a nested dockerd needs it under runc.
-	// Off requires RuntimeClass (e.g. sysbox-runc installed on the nodes),
-	// and the pod then also asks for a user namespace of its own
-	// (hostUsers: false; see podManifest).
-	Privileged   bool
-	RuntimeClass string
+	// VMStorageClass, when set, gives a VM runtime's sandbox (Kata) the run's
+	// claim as a raw block device (volumeMode: Block) from this class: one
+	// disk in its VM that outlives the pod, which the sandbox formats and
+	// mounts itself (apo-dockerd, APO_DATA_DEVICE), so it can be stopped and
+	// kept. The class must provision Block volumes (EBS, TopoLVM, Longhorn,
+	// Ceph RBD; not k3s's local-path). Empty: a VM sandbox's disks are
+	// emptyDirs of its own, gone with its pod. A filesystem claim is never
+	// an answer: it reaches the VM over virtio-fs, where docker cannot keep
+	// its layers.
+	VMStorageClass string
+	// Runtime is what isolates each sandbox (runtime.go): privileged (the
+	// default, "") or sysbox. RuntimeClass, when set, names the
+	// RuntimeClass the default runtime's pods ask for instead of the
+	// runtime's own; RuntimeClasses does the same for any approved runtime
+	// (it wins over RuntimeClass for the default).
+	Runtime        envport.Runtime
+	RuntimeClass   string
+	RuntimeClasses map[envport.Runtime]string
+	// WireGuardUserspace makes every sandbox's tunnel wireguard-go even on a
+	// kernel with the module (APO_WG_USERSPACE): the live test's switch, so
+	// the path a Kata guest takes is covered where the module exists.
+	WireGuardUserspace bool
+	// Runtimes are the other runtimes an env may ask for (EnvSpec.Runtime):
+	// the ones the integration approves. The default is always built.
+	Runtimes []envport.Runtime
 	// Firewall routes every sandbox through its project's egress gateway.
 	Firewall     bool
 	ProtectCIDRs []string
@@ -74,10 +96,18 @@ type k8sHost struct {
 	a   *Adapter
 	cfg KubeConfig
 	gwh *egressgw.K8sHost
+	// rt shapes the sandbox pod; rtErr is a runtime the adapter cannot
+	// build, which every pod creation and the integration's test report.
+	rt    sandboxRuntime
+	rtErr error
+	// probeEvery is how often a runtime probe polls its pod (0: 2s), and
+	// probeTimeout how long it waits (0: runtimeProbeTimeout).
+	probeEvery, probeTimeout time.Duration
 
 	mu     sync.Mutex
 	tokens map[string]string        // run → relay token
 	podIPs map[string]string        // run → pod IP (direct dialing)
+	podVM  map[string]bool          // run → its pod is a VM (out-of-cluster dials go by exec)
 	fwds   map[string]*kube.Forward // run → port-forward (out-of-cluster)
 	stats  map[string]cgroupSample  // run → previous sample (CPU% deltas)
 }
@@ -109,8 +139,9 @@ func newK8sHost(a *Adapter, cfg *KubeConfig) *k8sHost {
 		c.ClusterDomain = "cluster.local"
 	}
 	h := &k8sHost{a: a, cfg: c,
-		tokens: map[string]string{}, podIPs: map[string]string{},
+		tokens: map[string]string{}, podIPs: map[string]string{}, podVM: map[string]bool{},
 		fwds: map[string]*kube.Forward{}, stats: map[string]cgroupSample{}}
+	h.rt, h.rtErr = lookupRuntime(c.Runtime)
 	if c.Firewall {
 		h.gwh = &egressgw.K8sHost{Kube: c.Kube, Image: c.GatewayImage, PullPolicy: c.PullPolicy, ProtectCIDRs: c.ProtectCIDRs,
 			EngineNamespace: c.EngineNamespace, Forward: c.Forward, StorageClass: c.StorageClass}
@@ -155,18 +186,73 @@ func (h *k8sHost) refusesExec(ctx context.Context, name string) bool {
 
 func (h *k8sHost) fs(name string) sandboxFS { return execFS{h: h, name: name} }
 
-// unprivileged: a runtime class that nests dockerd (sysbox) with privileged
-// off — the two sites in podManifest that drop the privileged security
-// context read the same predicate.
-func (h *k8sHost) unprivileged() bool { return h.cfg.RuntimeClass != "" && !h.cfg.Privileged }
+// contained: the runtime's trait, never a check on its name.
+func (h *k8sHost) contained(want envport.Runtime) bool {
+	rt, err := h.runtimeFor(want)
+	return err == nil && rt.caps().Contained
+}
 
-func (*k8sHost) unprivilegedHint() string {
-	return "the Kubernetes provisioner integration's runtime class set to one that nests dockerd (sysbox-runc on the nodes) with privileged off"
+// runtimeFor is the row an env's sandbox is built from: want "" is the
+// integration's default runtime; another must be one the integration
+// approves (the resolver already checked the project; this is the adapter
+// refusing to build what it was not offered).
+func (h *k8sHost) runtimeFor(want envport.Runtime) (sandboxRuntime, error) {
+	if h.rtErr != nil {
+		return sandboxRuntime{}, h.rtErr
+	}
+	if want == "" || want == h.rt.name {
+		return h.rt, nil
+	}
+	if !slices.Contains(h.cfg.Runtimes, want) {
+		return sandboxRuntime{}, fmt.Errorf("kubernetes: sandbox runtime %s is not approved on this provisioner (approved: %v)", want, h.approved())
+	}
+	return lookupRuntime(want)
+}
+
+// approved is every runtime the integration builds: its approved list, the
+// default among them.
+func (h *k8sHost) approved() []envport.Runtime {
+	out := []envport.Runtime{h.rt.name}
+	for _, r := range h.cfg.Runtimes {
+		if !slices.Contains(out, r) {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// classFor is the RuntimeClass rt's pods name: the integration's override
+// for rt (RuntimeClasses), else, for its default runtime, RuntimeClass,
+// else the runtime's own.
+func (h *k8sHost) classFor(rt sandboxRuntime) string {
+	if c := h.cfg.RuntimeClasses[rt.name]; c != "" {
+		return c
+	}
+	if rt.name == h.rt.name {
+		return rt.className(h.cfg.RuntimeClass)
+	}
+	return rt.class
+}
+
+// isVMPod says whether a sandbox pod runs under a VM runtime: its runtime
+// class is one of the approved VM runtimes' (the manifest carries no other
+// mark of its runtime).
+func (h *k8sHost) isVMPod(pod kube.Pod) bool {
+	for _, name := range h.approved() {
+		if rt, err := lookupRuntime(name); err == nil && rt.vm && h.classFor(rt) == pod.Spec.RuntimeClassName {
+			return true
+		}
+	}
+	return false
+}
+
+func (*k8sHost) containedHint() string {
+	return "the Kubernetes provisioner integration's runtime set to sysbox (sysbox-runc on the nodes, its runtime class)"
 }
 
 // --- prepare -----------------------------------------------------------------
 
-func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
+func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, plog func(string, ...any), detect func(context.Context, string) (Definition, error)) (prep, error) {
 	a := h.a
 	folder := a.folderFor(name)
 	if !a.noSandboxGuard && strings.HasPrefix(folder, "/tmp/") {
@@ -187,7 +273,7 @@ func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec
 		a.recordGateway(name, spec.Project, att.GatewayIP)
 	}
 	plog("→ bringing up the sandbox pod %s (namespace %s)\n", name, h.cfg.Kube.Namespace)
-	if err := h.ensurePod(ctx, name, spec, att, plog); err != nil {
+	if err := h.ensurePod(ctx, name, spec, rebuild, att, plog); err != nil {
 		return prep{}, err
 	}
 	src := a.srcDir(name)
@@ -254,18 +340,27 @@ func (h *k8sHost) labels(name, project string) map[string]string {
 // (Failed/Succeeded) is replaced, and so is a running one whose container
 // runtime refuses exec (sysbox restarted under it) — the claim, and with it
 // the checkout and the inner daemon's images and containers, survives.
-func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment, plog func(string, ...any)) error {
+func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, att egressgw.Attachment, plog func(string, ...any)) error {
 	k := h.cfg.Kube
 	if _, err := h.relayToken(ctx, name, true, spec.Project); err != nil {
 		return err
 	}
-	if h.cfg.Storage == "pvc" {
+	rt, err := h.runtimeFor(spec.Runtime)
+	if err != nil {
+		return err
+	}
+	if h.keepsClaim(rt) {
 		pvc := kube.PersistentVolumeClaim{TypeMeta: kube.PVCType(),
 			Metadata: kube.ObjectMeta{Name: dataClaimName(name), Labels: h.labels(name, spec.Project)},
 			Spec: kube.PVCSpec{AccessModes: []string{"ReadWriteOnce"},
 				Resources: kube.ResourceRequirements{Requests: map[string]string{"storage": h.cfg.StorageSize}}}}
-		if h.cfg.StorageClass != "" {
-			pvc.Spec.StorageClassName = kube.Ptr(h.cfg.StorageClass)
+		class := h.cfg.StorageClass
+		if rt.vm {
+			// A disk in the VM: the claim as a raw device.
+			class, pvc.Spec.VolumeMode = h.cfg.VMStorageClass, "Block"
+		}
+		if class != "" {
+			pvc.Spec.StorageClassName = kube.Ptr(class)
 		}
 		if err := k.Create(ctx, pvc); err != nil {
 			return err
@@ -291,7 +386,7 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		found = false
 	} else if found && pod.Status.Phase == "Running" && h.refusesExec(ctx, name) {
 		kept := "its volume and checkout are kept"
-		if h.cfg.Storage == "emptydir" {
+		if !h.keepsClaim(rt) {
 			kept = "its checkout is on an emptyDir and goes with it"
 		}
 		plog("→ replacing the sandbox pod: it no longer accepts exec (container runtime restarted?); %s\n", kept)
@@ -300,22 +395,54 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		}
 		found = false
 	}
-	if found {
-		plog("→ reusing the sandbox pod (%s)\n", orDefault(pod.Status.Phase, "unknown phase"))
-	} else {
+	// A rebuild applies the workshop's sandbox size and runtime: a pod of
+	// another shape is replaced (k8s_shape.go).
+	var want *kube.Pod
+	if found && rebuild {
 		p, err := h.podManifest(ctx, name, spec, att)
 		if err != nil {
 			return err
 		}
+		want = &p
+		replace, note := shapeChange(pod, p, name)
+		if note != "" {
+			plog("→ keeping the sandbox pod: %s\n", note)
+		}
+		if replace {
+			plog("→ replacing the sandbox pod: the workshop's sandbox size or runtime changed; its volume and checkout are kept\n")
+			if err := k.Delete(ctx, "pod", name, true); err != nil {
+				return err
+			}
+			found = false
+		}
+	}
+	if found {
+		plog("→ reusing the sandbox pod (%s)\n", orDefault(pod.Status.Phase, "unknown phase"))
+	} else {
+		p := want
+		if p == nil {
+			made, err := h.podManifest(ctx, name, spec, att)
+			if err != nil {
+				return err
+			}
+			p = &made
+		}
 		plog("→ creating the sandbox pod (image %s)\n", h.cfg.SandboxImage)
-		if err := k.Create(ctx, p); err != nil {
+		if err := k.Create(ctx, *p); err != nil {
 			return err
 		}
 	}
 	h.forgetPod(name)
 	plog("→ waiting for the sandbox pod to be ready: scheduled, images pulled, its docker daemon up (up to 5m)\n")
 	if err := h.waitPodReady(ctx, name, 5*time.Minute, plog); err != nil {
-		return fmt.Errorf("sandbox pod %s never became ready (inspect: kubectl -n %s describe pod %s): %w", name, k.Namespace, name, err)
+		err = fmt.Errorf("sandbox pod %s never became ready (inspect: kubectl -n %s describe pod %s): %w", name, k.Namespace, name, err)
+		// The wait may have used up ctx: the question gets a moment of its own.
+		wctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		if w, werr := k.LastWarning(wctx, name); werr == nil && w != "" {
+			err = fmt.Errorf("%w; the pod's last warning: %s", err, w)
+		}
+		return err
 	}
 	return nil
 }
@@ -349,7 +476,16 @@ func (h *k8sHost) waitPodReady(ctx context.Context, name string, timeout time.Du
 			if found, err := h.cfg.Kube.Get(ctx, "pod", name, &pod); err != nil || !found {
 				continue
 			}
-			if s := podProgress(pod.Status); s != last {
+			s := podProgress(pod.Status)
+			if pod.Status.Phase == "Pending" || pod.Status.Phase == "" {
+				// Not scheduled yet: the scheduler says why (a node without
+				// the memory or CPU the sandbox's size asks for, a runtime
+				// class no node has), and only in an event.
+				if w, err := h.cfg.Kube.LastWarning(ctx, name); err == nil && w != "" {
+					s += "; last warning: " + shell.Tail(w, 300)
+				}
+			}
+			if s != last {
 				plog("  … pod %s\n", s)
 				last = s
 			}
@@ -461,6 +597,10 @@ func (h *k8sHost) engineIP(ctx context.Context) (string, error) {
 }
 
 func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.EnvSpec, att egressgw.Attachment) (kube.Pod, error) {
+	rt, err := h.runtimeFor(spec.Runtime)
+	if err != nil {
+		return kube.Pod{}, err
+	}
 	folder := h.a.folderFor(name)
 	labels := h.labels(name, spec.Project)
 	labels[k8sLabelSandbox] = "true"
@@ -469,9 +609,32 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		annotations["apothecary.io/project-name"] = spec.ProjectName
 	}
 	secretMode := int32(0o400)
+	if rt.vm {
+		if spec.Size.MilliCPU <= 0 || spec.Size.MemoryMiB <= 0 {
+			return kube.Pod{}, fmt.Errorf("kubernetes: a %s sandbox needs a size, CPU and memory (they size its VM; a ceiling alone does not): set the workshop's, or the instance's default in System → Limits", rt.name)
+		}
+	}
 	runMount := kube.VolumeMount{Name: "data", SubPath: "run", MountPath: folder}
+	dockerMount := kube.VolumeMount{Name: "data", SubPath: "docker", MountPath: "/var/lib/docker"}
+	// The sandbox container's own mounts: the run folder and docker's data,
+	// or, on a VM's raw-block claim, the seeded run volume aside (vmSeedDir).
+	sandboxMounts := []kube.VolumeMount{dockerMount, runMount}
+	vmClaim := rt.vm && h.keepsClaim(rt)
+	if rt.vm {
+		// A volume each, no subPath: a disk each in the guest.
+		runMount = kube.VolumeMount{Name: "run", MountPath: folder}
+		dockerMount = kube.VolumeMount{Name: "docker", MountPath: "/var/lib/docker"}
+		sandboxMounts = []kube.VolumeMount{dockerMount, runMount}
+	}
+	if vmClaim {
+		// The claim is a device the sandbox formats and mounts: the run folder
+		// and docker's data on it, and the shim and tools the init containers
+		// seed into the run volume bound over the folder's (apo-dockerd). The
+		// init containers and the relay keep the run volume at the folder.
+		sandboxMounts = []kube.VolumeMount{{Name: "run", MountPath: vmSeedDir}}
+	}
 	privileged := func() *kube.SecurityContext {
-		if h.unprivileged() {
+		if !rt.privileged {
 			return nil
 		}
 		return &kube.SecurityContext{Privileged: kube.Ptr(true)}
@@ -487,11 +650,17 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		SecurityContext: privileged(),
 		ReadinessProbe: &kube.Probe{Exec: &kube.ExecAction{Command: []string{"docker", "version"}},
 			PeriodSeconds: 3, TimeoutSeconds: 5, FailureThreshold: 100},
-		VolumeMounts: []kube.VolumeMount{
-			{Name: "data", SubPath: "docker", MountPath: "/var/lib/docker"},
-			runMount,
-			{Name: "apo", MountPath: "/run/apo"},
-		},
+		VolumeMounts: append(sandboxMounts, kube.VolumeMount{Name: "apo", MountPath: "/run/apo"}),
+	}
+	if rt.vm {
+		sandbox.Env = append(sandbox.Env, kube.EnvVar{Name: "APO_DEV_PRELUDE", Value: "1"})
+	}
+	if vmClaim {
+		sandbox.VolumeDevices = []kube.VolumeDevice{{Name: "data", DevicePath: vmDataDevice}}
+		sandbox.Env = append(sandbox.Env,
+			kube.EnvVar{Name: "APO_DATA_DEVICE", Value: vmDataDevice},
+			kube.EnvVar{Name: "APO_RUN_DIR", Value: folder},
+			kube.EnvVar{Name: "APO_SEED_DIR", Value: vmSeedDir})
 	}
 	seed := kube.Container{Name: "shim-seed", Image: h.cfg.ShimImage, ImagePullPolicy: h.cfg.PullPolicy,
 		Args: []string{"seed", filepath.Join(folder, "shim")}, VolumeMounts: []kube.VolumeMount{runMount}}
@@ -504,7 +673,9 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		Args: []string{"relay", "--serve", "0.0.0.0:" + strconv.Itoa(relayPort),
 			"--dir", filepath.Join(folder, "shim"), "--token-file", "/secrets/run/relay-token"},
 		Ports:        []kube.ContainerPort{{Name: "relay", ContainerPort: relayPort}},
+		Resources:    sidecarResources(),
 		VolumeMounts: []kube.VolumeMount{runMount, {Name: "run-secret", MountPath: "/secrets/run", ReadOnly: true}}}
+	sandbox.Resources = sandboxResources(spec.Size, spec.SizeCap)
 	pod := kube.Pod{TypeMeta: kube.PodType(),
 		Metadata: kube.ObjectMeta{Name: name, Labels: labels, Annotations: annotations},
 		Spec: kube.PodSpec{
@@ -520,23 +691,23 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 				{Name: "run-secret", Secret: &kube.SecretVolumeSource{SecretName: runSecretName(name), DefaultMode: &secretMode}},
 			},
 		}}
-	if h.cfg.RuntimeClass != "" {
-		pod.Spec.RuntimeClassName = h.cfg.RuntimeClass
-	}
-	if h.unprivileged() {
-		// The pod's own Kubernetes user namespace: sysbox's documented pod
-		// shape (runtimeClassName + hostUsers: false; sysbox ≥ 0.7 on
-		// containerd ≥ 2.0.5). Left on the host's user namespace, sysbox
-		// still makes one for the container, but containerd has set up the
-		// pod's network namespace before that, and the sandbox sysctls it
-		// then writes (net.ipv4.ip_unprivileged_port_start) fail from the
-		// user namespace that does not own it: "ip_unprivileged_port_start:
-		// permission denied", and the pod never starts. With hostUsers false
-		// the kubelet makes the user namespace first and sysbox adopts its
-		// mapping. README, "Cluster requirements".
+	pod.Spec.RuntimeClassName = h.classFor(rt)
+	if rt.ownUserNamespace {
+		// The pod's own Kubernetes user namespace (the runtime's comment says
+		// why sysbox needs it).
 		pod.Spec.HostUsers = kube.Ptr(false)
 	}
-	if h.cfg.Storage == "pvc" {
+	if vmClaim {
+		// The seeded shim and tools only (the tools bundle is about 2.3 GB):
+		// reseeded by each pod, never kept.
+		pod.Spec.Volumes = append(pod.Spec.Volumes,
+			kube.Volume{Name: "run", EmptyDir: &kube.EmptyDirVolumeSource{SizeLimit: vmSeedSize}},
+			kube.Volume{Name: "data", PersistentVolumeClaim: &kube.PersistentVolumeClaimVolumeSource{ClaimName: dataClaimName(name)}})
+	} else if rt.vm {
+		pod.Spec.Volumes = append(pod.Spec.Volumes,
+			kube.Volume{Name: "run", EmptyDir: &kube.EmptyDirVolumeSource{SizeLimit: h.cfg.StorageSize}},
+			kube.Volume{Name: "docker", EmptyDir: &kube.EmptyDirVolumeSource{SizeLimit: h.cfg.StorageSize}})
+	} else if h.cfg.Storage == "pvc" {
 		pod.Spec.Volumes = append(pod.Spec.Volumes, kube.Volume{Name: "data",
 			PersistentVolumeClaim: &kube.PersistentVolumeClaimVolumeSource{ClaimName: dataClaimName(name)}})
 	} else {
@@ -556,7 +727,7 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 			Options:     []kube.PodDNSConfigOpt{{Name: "ndots", Value: "2"}},
 		}
 		wgSec := kube.SecurityContext{Privileged: kube.Ptr(true)}
-		if h.unprivileged() {
+		if !rt.privileged {
 			wgSec = kube.SecurityContext{Capabilities: &kube.Capabilities{Add: []string{"NET_ADMIN"}}}
 		}
 		wg := kube.Container{Name: "wg", Image: h.cfg.SandboxImage, ImagePullPolicy: h.cfg.PullPolicy,
@@ -568,19 +739,75 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 				{Name: "ENGINE_IP", Value: engineIP},
 			},
 			SecurityContext: &wgSec,
+			Resources:       sidecarResources(),
 			StartupProbe: &kube.Probe{Exec: &kube.ExecAction{Command: []string{"test", "-f", "/run/apo/wg-ready"}},
 				PeriodSeconds: 1, FailureThreshold: 60},
 			VolumeMounts: []kube.VolumeMount{
 				{Name: "wg-secret", MountPath: "/secrets/wg", ReadOnly: true},
 				{Name: "apo", MountPath: "/run/apo"},
 			}}
+		if h.cfg.WireGuardUserspace {
+			wg.Env = append(wg.Env, kube.EnvVar{Name: "APO_WG_USERSPACE", Value: "1"})
+		}
 		pod.Spec.InitContainers = append(pod.Spec.InitContainers, wg)
 		pod.Spec.Volumes = append(pod.Spec.Volumes, kube.Volume{Name: "wg-secret",
 			Secret: &kube.SecretVolumeSource{SecretName: att.WGSecret, DefaultMode: &secretMode}})
 		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env, kube.EnvVar{Name: "APO_GATEWAY_IP", Value: att.GatewayIP})
 	}
 	pod.Spec.InitContainers = append(pod.Spec.InitContainers, relay)
+	annotations[shapeAnnotation] = podShape(rt, pod)
 	return pod, nil
+}
+
+// cpuRequestShare is the share of a sandbox's CPU limit it requests: CPU is
+// overcommitted (an idle sandbox holds no core), memory never is (a request
+// below the limit is memory the node may not have when the sandbox reaches
+// for it). minCPURequest keeps a tiny limit from requesting nothing.
+const (
+	cpuRequestShare = 4 // request = limit / cpuRequestShare
+	minCPURequest   = 100
+)
+
+// sandboxResources are the sandbox container's requests and limits for its
+// size: memory requested at its limit, CPU limited at the size and
+// requested at a share of it. A field the size leaves unset is limited at
+// its cap (the instance's ceiling) and requested at a floor: the ceiling
+// bounds the sandbox without reserving it, so a large one never makes an
+// unsized sandbox unschedulable. Neither set sets nothing, as before sizes.
+func sandboxResources(size, ceiling envport.SandboxSize) *kube.ResourceRequirements {
+	if size.IsZero() && ceiling.IsZero() {
+		return nil
+	}
+	r := &kube.ResourceRequirements{Requests: map[string]string{}, Limits: map[string]string{}}
+	if m := size.MilliCPU; m > 0 {
+		r.Limits["cpu"] = strconv.Itoa(m) + "m"
+		r.Requests["cpu"] = strconv.Itoa(min(m, max(m/cpuRequestShare, minCPURequest))) + "m"
+	} else if c := ceiling.MilliCPU; c > 0 {
+		// Without a request, Kubernetes would request the limit.
+		r.Limits["cpu"] = strconv.Itoa(c) + "m"
+		r.Requests["cpu"] = strconv.Itoa(min(c, minCPURequest)) + "m"
+	}
+	if m := size.MemoryMiB; m > 0 {
+		mem := strconv.Itoa(m) + "Mi"
+		r.Limits["memory"], r.Requests["memory"] = mem, mem
+	} else if c := ceiling.MemoryMiB; c > 0 {
+		r.Limits["memory"] = strconv.Itoa(c) + "Mi"
+		r.Requests["memory"] = strconv.Itoa(min(c, cappedMemoryRequest)) + "Mi"
+	}
+	return r
+}
+
+// cappedMemoryRequest is what an unsized sandbox under a memory ceiling
+// requests (MiB): enough for its docker daemon and an idle workspace, so
+// the scheduler does not pack such sandboxes onto a node as if they were
+// free.
+const cappedMemoryRequest = 1024
+
+// sidecarResources are the tunnel's and the relay's: requests only, so the
+// scheduler counts them, and no limit (a CPU limit on wireguard-go would
+// throttle the sandbox's whole network).
+func sidecarResources() *kube.ResourceRequirements {
+	return &kube.ResourceRequirements{Requests: map[string]string{"cpu": "10m", "memory": "32Mi"}}
 }
 
 // ensureCheckout clones the repo inside the pod, once. The credential rides
@@ -730,6 +957,69 @@ func (h *k8sHost) destroySandbox(ctx context.Context, name string) error {
 	return nil
 }
 
+// stopSandbox deletes the pod alone: the claim (checkout, the inner
+// daemon's images and containers), the relay secret and the network policy
+// stay, and the next ensurePod starts a pod on them.
+func (h *k8sHost) stopSandbox(ctx context.Context, name string) error {
+	if err := h.checkStop(ctx, name); err != nil {
+		return err
+	}
+	if err := h.cfg.Kube.Delete(ctx, "pod", name, true); err != nil {
+		return fmt.Errorf("delete pod %s: %w", name, err)
+	}
+	h.forgetPod(name)
+	h.mu.Lock()
+	delete(h.stats, name)
+	if f := h.fwds[name]; f != nil {
+		f.Close()
+		delete(h.fwds, name)
+	}
+	h.mu.Unlock()
+	return nil
+}
+
+// canStop: a sandbox without a claim (emptyDir storage, or a VM runtime
+// without a VM storage class) loses everything with its pod.
+func (h *k8sHost) canStop(want envport.Runtime) error {
+	rt, err := h.runtimeFor(want)
+	if err != nil {
+		return err
+	}
+	return CanStopUnder(rt.name, h.cfg.Storage, h.cfg.VMStorageClass)
+}
+
+// keepsClaim: rt's sandboxes keep the run on its claim, which outlives the
+// pod (a raw-block one under a VM runtime).
+func (h *k8sHost) keepsClaim(rt sandboxRuntime) bool {
+	if rt.vm {
+		return h.cfg.VMStorageClass != ""
+	}
+	return h.cfg.Storage == "pvc"
+}
+
+// checkStop is canStop for the run's live pod, by what it stands on: the
+// run's claim (mounted, or a VM's raw-block disk) is kept, anything else
+// goes with it, whatever the project picks now. No pod: the default
+// runtime's answer.
+func (h *k8sHost) checkStop(ctx context.Context, name string) error {
+	var pod kube.Pod
+	found, err := h.cfg.Kube.Get(ctx, "pod", name, &pod)
+	if err != nil {
+		return err
+	}
+	if !found {
+		// Nothing running: the integration's default runtime says.
+		return h.canStop("")
+	}
+	if !usesClaim(pod, name) {
+		if h.isVMPod(pod) {
+			return fmt.Errorf("sandbox pod %s runs in a VM (runtime class %s) on disks of its own, which go with it: it cannot be stopped and kept", name, pod.Spec.RuntimeClassName)
+		}
+		return CanStop("emptydir")
+	}
+	return nil
+}
+
 // resetSandbox empties the pod's daemon and leaves the pod: the checkout is on
 // the volume under it, which an emptyDir would lose with the pod, and a live
 // pod keeps its tunnel to the gateway. It runs after prepare, whose ensurePod
@@ -800,6 +1090,11 @@ func (p podPortConn) Dial(ctx context.Context) (net.Conn, error) {
 func (p podPortConn) Close() error { return nil }
 
 func (h *k8sHost) dialMux(ctx context.Context, name, sock string) (net.Conn, error) {
+	if vm, err := h.viaExec(ctx, name); err != nil {
+		return nil, err
+	} else if vm {
+		return h.dialExec(ctx, name, sock)
+	}
 	tok, err := h.relayToken(ctx, name, false, "")
 	if err != nil {
 		return nil, err
@@ -892,7 +1187,77 @@ func (h *k8sHost) muxAddr(ctx context.Context, name string) (string, error) {
 func (h *k8sHost) forgetPod(name string) {
 	h.mu.Lock()
 	delete(h.podIPs, name)
+	delete(h.podVM, name)
 	h.mu.Unlock()
+}
+
+// viaExec reports whether an engine outside the cluster dials the run's pod
+// through kubectl exec rather than its port-forward: under a VM runtime the
+// relay listens in the guest, while containerd's port-forward dials the port
+// in the node's network namespace, where nothing listens. Inside the cluster
+// the pod's IP reaches the guest, and nothing changes.
+func (h *k8sHost) viaExec(ctx context.Context, name string) (bool, error) {
+	if !h.cfg.Forward {
+		return false, nil
+	}
+	h.mu.Lock()
+	vm, ok := h.podVM[name]
+	h.mu.Unlock()
+	if ok {
+		return vm, nil
+	}
+	var pod kube.Pod
+	found, err := h.cfg.Kube.Get(ctx, "pod", name, &pod)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		return false, fmt.Errorf("sandbox pod %s not found", name)
+	}
+	vm = h.isVMPod(pod)
+	h.mu.Lock()
+	h.podVM[name] = vm
+	h.mu.Unlock()
+	return vm, nil
+}
+
+// dialExec is dialMux through kubectl exec into the pod's relay container:
+// its shim pipes the socket over stdio, after the mux's "OK" (relay
+// --stdio-ack). No token: exec is authorised by the cluster.
+func (h *k8sHost) dialExec(ctx context.Context, name, sock string) (net.Conn, error) {
+	path := filepath.Join(h.a.folderFor(name), "shim", sock)
+	c, err := h.cfg.Kube.ExecConn(ctx, name, "relay", []string{"/apothecary-shim", "relay", "--stdio-ack", path})
+	if err != nil {
+		return nil, err
+	}
+	type answer struct {
+		line string
+		err  error
+	}
+	br := bufio.NewReaderSize(c, 64)
+	got := make(chan answer, 1)
+	go func() {
+		line, err := br.ReadString('\n')
+		got <- answer{line, err}
+	}()
+	wait := 10 * time.Second
+	if dl, ok := ctx.Deadline(); ok {
+		wait = time.Until(dl)
+	}
+	select {
+	case a := <-got:
+		if a.err != nil || a.line != "OK\n" {
+			c.Close()
+			return nil, fmt.Errorf("sandbox %s: %s is not being served", name, sock)
+		}
+	case <-time.After(wait):
+		c.Close()
+		return nil, fmt.Errorf("sandbox %s: no answer from %s within %s", name, sock, wait.Truncate(time.Millisecond))
+	case <-ctx.Done():
+		c.Close()
+		return nil, ctx.Err()
+	}
+	return &readerConn{Conn: c, r: br}, nil
 }
 
 func (h *k8sHost) waitSock(ctx context.Context, name, sock string) error {
@@ -940,6 +1305,7 @@ type cgroupSample struct {
 	pids     int
 	cpus     int
 	rx, tx   int64
+	oomKills int
 }
 
 const sampleScript = `cd /sys/fs/cgroup 2>/dev/null || exit 3
@@ -948,6 +1314,7 @@ echo "mem $(cat memory.current)"
 echo "inactive $(awk '$1=="inactive_file"{print $2}' memory.stat 2>/dev/null)"
 echo "max $(cat memory.max)"
 echo "pids $(cat pids.current 2>/dev/null || echo 0)"
+echo "oom $(awk '$1=="oom_kill"{print $2}' memory.events 2>/dev/null)"
 echo "quota $(cat cpu.max 2>/dev/null)"
 echo "nproc $(nproc)"
 awk -F'[: ]+' '$2=="eth0"{print "net "$3" "$11}' /proc/net/dev`
@@ -976,6 +1343,8 @@ func parseCgroupSample(out string) (cgroupSample, error) {
 			}
 		case "pids":
 			s.pids = int(n(1))
+		case "oom":
+			s.oomKills = int(n(1))
 		case "quota":
 			if f[1] != "max" && len(f) >= 3 {
 				quota, period = n(1), n(2)
@@ -1017,6 +1386,7 @@ func (h *k8sHost) sample(ctx context.Context, name string) (envport.ResourceSamp
 	prev, ok := h.stats[name]
 	h.stats[name] = cur
 	h.mu.Unlock()
+	h.noteOOM(ctx, name, cur, !ok || cur.usageUS < prev.usageUS)
 	if !ok || cur.usageUS < prev.usageUS {
 		return envport.ResourceSample{}, fmt.Errorf("sample %s: first reading (CPU needs two)", name)
 	}
@@ -1031,12 +1401,15 @@ func cpuSample(prev, cur cgroupSample) envport.ResourceSample {
 		cpu = float64(cur.usageUS-prev.usageUS) / float64(wall) * 100
 	}
 	return envport.ResourceSample{CPUPerc: cpu, CPUs: cur.cpus, MemUsed: cur.memUsed, MemLimit: cur.memLimit,
-		NetRx: cur.rx, NetTx: cur.tx, PIDs: cur.pids}
+		NetRx: cur.rx, NetTx: cur.tx, PIDs: cur.pids, OOMKills: cur.oomKills}
 }
 
 // --- test / close ------------------------------------------------------------
 
 func (h *k8sHost) test(ctx context.Context) error {
+	if h.rtErr != nil {
+		return h.rtErr
+	}
 	k := h.cfg.Kube
 	if _, err := k.Version(ctx); err != nil {
 		return fmt.Errorf("kubernetes cluster unreachable: %w", err)
@@ -1067,7 +1440,9 @@ func (h *k8sHost) test(ctx context.Context) error {
 	if _, _, err := h.engineAddr(); err != nil {
 		return err
 	}
-	return nil
+	// Last: a pod under each runtime the integration builds, so a cluster
+	// without one fails here rather than at a run.
+	return h.probeRuntimes(ctx)
 }
 
 func (h *k8sHost) close() {

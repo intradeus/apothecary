@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"time"
 
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/ports/trackerport"
 )
 
@@ -135,6 +136,19 @@ type WorkspaceConfig struct {
 	// deployment's daemon door (APOTHECARY_WORKSPACE_DOCKER): a closed door
 	// refuses the project's runs at provision, naming the fix.
 	Docker bool `json:"docker,omitempty"`
+	// Size is what each of this project's sandboxes may use (CPU, memory);
+	// an unset field takes the instance's default (System → Limits), and the
+	// instance's ceiling holds it. It applies when a sandbox is created (a
+	// run's provision, a rebuild), never to a live one.
+	Size envport.SandboxSize `json:"size,omitzero"`
+	// Runtime is the sandbox runtime this project's sandboxes run under, one
+	// the admin approved on the provisioner; "" is the provisioner's default.
+	// Checked when the project is saved and again at each provision.
+	Runtime envport.Runtime `json:"runtime,omitempty"`
+	// IdleMinutes is how long one of this project's sandboxes may sit unused
+	// before it is stopped (its storage kept, woken on the next use): 0 the
+	// instance's default (System → Limits), envport.IdleNever never.
+	IdleMinutes int `json:"idle_minutes,omitempty"`
 }
 
 // ServiceConfig is one project service. Start runs in the run's primary

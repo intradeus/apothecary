@@ -53,6 +53,12 @@ type Resolver struct {
 	logins CredentialOpener
 	// notices hears k8s image drift; nil = log only.
 	notices ProvisionerNotices
+	// sizes is the instance's sandbox sizing policy (System → Limits), read
+	// on every resolve; nil = no policy (a project's own size as it is).
+	sizes SandboxPolicy
+	// lastPolicy is the last policy sizes read (r.mu): what a failed read
+	// falls back to.
+	lastPolicy *envport.SandboxPolicy
 	// Live is the read cache of remote trackers: a write through a ticket's
 	// tracker drops what it holds of the issue. Set by the daemon after New;
 	// nil (tests) leaves writes unwrapped.
@@ -76,6 +82,35 @@ type ProvisionerNotices interface {
 
 // SetNotices wires the notice feed.
 func (r *Resolver) SetNotices(n ProvisionerNotices) { r.notices = n }
+
+// SandboxPolicy reads the instance's sandbox sizing policy (engine.StoredLimits).
+type SandboxPolicy func(ctx context.Context) (envport.SandboxPolicy, error)
+
+// SetSandboxSizes wires the sizing policy.
+func (r *Resolver) SetSandboxSizes(f SandboxPolicy) { r.sizes = f }
+
+// sandboxPolicy is the instance's sandbox policy, read once per resolve. A
+// read that fails gets the last one this resolver read (the ceiling still
+// holds through a blip of the store), and fails the resolve when there was
+// none: a sandbox must not escape its ceiling because the setting was
+// unreadable. No policy wired (tests) is none.
+func (r *Resolver) sandboxPolicy(ctx context.Context) (envport.SandboxPolicy, error) {
+	if r.sizes == nil {
+		return envport.SandboxPolicy{}, nil
+	}
+	p, err := r.sizes(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err == nil {
+		r.lastPolicy = &p
+		return p, nil
+	}
+	if r.lastPolicy != nil {
+		slog.Warn("sandbox policy unreadable; the last one read applies", "err", err)
+		return *r.lastPolicy, nil
+	}
+	return envport.SandboxPolicy{}, fmt.Errorf("the instance's sandbox limits could not be read (System → Limits): %w", err)
+}
 
 // driftFor reports in's image drift to the notices; nil when none are wired.
 func (r *Resolver) driftFor(in confstore.Integration) func(ctx context.Context, part string, err error) {
@@ -171,6 +206,11 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 	if hasPassword {
 		return nil, unresolvable(errors.New("the project's repository URL embeds credentials; remove them (the repository integration supplies the login)"))
 	}
+	policy, err := r.sandboxPolicy(ctx)
+	if err != nil {
+		return nil, err
+	}
+	size := policy.Effective(p.Workspace.Size)
 
 	repoRef := repoport.RepoRef{
 		URL:           p.Repo.URL,
@@ -213,6 +253,7 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 	if err != nil {
 		return nil, err
 	}
+	runtime, runtimeErr := r.chooseRuntime(provInt, p.Workspace)
 	prov, release, err := r.acquireProvisioner(provInt)
 	if err != nil {
 		return nil, err
@@ -339,13 +380,18 @@ func (r *Resolver) Resolve(ctx context.Context, projectID string) (*resolution.R
 			WordWrap:       p.Workspace.Editor.WordWrap,
 			TrustWorkspace: p.Workspace.Editor.TrustWorkspace,
 		},
-		Secrets:         projectSecrets,
-		Browser:         p.Workspace.Browser.Enabled,
-		WorkspaceDocker: p.Workspace.Docker,
-		ExtraRepos:      extras,
-		RepoHosts:       repoHosts,
-		HarnessKind:     defaultKind,
-		HarnessKinds:    kindList,
+		Secrets:             projectSecrets,
+		Browser:             p.Workspace.Browser.Enabled,
+		WorkspaceDocker:     p.Workspace.Docker,
+		WorkspaceSize:       size,
+		WorkspaceSizeCap:    policy.Cap(size),
+		WorkspaceIdleAfter:  policy.IdleAfter(p.Workspace.IdleMinutes),
+		WorkspaceRuntime:    runtime,
+		WorkspaceRuntimeErr: runtimeErr,
+		ExtraRepos:          extras,
+		RepoHosts:           repoHosts,
+		HarnessKind:         defaultKind,
+		HarnessKinds:        kindList,
 		Models: func(ctx context.Context, kind string) ([]string, error) {
 			h, ok := byKind[kind]
 			if !ok {

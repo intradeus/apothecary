@@ -1,5 +1,10 @@
 export default {
 	'ui.dismiss': 'Dismiss',
+	'ui.size.cpus': 'CPUs',
+	'ui.size.cpusUnit': 'cores',
+	'ui.size.memory': 'Memory',
+	'ui.size.memoryUnit': 'GiB',
+	'ui.size.bounds': 'A size is 0.1 to 1000 CPUs and 0.5 to 16384 GiB of memory.',
 	'ui.copy.label': 'copy',
 	'ui.copy.done': 'copied',
 	'ui.copy.aria': 'Copy {command}',
@@ -43,6 +48,8 @@ export default {
 	'ui.tags.remove': 'Remove {value}',
 	'ui.ws.unreachable': 'Provisioner unreachable — check integration token',
 	'ui.ws.broken': 'Container runtime stopped responding — rebuild to replace it',
+	'ui.ws.asleep':
+		'Stopped after sitting unused; its checkout and containers are kept. The terminal, the editor, a port or SSH wakes it',
 	'ui.ws.tip': 'Workspace: {word}',
 	'ui.ws.tipEnv': 'Workspace: {word} · {env}',
 	'ui.ws.label': 'Workspace',

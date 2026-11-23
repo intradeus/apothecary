@@ -412,8 +412,9 @@ func kubernetesDefaults(boot *config.Boot) kinds.KubernetesDefaults {
 		PullPolicy:      k.PullPolicy,
 		ProtectCIDRs:    k.ProtectCIDRs,
 		Transport:       k.Transport,
+		Runtime:         k.Runtime,
 		RuntimeClass:    k.RuntimeClass,
-		Privileged:      k.Privileged,
+		Runtimes:        k.Runtimes,
 	}
 }
 

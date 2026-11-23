@@ -25,6 +25,10 @@ unprivileged under sysbox.
                            Kubernetes 1.33 or later)
   --sysbox-version <X.Y.Z> the sysbox release (default: 0.7.0); or set
                            SYSBOX_DEB_URL to the .deb to install
+  --kata                   also install Kata Containers (a VM per sandbox;
+                           amd64 with KVM, /dev/kvm): workshops may then
+                           choose kata beside sysbox. Kata sandboxes must be
+                           sized (System → Limits) before one is chosen.
   --keep-userns-restriction
                            leave Ubuntu's AppArmor restriction on
                            unprivileged user namespaces in place (tools that
@@ -33,14 +37,14 @@ unprivileged under sysbox.
   -h, --help               this text
 
 Steps: preflight, kernel, sysbox (and keeping needrestart from restarting
-it, containerd or k3s), k3s, sysbox in k3s, smoke test, then Apothecary
-(cert-manager first with --domain). Logs go to stdout; the generated
+it, containerd or k3s), Kata (with --kata), k3s, the runtimes in k3s, smoke
+tests, then Apothecary (cert-manager first with --domain). Logs go to stdout; the generated
 secrets to /root/.apothecary/install.env (root only).
 EOF
 }
 
 DOMAIN="" EMAIL="" ADDRESS="" CHART_VERSION="" K3S_CHANNEL="stable"
-SYSBOX_VERSION="0.7.0" KEEP_USERNS=0 CLUSTER_ONLY=0
+SYSBOX_VERSION="0.7.0" KEEP_USERNS=0 CLUSTER_ONLY=0 KATA=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain) DOMAIN="${2:?--domain needs a host}"; shift 2 ;;
@@ -49,6 +53,7 @@ while [ $# -gt 0 ]; do
     --chart-version) CHART_VERSION="${2:?--chart-version needs X.Y.Z}"; shift 2 ;;
     --k3s-channel) K3S_CHANNEL="${2:?--k3s-channel needs a channel}"; shift 2 ;;
     --sysbox-version) SYSBOX_VERSION="${2:?--sysbox-version needs X.Y.Z}"; shift 2 ;;
+    --kata) KATA=1; shift ;;
     --keep-userns-restriction) KEEP_USERNS=1; shift ;;
     --cluster-only) CLUSTER_ONLY=1; shift ;;
     -h | --help) usage; exit 0 ;;
@@ -56,6 +61,8 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+HERE=$(cd "$(dirname "$0")" && pwd)
+KATA_DIR="$HERE/../kata" # its pins (kata.env) and configure.sh, shared with the test rig
 CHART=oci://ghcr.io/intradeus/charts/apothecary
 NAMESPACE=apothecary
 STATE_DIR=/root/.apothecary
@@ -88,6 +95,13 @@ esac
 KERNEL=$(uname -r | cut -d- -f1)
 version_ge "$KERNEL" 6.3 || die "kernel $KERNEL is too old: user namespaces for pods need 6.3 or later"
 for tool in curl sort awk; do command -v "$tool" >/dev/null || die "missing $tool"; done
+if [ "$KATA" = 1 ]; then
+  # Kata runs each sandbox as a VM: the node needs KVM, and the release
+  # pinned here is amd64's.
+  [ "$ARCH" = amd64 ] || die "--kata: the pinned Kata release is amd64 only"
+  [ -c /dev/kvm ] || die "--kata: no /dev/kvm (enable virtualization in the firmware, or nested virtualization on a VM)"
+  [ -f "$KATA_DIR/kata.env" ] || die "--kata: run from a checkout (deploy/kata/kata.env is missing)"
+fi
 if [ -z "$ADDRESS" ]; then
   ADDRESS=$(hostname -I | awk '{print $1}')
 fi
@@ -177,6 +191,37 @@ systemctl is-active --quiet sysbox || systemctl restart sysbox
 systemctl is-active --quiet sysbox || die "sysbox does not run: journalctl -u sysbox"
 note "sysbox ${installed} running"
 
+# --- 3b. Kata --------------------------------------------------------------------
+if [ "$KATA" = 1 ]; then
+  # shellcheck source=deploy/kata/kata.env
+  . "$KATA_DIR/kata.env"
+  step "Kata Containers ${KATA_VERSION}"
+  # The static release, unpacked over /opt/kata (its paths are opt/kata/...),
+  # then Apothecary's configuration written beside the release's. A marker
+  # holds the version, so a rerun skips the download and a new pin replaces
+  # it. Kata VMs already running keep the binaries they started with; new
+  # sandboxes get the new release.
+  marker=/opt/kata/.apothecary-kata-version
+  if [ -x /opt/kata/runtime-rs/bin/containerd-shim-kata-v2 ] && [ "$(cat "$marker" 2>/dev/null)" = "$KATA_VERSION" ]; then
+    note "Kata ${KATA_VERSION} is installed"
+  else
+    command -v zstd >/dev/null || {
+      apt-get update -qq
+      DEBIAN_FRONTEND=noninteractive apt-get install -y -qq zstd
+    }
+    tarball="$STATE_DIR/kata-static.tar.zst"
+    url="https://github.com/kata-containers/kata-containers/releases/download/${KATA_VERSION}/kata-static-${KATA_VERSION}-amd64.tar.zst"
+    note "downloading ${url} (about 1 GB)"
+    curl -fL --retry 3 -o "$tarball" "$url" || die "cannot download Kata ${KATA_VERSION}"
+    echo "${KATA_SHA256}  ${tarball}" | sha256sum -c --quiet - || die "the download is not Kata ${KATA_VERSION}'s static release (sha256)"
+    zstd -dc "$tarball" | tar -x -C /
+    rm -f "$tarball"
+    echo "$KATA_VERSION" >"$marker"
+  fi
+  sh "$KATA_DIR/configure.sh" /opt/kata/share/defaults/kata-containers/runtime-rs
+  note "Kata ${KATA_VERSION} in /opt/kata, configured for Apothecary (configuration-apothecary.toml)"
+fi
+
 # --- 4. k3s ------------------------------------------------------------------------
 step "k3s (${K3S_CHANNEL} channel)"
 if command -v k3s >/dev/null && systemctl is-active --quiet k3s; then
@@ -198,9 +243,12 @@ version_ge "$CTRD" 2.0.5 || die "containerd ${CTRD} is too old: 2.0.5 or later"
 note "Kubernetes ${K8S}, containerd ${CTRD}, node Ready"
 
 # --- 5. sysbox in k3s ------------------------------------------------------------
-step "sysbox as a k3s runtime"
+step "sysbox (and Kata) as k3s runtimes"
 # k3s renders its containerd config from this template when it exists: its
-# own settings ("base"), plus a runtime named sysbox-runc.
+# own settings ("base"), plus a runtime named sysbox-runc and, with --kata,
+# one named kata: Kata's Rust shim with Cloud Hypervisor, a privileged
+# sandbox given its VM's devices and never the node's
+# (privileged_without_host_devices).
 tmpl=/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl
 want=$(cat <<'EOF'
 {{ template "base" . }}
@@ -214,6 +262,21 @@ want=$(cat <<'EOF'
   SystemdCgroup = {{ .SystemdCgroup }}
 EOF
 )
+if [ "$KATA" = 1 ]; then
+  want+=$(cat <<'EOF'
+
+
+# kata: a VM per sandbox (deploy/k3s/install.sh --kata)
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.'kata']
+  runtime_type = "io.containerd.kata.v2"
+  runtime_path = "/opt/kata/runtime-rs/bin/containerd-shim-kata-v2"
+  privileged_without_host_devices = true
+
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.'kata'.options]
+  ConfigPath = "/opt/kata/share/defaults/kata-containers/runtime-rs/configuration-apothecary.toml"
+EOF
+)
+fi
 if [ "$(cat "$tmpl" 2>/dev/null)" != "$want" ]; then
   mkdir -p "$(dirname "$tmpl")"
   printf '%s\n' "$want" >"$tmpl"
@@ -222,9 +285,9 @@ if [ "$(cat "$tmpl" 2>/dev/null)" != "$want" ]; then
     kube get nodes 2>/dev/null | grep -q ' Ready' && break
     sleep 2
   done
-  note "containerd now knows the sysbox-runc runtime"
+  note "containerd's runtimes written"
 else
-  note "containerd already knows the sysbox-runc runtime"
+  note "containerd already has its runtimes"
 fi
 kube apply -f - >/dev/null <<'EOF'
 apiVersion: node.k8s.io/v1
@@ -234,25 +297,57 @@ metadata:
 handler: sysbox-runc
 EOF
 note "RuntimeClass sysbox-runc"
+if [ "$KATA" = 1 ]; then
+  # The VM's own memory and CPU, beyond the pod's limits: the scheduler
+  # counts them and the pod's cgroup holds them (docs/kubernetes.md).
+  kube apply -f - >/dev/null <<'EOF'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: kata
+handler: kata
+overhead:
+  podFixed:
+    cpu: 250m
+    memory: 320Mi
+EOF
+  note "RuntimeClass kata"
+fi
 
-# --- 6. smoke test -------------------------------------------------------------
-step "Smoke test: a docker daemon in an unprivileged pod"
-# What every run's sandbox does: sysbox, a user namespace of the pod's own,
-# no privilege, and a working dockerd inside.
-kube delete pod apothecary-smoke -n default --ignore-not-found --wait=true >/dev/null
-kube apply -f - >/dev/null <<'EOF'
+# --- 6. smoke tests ------------------------------------------------------------
+# What every run's sandbox does: a working dockerd inside a pod of the
+# runtime's shape. smoke <name> <the pod's spec, after restartPolicy>.
+smoke() {
+  local name=$1 spec=$2 phase="" logs
+  kube delete pod "$name" -n default --ignore-not-found --wait=true >/dev/null
+  kube apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: Pod
 metadata:
-  name: apothecary-smoke
+  name: ${name}
   namespace: default
 spec:
-  runtimeClassName: sysbox-runc
-  hostUsers: false
   restartPolicy: Never
-  containers:
-    - name: dind
-      image: docker:29-dind
+${spec}
+EOF
+  for _ in $(seq 120); do
+    phase=$(kube get pod "$name" -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)
+    case "$phase" in Succeeded | Failed) break ;; esac
+    sleep 2
+  done
+  logs=$(kube logs "$name" -n default 2>/dev/null || true)
+  if [ "$phase" != Succeeded ]; then
+    kube describe pod "$name" -n default | tail -n 20 >&2 || true
+    printf '%s\n' "$logs" >&2
+    die "the smoke test ${name} failed (${phase:-never started}): sandboxes would not start either"
+  fi
+  kube delete pod "$name" -n default --wait=false >/dev/null
+  note "$logs"
+}
+# The nested daemon each smoke pod starts (its container's fields; the
+# pod's shell expands them, not this one).
+# shellcheck disable=SC2016
+dind='      image: docker:29-dind
       command: [sh, -c]
       args:
         - |
@@ -261,22 +356,34 @@ spec:
             if docker info >/dev/null 2>&1; then echo "nested dockerd answers"; exit 0; fi
             sleep 2
           done
-          cat /tmp/dockerd.log; exit 1
-EOF
-phase=""
-for _ in $(seq 120); do
-  phase=$(kube get pod apothecary-smoke -n default -o jsonpath='{.status.phase}' 2>/dev/null || true)
-  case "$phase" in Succeeded | Failed) break ;; esac
-  sleep 2
-done
-logs=$(kube logs apothecary-smoke -n default 2>/dev/null || true)
-if [ "$phase" != Succeeded ]; then
-  kube describe pod apothecary-smoke -n default | tail -n 20 >&2 || true
-  printf '%s\n' "$logs" >&2
-  die "the smoke test failed (${phase:-never started}): sandboxes would not start either"
+          cat /tmp/dockerd.log; exit 1'
+
+step "Smoke test: a docker daemon in an unprivileged pod (sysbox)"
+# sysbox, a user namespace of the pod's own, no privilege.
+smoke apothecary-smoke "  runtimeClassName: sysbox-runc
+  hostUsers: false
+  containers:
+    - name: dind
+${dind}"
+
+if [ "$KATA" = 1 ]; then
+  step "Smoke test: a docker daemon in a VM (Kata)"
+  # Privileged inside its own VM, sized (a Kata sandbox always is), the
+  # inner docker's data on an emptyDir: a disk of its own in the guest.
+  smoke apothecary-smoke-kata "  runtimeClassName: kata
+  containers:
+    - name: dind
+      securityContext:
+        privileged: true
+      resources:
+        limits: {cpu: '1', memory: 2Gi}
+        requests: {cpu: 250m, memory: 2Gi}
+      volumeMounts:
+        - {name: docker, mountPath: /var/lib/docker}
+${dind}
+  volumes:
+    - {name: docker, emptyDir: {sizeLimit: 5Gi}}"
 fi
-kube delete pod apothecary-smoke -n default --wait=false >/dev/null
-note "$logs"
 
 if [ "$CLUSTER_ONLY" = 1 ]; then
   step "Cluster ready (--cluster-only): kubeconfig at ${KUBECONFIG}"
@@ -337,6 +444,10 @@ values=(
   --set "masterKey=${MASTER_KEY}"
   --set "postgres.password=${PG_PASSWORD}"
 )
+if [ "$KATA" = 1 ]; then
+  # sysbox stays the default; a workshop may choose kata.
+  values+=(--set 'workspaces.runtimes={sysbox,kata}')
+fi
 if [ -n "$DOMAIN" ]; then
   URL="https://${DOMAIN}"
   values+=(
@@ -372,6 +483,13 @@ cat <<EOF
     Secrets: ${secrets} (keep a copy: the master key opens every stored secret)
     Cluster: kubectl --kubeconfig ${KUBECONFIG} ... (or: sudo k3s kubectl ...)
 EOF
+if [ "$KATA" = 1 ]; then
+  cat <<EOF
+
+    Kata: workshops may choose kata (Settings → Workspace). Set a default
+    sandbox size first (System → Limits): an unsized Kata sandbox is refused.
+EOF
+fi
 if [ -z "$DOMAIN" ]; then
   cat <<EOF
 

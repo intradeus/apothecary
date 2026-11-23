@@ -119,20 +119,49 @@ func TestToolPinsMatchCI(t *testing.T) {
 	if m := regexp.MustCompile(`SHELLCHECK_SHA256: ([0-9a-f]{64})`).FindStringSubmatch(ci); sum == nil || m == nil || m[1] != sum[1] {
 		t.Error("ci.yml's shellcheck checksum is not the devcontainer's amd64 one")
 	}
-	// k3d and kubectl: the k8s sandbox suite's, the same release and the
-	// same amd64 binary in CI as in the devcontainer.
+	// k3d and kubectl: the sandbox suites' (k8s, and kata's kubectl), the
+	// same release and the same amd64 binary in CI as in the devcontainer,
+	// in every step that installs one.
 	for _, tool := range []struct{ arg, sumVar, caseLabel string }{
 		{"K3D_VERSION", "K3D_SHA256", "k3d"},
 		{"KUBECTL_VERSION", "KUBECTL_SHA256", "kc"},
 	} {
 		want := argDefault(t, df, tool.arg)
-		if m := regexp.MustCompile(tool.arg + `: (\S+)`).FindStringSubmatch(ci); m == nil || m[1] != want {
-			t.Errorf("ci.yml installs %s %v, the devcontainer %s", tool.arg, m, want)
+		versions := regexp.MustCompile(tool.arg+`: (\S+)`).FindAllStringSubmatch(ci, -1)
+		if len(versions) == 0 {
+			t.Errorf("ci.yml installs no %s", tool.arg)
+		}
+		for _, m := range versions {
+			if m[1] != want {
+				t.Errorf("ci.yml installs %s %s, the devcontainer %s", tool.arg, m[1], want)
+			}
 		}
 		sum := regexp.MustCompile(`amd64\) a=amd64;.*\b` + tool.caseLabel + `=([0-9a-f]{64})`).FindStringSubmatch(df)
-		if m := regexp.MustCompile(tool.sumVar + `: ([0-9a-f]{64})`).FindStringSubmatch(ci); sum == nil || m == nil || m[1] != sum[1] {
-			t.Errorf("ci.yml's %s is not the devcontainer's amd64 checksum", tool.sumVar)
+		sums := regexp.MustCompile(tool.sumVar+`: ([0-9a-f]{64})`).FindAllStringSubmatch(ci, -1)
+		if sum == nil || len(sums) != len(versions) {
+			t.Errorf("ci.yml has %d %s for %d %s", len(sums), tool.sumVar, len(versions), tool.arg)
 		}
+		for _, m := range sums {
+			if sum == nil || m[1] != sum[1] {
+				t.Errorf("ci.yml's %s is not the devcontainer's amd64 checksum", tool.sumVar)
+			}
+		}
+	}
+	// The Kata suite's pins are one file's (deploy/kata/kata.env), which the
+	// rig and the installer source and the Taskfile reads: never a copy.
+	kata := read(t, "deploy/kata/kata.env")
+	for _, pin := range []string{"KATA_VERSION", "KATA_SHA256", "K3S_IMAGE"} {
+		if !regexp.MustCompile(`(?m)^` + pin + `=\S+$`).MatchString(kata) {
+			t.Errorf("deploy/kata/kata.env does not pin %s", pin)
+		}
+		for _, f := range []string{"deploy/kata/rig.sh", "deploy/k3s/install.sh", "Taskfile.yml", ".github/workflows/ci.yml"} {
+			if regexp.MustCompile(`(?m)^\s*` + pin + `[=:]`).MatchString(read(t, f)) {
+				t.Errorf("%s sets %s of its own: it is deploy/kata/kata.env's", f, pin)
+			}
+		}
+	}
+	if !regexp.MustCompile(`(?m)^  sandbox:test:kata:\n(?:    .*\n)*?    dotenv: \['deploy/kata/kata.env'\]`).MatchString(read(t, "Taskfile.yml")) {
+		t.Error("Taskfile.yml's sandbox:test:kata does not read deploy/kata/kata.env")
 	}
 	// kubectl is the engine's: the live tests drive the cluster as it does.
 	if eng := regexp.MustCompile(`(?m)^ARG KUBECTL_VERSION=(\S+)`).FindStringSubmatch(read(t, "deploy/Dockerfile")); eng == nil || eng[1] != argDefault(t, df, "KUBECTL_VERSION") {

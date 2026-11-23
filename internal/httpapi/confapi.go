@@ -19,10 +19,12 @@ import (
 	"apothecary/internal/flow/signalspec"
 	"apothecary/internal/platform/secrets"
 	"apothecary/internal/ports/egressport"
+	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/confstore"
 	"apothecary/internal/project/kinds"
 	"apothecary/internal/project/resolution"
 	"apothecary/internal/workspace/envcheck"
+	"apothecary/internal/workspace/resources"
 	"apothecary/internal/workspace/wsinfo"
 )
 
@@ -409,6 +411,10 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
+	if !s.sandboxSizeFits(w, r, "", body.Workspace.Size) || !s.runtimeFits(w, r, body.ProvisionerID, "", body.Workspace) ||
+		!s.idleFits(w, r, body.ProvisionerID, "", body.Workspace) {
+		return
+	}
 	p := body.toProject()
 	p.UserID = auth.UserID(r.Context())
 	p, err := s.Conf.CreateProject(r.Context(), p)
@@ -417,6 +423,139 @@ func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.writeProject(w, r, http.StatusCreated, p)
+}
+
+// sandboxSizeFits refuses (400) a workshop's sandbox size out of bounds or
+// above the instance's ceiling (System → Limits), when it is saved: a
+// ceiling lowered later caps the size at the next provision instead. On an
+// update (projectID) only a field the save changes is checked, so a ceiling
+// lowered under the workshop's size does not refuse its every later save.
+func (s *Server) sandboxSizeFits(w http.ResponseWriter, r *http.Request, projectID string, size envport.SandboxSize) bool {
+	l, err := s.currentLimits(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	var prev envport.SandboxSize
+	if projectID != "" {
+		// Unreadable (or gone, the update's own 404): every field is checked.
+		if p, err := s.Conf.GetProject(r.Context(), projectID); err == nil {
+			prev = p.Workspace.Size
+		}
+	}
+	if err := l.Sandbox.CheckChange(prev, size); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
+}
+
+// idleFits refuses (400) a workshop idle setting out of range, and one that
+// would stop sandboxes its provisioner cannot keep (emptyDir storage, a VM
+// runtime), saying why. The provisioner is found as runtimeFits finds it.
+func (s *Server) idleFits(w http.ResponseWriter, r *http.Request, provisionerID, projectID string, ws confstore.WorkspaceConfig) bool {
+	if err := envport.ValidateIdle(ws.IdleMinutes); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	if ws.IdleMinutes <= 0 || s.Runtimes == nil {
+		return true
+	}
+	provisionerID, ok := s.provisionerFor(w, r, provisionerID, projectID)
+	if !ok || provisionerID == "" {
+		return ok // none yet: nothing to refuse against
+	}
+	c, offered, err := s.Runtimes.RuntimeChoice(r.Context(), provisionerID)
+	if why := c.SleepRefusal(ws.Runtime); err == nil && offered && why != "" {
+		writeErr(w, http.StatusBadRequest, "idle sandboxes cannot be stopped here: "+why)
+		return false
+	}
+	return true
+}
+
+// provisionerFor is the provisioner a workshop's settings are checked
+// against: the body's, else the workshop's own (an update), else the
+// instance's ("" when there is none yet). false: the answer is written.
+func (s *Server) provisionerFor(w http.ResponseWriter, r *http.Request, provisionerID, projectID string) (string, bool) {
+	ctx := r.Context()
+	if provisionerID == "" && projectID != "" {
+		p, err := s.Conf.GetProject(ctx, projectID)
+		if err != nil {
+			confErr(w, err)
+			return "", false
+		}
+		provisionerID = p.ProvisionerID
+	}
+	if provisionerID == "" {
+		in, err := s.Conf.InstanceProvisioner(ctx)
+		if errors.Is(err, confstore.ErrNotFound) {
+			return "", true
+		}
+		if err != nil {
+			confErr(w, err)
+			return "", false
+		}
+		provisionerID = in.ID
+	}
+	return provisionerID, true
+}
+
+// RuntimeOffers is the resolver's sandbox runtime surface.
+type RuntimeOffers interface {
+	RuntimeChoice(ctx context.Context, provisionerID string) (envport.RuntimeChoice, bool, error)
+	CheckRuntime(ctx context.Context, provisionerID string, w confstore.WorkspaceConfig) error
+}
+
+// runtimeFits refuses (400) a workshop whose sandbox runtime its provisioner
+// does not approve, or that cannot give what the workshop needs, naming
+// the fix. The provisioner is the body's, else the workshop's own (an
+// update), else the instance's (a create; none yet is the create's refusal).
+func (s *Server) runtimeFits(w http.ResponseWriter, r *http.Request, provisionerID, projectID string, ws confstore.WorkspaceConfig) bool {
+	if s.Runtimes == nil {
+		return true
+	}
+	provisionerID, ok := s.provisionerFor(w, r, provisionerID, projectID)
+	if !ok || provisionerID == "" {
+		return ok
+	}
+	if err := s.Runtimes.CheckRuntime(r.Context(), provisionerID, ws); err != nil {
+		if errors.Is(err, confstore.ErrNotFound) {
+			confErr(w, err)
+			return false
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return false
+	}
+	return true
+}
+
+// getRuntimeOffer is what the instance's provisioner offers workshops for
+// their sandbox runtime: the default, the approved ones and what each can
+// run. Offered is false for a provisioner without a choice (or none yet).
+func (s *Server) getRuntimeOffer(w http.ResponseWriter, r *http.Request) {
+	out := RuntimeOffer{Approved: []RuntimeInfo{}}
+	in, err := s.Conf.InstanceProvisioner(r.Context())
+	if errors.Is(err, confstore.ErrNotFound) || s.Runtimes == nil {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	if err != nil {
+		confErr(w, err)
+		return
+	}
+	c, ok, err := s.Runtimes.RuntimeChoice(r.Context(), in.ID)
+	if err != nil {
+		out.Error = err.Error()
+	}
+	if !ok {
+		writeJSON(w, http.StatusOK, out)
+		return
+	}
+	out.Offered, out.Default, out.NoSleep = true, c.Default, c.NoSleep
+	for _, rt := range c.Approved {
+		out.Approved = append(out.Approved, RuntimeInfo{Name: rt, Capabilities: rt.Capabilities(), NoSleep: c.NoSleepUnder[rt]})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) getProject(w http.ResponseWriter, r *http.Request) {
@@ -433,6 +572,10 @@ func (s *Server) updateProject(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &body) {
 		return
 	}
+	if !s.sandboxSizeFits(w, r, r.PathValue("id"), body.Workspace.Size) || !s.runtimeFits(w, r, body.ProvisionerID, r.PathValue("id"), body.Workspace) ||
+		!s.idleFits(w, r, body.ProvisionerID, r.PathValue("id"), body.Workspace) {
+		return
+	}
 	p, err := s.Conf.UpdateProject(r.Context(), r.PathValue("id"), body.toProject())
 	if err != nil {
 		confErr(w, err)
@@ -447,6 +590,16 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// getSandboxUsage serves the workshop's recent runs' sandbox usage (the
+// sampler's memory; empty without one).
+func (s *Server) getSandboxUsage(w http.ResponseWriter, r *http.Request) {
+	out := SandboxUsage{Runs: []resources.RunUsage{}}
+	if s.Resources != nil {
+		out.Runs = s.Resources.Usage(r.PathValue("id"))
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) preflightProject(w http.ResponseWriter, r *http.Request) {
@@ -977,6 +1130,9 @@ func (s *Server) integrationRoutes() []Route {
 			Summary: "The instance's provisioner (secrets masked)",
 			Doc:     "Every workshop's workspaces are built on it. 404 while the instance has none (a deployment without APOTHECARY_K8S_NAMESPACE).",
 			Handler: s.getProvisioner, Returns: integrationJSON{}, Enabled: haveConf, Action: authz.ProjectRead},
+		{Method: "GET", Path: "/api/provisioner/runtimes", ID: "getRuntimeOffer", Tag: tagIntegrations,
+			Summary: "The sandbox runtimes a workshop may choose: the instance provisioner's default and approved ones, with what each can run",
+			Handler: s.getRuntimeOffer, Returns: RuntimeOffer{}, Enabled: haveConf, Action: authz.ProjectRead},
 		{Method: "PUT", Path: "/api/provisioner", ID: "updateProvisioner", Tag: tagIntegrations,
 			Summary: "Change the instance's provisioner (admin; secrets merge: present replaces, \"\" deletes, absent keeps)",
 			Doc:     "An empty field takes the deployment's value (APOTHECARY_K8S_*). Runs pick the change up on their next workspace.",
@@ -1041,6 +1197,9 @@ func (s *Server) projectRoutes() []Route {
 		{Method: "GET", Path: "/api/projects/{id}/egress-audit", ID: "getProjectEgressAudit", Tag: tagEgress,
 			Summary: "Everything this project's workspaces reached or were blocked from",
 			Query:   auditQuery, Handler: s.getProjectEgressAudit, Returns: []egressport.EgressAuditRow{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
+		{Method: "GET", Path: "/api/projects/{id}/sandbox-usage", ID: "getSandboxUsage", Tag: tagProjects,
+			Summary: "What the workshop's recent runs' sandboxes reached: peak memory, its limit, processes killed at it",
+			Handler: s.getSandboxUsage, Returns: SandboxUsage{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectRead},
 		{Method: "POST", Path: "/api/projects/{id}/preflight", ID: "preflightProject", Tag: tagProjects,
 			Summary: "Check a project is ready to run, step by step",
 			Handler: s.preflightProject, Returns: PreflightResult{}, Enabled: haveConf, Scope: ScopeProject, Action: authz.ProjectWrite},

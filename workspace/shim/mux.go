@@ -108,12 +108,18 @@ func startMux(addr, dir, token string) (net.Listener, error) {
 
 // pumpStdio splices stdin/stdout with the unix socket sock until either side
 // ends — one connection carried over an exec stream.
-func pumpStdio(sock string, in io.Reader, out io.Writer) error {
+func pumpStdio(sock string, in io.Reader, out io.Writer, ack bool) error {
 	c, err := net.Dial("unix", sock)
 	if err != nil {
 		return err
 	}
 	defer c.Close()
+	if ack {
+		// The mux's own answer: the socket is served.
+		if _, err := io.WriteString(out, "OK\n"); err != nil {
+			return err
+		}
+	}
 	done := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(out, c)

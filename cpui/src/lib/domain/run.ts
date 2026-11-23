@@ -36,7 +36,11 @@ export type EnvStatus =
 	| 'provisioning'
 	| 'rebuilding'
 	| 'destroying'
-	| 'error';
+	| 'error'
+	// Stop-on-idle: stopped and kept, being stopped, being started again.
+	| 'asleep'
+	| 'sleeping'
+	| 'waking';
 
 export interface Run {
 	id: string;
@@ -311,6 +315,8 @@ export interface ResourceSample {
 	netRx: number;
 	netTx: number;
 	pids: number;
+	/** Processes killed at the sandbox's memory limit since it started. */
+	oomKills: number;
 }
 
 /** A port published through the relay. */
