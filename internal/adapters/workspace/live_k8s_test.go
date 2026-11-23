@@ -267,6 +267,28 @@ func TestLiveK8sLifecycle(t *testing.T) {
 		if mode := kubectl(t, c, "", "exec", name, "-c", "sandbox", "--", "cat", "/run/apo/wg-mode"); mode != want {
 			t.Errorf("tunnel = %q WireGuard, want %q", mode, want)
 		}
+		// The gateway's end: wireguard-go when asked for; else the kernel's,
+		// or wireguard-go on a node without the module (this suite inside a
+		// Kata workspace, whose k3d nodes run on the guest's kernel), which
+		// the gateway says it fell back to.
+		gwLogs := kubectl(t, c, "", "logs", "deploy/apo-gw-"+envport.ProjectHostKey(spec.Project), "-c", "gateway")
+		gwMode := ""
+		for _, m := range []string{"kernel", "userspace"} {
+			if strings.Contains(gwLogs, `"msg":"gateway: wg0 listening"`) && strings.Contains(gwLogs, `"mode":"`+m+`"`) {
+				gwMode = m
+			}
+		}
+		switch {
+		case gwMode == "":
+			t.Errorf("the gateway's log does not say which WireGuard its wg0 is:\n%s", firstLines(gwLogs, 20))
+		case os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") == "1" && gwMode != "userspace":
+			t.Errorf("gateway = %q WireGuard, want userspace (APOTHECARY_LIVE_WG_USERSPACE=1)", gwMode)
+		case gwMode == "userspace" && os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") != "1" &&
+			!strings.Contains(gwLogs, "falling back to wireguard-go"):
+			t.Errorf("gateway on wireguard-go, neither asked for nor fallen back to:\n%s", firstLines(gwLogs, 20))
+		default:
+			t.Logf("gateway: %s WireGuard", gwMode)
+		}
 	}
 	res, err := a.Exec(ctx, env, envport.Command{Script: `echo "$SMOKE"; cat "$HOME/repo/file.txt"; test -f /tmp/pc-ran && echo hooks-ran`})
 	if err != nil || res.ExitCode != 0 || !strings.Contains(res.Output, "live-42") ||

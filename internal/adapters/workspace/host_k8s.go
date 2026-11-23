@@ -69,9 +69,10 @@ type KubeConfig struct {
 	Runtime        envport.Runtime
 	RuntimeClass   string
 	RuntimeClasses map[envport.Runtime]string
-	// WireGuardUserspace makes every sandbox's tunnel wireguard-go even on a
-	// kernel with the module (APO_WG_USERSPACE): the live test's switch, so
-	// the path a Kata guest takes is covered where the module exists.
+	// WireGuardUserspace makes every sandbox's tunnel, and its gateway's run
+	// link, wireguard-go even on a kernel with the module (APO_WG_USERSPACE):
+	// the live test's switch, so the path a Kata guest takes is covered where
+	// the module exists.
 	WireGuardUserspace bool
 	// Runtimes are the other runtimes an env may ask for (EnvSpec.Runtime):
 	// the ones the integration approves. The default is always built.
@@ -144,7 +145,8 @@ func newK8sHost(a *Adapter, cfg *KubeConfig) *k8sHost {
 	h.rt, h.rtErr = lookupRuntime(c.Runtime)
 	if c.Firewall {
 		h.gwh = &egressgw.K8sHost{Kube: c.Kube, Image: c.GatewayImage, PullPolicy: c.PullPolicy, ProtectCIDRs: c.ProtectCIDRs,
-			EngineNamespace: c.EngineNamespace, Forward: c.Forward, StorageClass: c.StorageClass}
+			EngineNamespace: c.EngineNamespace, Forward: c.Forward, StorageClass: c.StorageClass,
+			WireGuardUserspace: c.WireGuardUserspace}
 	}
 	return h
 }

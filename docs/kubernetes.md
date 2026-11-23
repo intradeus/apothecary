@@ -27,9 +27,12 @@ itself, in a namespace of its own:
 - **NetworkPolicy enforcement** (k3s has it built in; most CNIs do). Without
   it the sandbox could route around its gateway.
 - The **`wireguard` kernel module** on the nodes (in-tree since Linux 5.6;
-  loaded on demand). Where a sandbox's kernel has none (a Kata guest's), the
-  sandbox runs `wireguard-go` instead, on its own; the gateway still needs
-  the module.
+  loaded on demand). Where a kernel has none (a Kata guest's, or the nodes
+  of a k3d cluster inside a Kata workspace), the sandbox and the gateway
+  each run `wireguard-go` instead, on their own, with no more privilege:
+  it needs a TUN device, which they make. The gateway carries all of a
+  project's runs, so userspace costs it CPU and throughput the module does
+  not: keep the module where the nodes can have it.
 - Nodes may confine `/usr/bin/wg` with AppArmor (Ubuntu 26.04 ships
   `/etc/apparmor.d/wg`, which also attaches to a privileged container's `wg`):
   nothing to do, the tunnel reads its key from `/etc/wireguard`, the one place

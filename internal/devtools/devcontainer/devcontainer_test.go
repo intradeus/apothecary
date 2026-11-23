@@ -28,7 +28,7 @@ func argDefault(t *testing.T, dockerfile, name string) string {
 	t.Helper()
 	m := regexp.MustCompile(`(?m)^ARG ` + name + `=(\S+)`).FindStringSubmatch(dockerfile)
 	if m == nil {
-		t.Fatalf("no ARG %s in .devcontainer/Dockerfile", name)
+		t.Fatalf("no ARG %s in the Dockerfile", name)
 	}
 	return m[1]
 }
@@ -44,6 +44,18 @@ func TestGoImageMatchesGoMod(t *testing.T) {
 	}
 	if !strings.Contains(df, "FROM golang:${GO_VERSION}-bookworm") {
 		t.Error("the dev image must build FROM golang:${GO_VERSION}-bookworm")
+	}
+}
+
+// One wireguard-go: the sandbox's tunnel and the gateway's run link both
+// fall back to it on a kernel without WireGuard, and each image builds it
+// from its own build context, so the version is written twice and must stay
+// one.
+func TestOneWireguardGo(t *testing.T) {
+	sandbox := argDefault(t, read(t, "deploy/images/sandbox/Dockerfile"), "WIREGUARD_GO_VERSION")
+	gateway := argDefault(t, read(t, "workspace/images/gateway/Dockerfile"), "WIREGUARD_GO_VERSION")
+	if sandbox != gateway {
+		t.Errorf("WIREGUARD_GO_VERSION: sandbox image %s, gateway image %s: bump both", sandbox, gateway)
 	}
 }
 
