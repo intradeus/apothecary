@@ -8,6 +8,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -87,9 +88,6 @@ const repoFresh = 10 * time.Minute
 
 // turnTimeout bounds one answer.
 const turnTimeout = 10 * time.Minute
-
-// warmTimeout bounds a warm: a pod started ahead of a question.
-const warmTimeout = 2 * time.Minute
 
 // maxQuestion bounds what a person sends.
 const maxQuestion = 32 << 10
@@ -234,11 +232,10 @@ func (svc *Service) Status(ctx context.Context, person, workshop string) (Status
 			st.Models = models
 		}
 	}
+	// A pod's failed start (Pod.Error) is a warning, not a reason: the next
+	// question or warm starts it again.
 	if st.Pod, err = svc.Pods.Status(ctx, person); err != nil {
 		return st, err
-	}
-	if st.Pod.Error != "" && st.Reason == "" {
-		st.Reason = st.Pod.Error
 	}
 	st.Enabled = st.Reason == ""
 	svc.mu.Lock()
@@ -656,9 +653,8 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 	}
 	svc.reported(ctx, s.ID, told)
 	svc.status(person, s.ID, "")
-	var said strings.Builder
+	var said answerText
 	var cost float64
-	last := time.Time{}
 	for {
 		select {
 		case <-ctx.Done():
@@ -680,15 +676,9 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 			}
 			switch ev.Type {
 			case "message":
-				said.WriteString(ev.Text)
-				if time.Since(last) >= 120*time.Millisecond {
-					last = time.Now()
-					svc.hub.publish(person, Frame{Kind: "delta", Session: s.ID, Text: red.scrub(said.String())})
-				}
-			case "tool_call", "tool_update":
-				if ev.Tool != nil && ev.Tool.Title != "" && ev.Tool.Status != "completed" && ev.Tool.Status != "failed" {
-					svc.hub.publish(person, Frame{Kind: "delta", Session: s.ID, Text: red.scrub(said.String()), Tool: red.scrub(ev.Tool.Title)})
-				}
+				said.write(ev.Text)
+			case "tool_call":
+				said.step()
 			case "turn_end":
 				if ev.CostUSD != nil {
 					cost = *ev.CostUSD
@@ -701,6 +691,43 @@ func (svc *Service) run(ctx context.Context, t *turn, s *Session, red *redactor,
 		}
 	}
 }
+
+// answerText is what a turn says, as its answer keeps it: the text after
+// its last tool call (what it wrote before one is a step, "let me look"),
+// without the reasoning a model writes inline in <thinking> tags. The
+// panel shows no step, only the answer once it is in.
+type answerText struct {
+	steps []string // each one's text, the last the one being written
+}
+
+func (a *answerText) write(text string) {
+	if len(a.steps) == 0 {
+		a.steps = []string{""}
+	}
+	a.steps[len(a.steps)-1] += text
+}
+
+// step ends the text being written: a tool call follows it.
+func (a *answerText) step() {
+	if len(a.steps) > 0 && strings.TrimSpace(a.steps[len(a.steps)-1]) != "" {
+		a.steps = append(a.steps, "")
+	}
+}
+
+// String is the last step that says something: a turn that ends on a tool
+// call (a fill, a request) keeps what it wrote before it.
+func (a *answerText) String() string {
+	for i := len(a.steps) - 1; i >= 0; i-- {
+		if out := strings.TrimSpace(thinkingRe.ReplaceAllString(a.steps[i], "")); out != "" {
+			return out
+		}
+	}
+	return ""
+}
+
+// thinkingRe is a model's inline reasoning: a closed block, or one the
+// answer ended inside.
+var thinkingRe = regexp.MustCompile(`(?is)<(thinking|think)>.*?(</(thinking|think)>|\z)`)
 
 // skillsMarker is the file in a session's skills directory that names the
 // pins installed there: a turn finding it as it would write it skips the
@@ -940,11 +967,8 @@ func (svc *Service) Warm(ctx context.Context, person string) error {
 	svc.warming[person] = true
 	svc.mu.Unlock()
 	go func() {
-		wctx, cancel := context.WithTimeout(context.Background(), warmTimeout)
-		defer cancel()
-		if err := svc.Pods.Ensure(wctx, person, hosts); err != nil {
-			svc.log().Warn("assistant: warm a pod", "person", person, "err", err)
-		}
+		// The pods bound a start and log one that fails.
+		_ = svc.Pods.Ensure(context.WithoutCancel(ctx), person, hosts)
 		svc.mu.Lock()
 		delete(svc.warming, person)
 		svc.mu.Unlock()
@@ -1027,11 +1051,10 @@ func (svc *Service) status(person, session, text string) {
 // Frame is one event on a person's stream.
 type Frame struct {
 	Seq      int64           `json:"seq"`
-	Kind     string          `json:"kind"` // message|delta|state|status|fill|request|repos
+	Kind     string          `json:"kind"` // message|state|status|fill|request|repos
 	Session  string          `json:"session,omitempty"`
 	Message  *Message        `json:"message,omitempty"`
 	Text     string          `json:"text,omitempty"`
-	Tool     string          `json:"tool,omitempty"`
 	Busy     bool            `json:"busy,omitempty"`
 	Fill     json.RawMessage `json:"fill,omitempty"`
 	Page     Kind            `json:"page,omitempty"`

@@ -2511,7 +2511,8 @@ describe('the assistant stream', () => {
 		expect(ready).not.toHaveBeenCalled();
 		es.send('head', { seq: 2 });
 		expect(ready).toHaveBeenCalledTimes(1);
-		es.send('delta', { seq: 3, session: 's1', text: 'hel', tool: 'Read' });
+		// The engine streams no answer's steps.
+		expect(es.listeners).not.toHaveProperty('delta');
 		es.send('state', { seq: 4, session: 's1', busy: true });
 		es.send('status', { seq: 5, session: 's1', text: 'starting' });
 		es.send('fill', { seq: 6, session: 's1', page: 'ticket', subject: 'd', fill: { title: 't' } });
@@ -2530,7 +2531,6 @@ describe('the assistant stream', () => {
 		es.send('message', { seq: 11 });
 		es.send('gap', {});
 		expect(got).toEqual([
-			{ kind: 'delta', seq: 3, sessionId: 's1', text: 'hel', tool: 'Read' },
 			{ kind: 'state', seq: 4, sessionId: 's1', busy: true },
 			{ kind: 'status', seq: 5, sessionId: 's1', text: 'starting' },
 			{ kind: 'fill', seq: 6, sessionId: 's1', page: 'ticket', subject: 'd', fill: { title: 't' } },

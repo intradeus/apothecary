@@ -9,6 +9,10 @@ import { aProject } from '$test/fixtures';
 import type { Skill, SkillDetail } from '$lib/domain';
 import { encodeText } from '$lib/skills/files';
 import Page from './+page.svelte';
+import AssistantStub from '$test/fixtures/AssistantStub.svelte';
+
+// The assistant's page mode, as the shell would hold it beside the page.
+beforeEach(() => void render(AssistantStub));
 
 vi.mock('$app/state', async () => {
 	const { bindable } = await import('$test/fixtures/app.svelte');
@@ -21,10 +25,6 @@ vi.mock('$lib/api', () => ({
 	}
 }));
 vi.mock('$lib/skills/SkillFileEditor.svelte', () => import('$test/fixtures/YamlEditorStub.svelte'));
-vi.mock(
-	'$lib/assistant/FillAssistant.svelte',
-	() => import('$test/fixtures/FillAssistantStub.svelte')
-);
 
 const md = (name: string) => `---\nname: ${name}\ndescription: Notes.\n---\n\nDo it.\n`;
 const aSkill = (over: Partial<Skill> = {}): Skill => ({

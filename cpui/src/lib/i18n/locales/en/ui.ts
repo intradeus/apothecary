@@ -1,5 +1,7 @@
 export default {
 	'ui.dismiss': 'Dismiss',
+	'ui.prompt.keySend': 'send',
+	'ui.prompt.keyNewline': 'newline',
 	'ui.size.cpus': 'CPUs',
 	'ui.size.cpusUnit': 'cores',
 	'ui.size.memory': 'Memory',

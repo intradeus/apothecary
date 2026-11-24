@@ -89,7 +89,9 @@ const (
 // Status is a person's pod as the panel shows it.
 type Status struct {
 	State PodState `json:"state"`
-	// Error is why the last start failed, when it did.
+	// Error is why the last start failed, when it did: a warning, since
+	// the next start tries again. A stop, or the pod found well since,
+	// clears it.
 	Error string `json:"error,omitempty"`
 }
 
@@ -130,7 +132,9 @@ type Pods interface {
 	// Ensure brings the person's pod up, its gateway's standing allow list
 	// set to hosts (the model providers'), and returns once its agent host
 	// answers. Idempotent; a pod on a stale image is recreated when nobody
-	// uses it.
+	// uses it. The start runs on the pods' own deadline, not ctx's: a
+	// caller that stops waiting gets ctx's error and the start goes on,
+	// its failure logged and kept as Status's Error.
 	Ensure(ctx context.Context, person string, hosts []string) error
 	// Status is the pod's state, without starting it.
 	Status(ctx context.Context, person string) (Status, error)

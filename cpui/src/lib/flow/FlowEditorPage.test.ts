@@ -20,13 +20,13 @@ import {
 import { aProject } from '$test/fixtures';
 import { deferred } from '$test/helpers';
 import FlowEditorPage from './FlowEditorPage.svelte';
+import AssistantStub from '$test/fixtures/AssistantStub.svelte';
+
+// The assistant's page mode, as the shell would hold it beside the page.
+beforeEach(() => void render(AssistantStub));
 
 vi.mock('@xyflow/svelte', () => import('$test/fixtures/xyflow.svelte'));
 vi.mock('$lib/flow/YamlEditor.svelte', () => import('$test/fixtures/YamlEditorStub.svelte'));
-vi.mock(
-	'$lib/assistant/FillAssistant.svelte',
-	() => import('$test/fixtures/FillAssistantStub.svelte')
-);
 vi.mock('$lib/api', () => ({
 	api: {
 		flows: {

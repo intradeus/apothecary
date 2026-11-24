@@ -1,3 +1,4 @@
+import { tick } from 'svelte';
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -108,20 +109,20 @@ describe('AssistantPanel', () => {
 		expect(await screen.findByText('the session is answering')).toBeInTheDocument();
 		expect(textbox()).toHaveValue('again');
 		c.onFrame(f({ kind: 'state', busy: true }));
-		c.onFrame(f({ kind: 'delta', text: 'Reading', tool: 'Read README' }));
-		expect(await screen.findByText('Read README')).toBeInTheDocument();
-		expect(screen.getByText('Reading')).toBeInTheDocument();
+		// A loader, and the engine's line on what it is doing: no step.
+		expect(await screen.findByText('Thinking…')).toBeInTheDocument();
+		c.onFrame(f({ kind: 'status', text: 'starting your assistant' }));
+		expect(await screen.findByText('starting your assistant')).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('button', { name: 'Stop' }));
 		expect(api.assistant.cancel).toHaveBeenCalledWith('s1');
 	});
 
-	it('shows a request as it is proposed, then confirms it and shows what came of it', async () => {
+	it('shows a request once the answer is in, then confirms it and shows what came of it', async () => {
 		const c = await setup();
 		c.onFrame(f({ kind: 'state', busy: true }));
 		c.onFrame(f({ kind: 'request', message: msg(0, 'assistant', '', { request }) }));
-		expect(await screen.findByText('Start a run on T-1.')).toBeInTheDocument();
-		expect(screen.getByText('Confirm once the answer is in.')).toBeInTheDocument();
-		expect(screen.queryByRole('button', { name: 'Do it' })).not.toBeInTheDocument();
+		await tick();
+		expect(screen.queryByText('Start a run on T-1.')).not.toBeInTheDocument();
 		c.onFrame(f({ kind: 'message', message: msg(2, 'assistant', 'Shall I?', { request }) }));
 		c.onFrame(f({ kind: 'state', busy: false }));
 		expect(await screen.findByText('Shall I?')).toBeInTheDocument();
@@ -202,6 +203,32 @@ describe('AssistantPanel', () => {
 	it('shows an answer that failed', async () => {
 		await setup([msg(2, 'assistant', '', { error: 'the pod stopped' })]);
 		expect(screen.getByText('the pod stopped')).toBeInTheDocument();
+	});
+
+	it('warns of a failed start without turning the assistant off, until an answer comes', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({ pod: { state: 'absent', error: 'the gateway did not come up' } })
+		);
+		const c = await setup();
+		expect(screen.getByText(/last start failed/)).toBeInTheDocument();
+		expect(screen.getByText('the gateway did not come up')).toBeInTheDocument();
+		expect(textbox()).toBeEnabled();
+		// An answer that failed again keeps it; one that came puts it away.
+		c.onFrame(f({ kind: 'message', message: msg(2, 'assistant', '', { error: 'again' }) }));
+		expect(screen.getByText('the gateway did not come up')).toBeInTheDocument();
+		c.onFrame(f({ kind: 'message', message: msg(3, 'assistant', 'hello') }));
+		await vi.waitFor(() =>
+			expect(screen.queryByText('the gateway did not come up')).not.toBeInTheDocument()
+		);
+	});
+
+	it('puts a failed start’s warning away when dismissed', async () => {
+		vi.mocked(api.assistant.status).mockResolvedValue(
+			status({ pod: { state: 'running', error: 'no answer' } })
+		);
+		await setup();
+		await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+		expect(screen.queryByText('no answer')).not.toBeInTheDocument();
 	});
 
 	it('picks the conversation’s model', async () => {

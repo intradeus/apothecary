@@ -16,6 +16,10 @@ import {
 } from '$test/fixtures/analytics';
 import { catalog } from './catalog.svelte';
 import Dashboard from './Dashboard.svelte';
+import AssistantStub from '$test/fixtures/AssistantStub.svelte';
+
+// The assistant's page mode, as the shell would hold it beside the page.
+beforeEach(() => void render(AssistantStub));
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -40,10 +44,6 @@ vi.mock('$lib/api', () => ({
 	}
 }));
 vi.mock('$lib/ui/confirm.svelte', () => ({ confirmDialog: vi.fn() }));
-vi.mock(
-	'$lib/assistant/FillAssistant.svelte',
-	() => import('$test/fixtures/FillAssistantStub.svelte')
-);
 
 const stages = aPanel({
 	id: 'p2',

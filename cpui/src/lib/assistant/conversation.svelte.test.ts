@@ -189,14 +189,13 @@ describe('Conversation.load', () => {
 		await vi.waitFor(() => expect(api.assistant.open).toHaveBeenCalled());
 		// The record was read while the answer was written; it ends before
 		// the session is held.
-		push(f({ kind: 'delta', text: 'Almost' }));
 		push(f({ kind: 'message', seq: 2, message: msg(2, 'assistant', 'Done.') }));
 		push(f({ kind: 'message', sessionId: 's9', message: msg(3, 'assistant', 'theirs') }));
 		push(f({ kind: 'state', seq: 3, busy: false }));
 		opening.resolve({ session, messages: [msg(1, 'person', 'go')], busy: true });
 		await p;
 		expect(c.messages.map((m) => m.text)).toEqual(['go', 'Done.']);
-		expect([c.busy, c.live, c.switching]).toEqual([false, '', false]);
+		expect([c.busy, c.switching]).toEqual([false, false]);
 	});
 
 	it('reads the session again when frames were lost while it opened', async () => {
@@ -258,42 +257,28 @@ describe('Conversation frames', () => {
 		expect(stop).toHaveBeenCalledTimes(1);
 	});
 
-	it('streams the answer, its tool and the engine’s line, then the message', async () => {
+	it('follows the engine’s line while it answers, then takes the message once', async () => {
 		const c = await loaded();
 		c.onFrame(f({ kind: 'state', busy: true }));
 		c.onFrame(f({ kind: 'status', text: 'starting your assistant' }));
 		expect(c.note).toBe('starting your assistant');
-		c.onFrame(f({ kind: 'delta', text: 'Reading', tool: 'Read README' }));
-		expect([c.live, c.tool]).toEqual(['Reading', 'Read README']);
-		c.onFrame(f({ kind: 'delta', text: 'Reading on' }));
-		expect(c.tool).toBe('');
 		c.onFrame(f({ kind: 'message', message: msg(2, 'assistant', 'Done.') }));
 		c.onFrame(f({ kind: 'message', message: msg(2, 'assistant', 'Done.') }));
 		expect(c.messages).toHaveLength(1);
-		expect(c.live).toBe('');
 		c.onFrame(f({ kind: 'state', busy: false }));
 		expect([c.busy, c.note]).toEqual([false, '']);
 	});
 
-	it('keeps a person’s message without ending the answer being written', async () => {
-		const c = await loaded();
-		c.onFrame(f({ kind: 'delta', text: 'Reading' }));
-		c.onFrame(f({ kind: 'message', message: msg(1, 'person', 'go') }));
-		expect(c.live).toBe('Reading');
-	});
-
 	it('ignores another session’s frames, and every frame before a session', async () => {
 		const c = new Conversation({ kind: 'ticket', subject: 'T-1', workshop: 'w1' });
-		c.onFrame(f({ kind: 'delta', text: 'early' }));
-		expect(c.live).toBe('');
+		c.onFrame(f({ kind: 'message', message: msg(1, 'assistant', 'early') }));
+		expect(c.messages).toEqual([]);
 		await c.load();
-		c.onFrame(f({ kind: 'delta', sessionId: 's9', text: 'theirs' }));
 		c.onFrame(f({ kind: 'message', sessionId: 's9', message: msg(1, 'assistant', 'theirs') }));
-		expect(c.live).toBe('');
 		expect(c.messages).toEqual([]);
 	});
 
-	it('shows a request as it is proposed, then the one decided elsewhere', async () => {
+	it('leaves a request proposed mid-answer to its answer, and takes the one decided elsewhere', async () => {
 		vi.mocked(api.assistant.open).mockResolvedValue({
 			session,
 			messages: [msg(2, 'assistant', 'Shall I?', { request })],
@@ -301,14 +286,10 @@ describe('Conversation frames', () => {
 		});
 		const c = await loaded();
 		c.onFrame(f({ kind: 'request', message: msg(0, 'assistant', '', { request }) }));
-		expect(c.liveRequest).toEqual(request);
-		c.onFrame(f({ kind: 'message', message: msg(3, 'assistant', 'Asked.') }));
-		expect(c.liveRequest).toBeNull();
+		expect(c.messages).toHaveLength(1);
 		const done = { ...request, state: 'done' as const };
 		c.onFrame(f({ kind: 'request', message: msg(2, 'assistant', 'Shall I?', { request: done }) }));
 		expect(c.messages[0].request?.state).toBe('done');
-		c.onFrame(f({ kind: 'request', message: msg(0, 'assistant', '') }));
-		expect(c.liveRequest).toBeNull();
 	});
 
 	it('follows its workshop’s repositories being fetched, not another’s', async () => {
@@ -323,10 +304,9 @@ describe('Conversation frames', () => {
 		expect(c.status?.repos).toEqual(repos);
 	});
 
-	it('reads the record again after a gap, dropping a proposed request', async () => {
+	it('reads the record again after a gap', async () => {
 		const c = await loaded();
 		c.onFrame(f({ kind: 'state', busy: true }));
-		c.onFrame(f({ kind: 'delta', text: 'half' }));
 		c.onFrame(f({ kind: 'request', message: msg(0, 'assistant', '', { request }) }));
 		vi.mocked(api.assistant.session).mockResolvedValue({
 			session,
@@ -336,7 +316,7 @@ describe('Conversation frames', () => {
 		c.onFrame({ kind: 'gap' } as AssistantFrame);
 		await vi.waitFor(() => expect(c.messages[0]?.text).toBe('from the record'));
 		expect(api.assistant.session).toHaveBeenLastCalledWith('s1');
-		expect([c.busy, c.live, c.liveRequest]).toEqual([false, '', null]);
+		expect(c.busy).toBe(false);
 	});
 
 	it('reads again the session it holds after a gap, not a newer one about its subject', async () => {
@@ -458,7 +438,6 @@ describe('Conversation frames', () => {
 		c.onFrame(gap);
 		await vi.waitFor(() => expect(api.assistant.session).toHaveBeenCalledTimes(1));
 		const answer = msg(2, 'assistant', 'Done.', { fill: { title: 'new' } });
-		c.onFrame(f({ kind: 'delta', text: 'Do' }));
 		c.onFrame(f({ kind: 'fill', fill: { title: 'new' } }));
 		c.onFrame(f({ kind: 'message', message: answer }));
 		c.onFrame(f({ kind: 'state', busy: false }));
@@ -469,7 +448,7 @@ describe('Conversation frames', () => {
 		await vi.waitFor(() => expect(c.switching).toBe(false));
 		expect(c.messages).toEqual([msg(1, 'person', 'go'), answer]);
 		expect(fill.offered).toEqual([{ title: 'new' }]);
-		expect([c.busy, c.live, fill.asking]).toEqual([false, '', false]);
+		expect([c.busy, fill.asking]).toEqual([false, false]);
 	});
 
 	it('takes the fill of an answer whose frame a gap lost, from its message played after the record', async () => {

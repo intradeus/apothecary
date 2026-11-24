@@ -80,8 +80,9 @@ export const I = {
 	channels: '✉' + T,
 	members: '☺' + T,
 	provisioner: '⛁',
-	// the assistant
+	// the assistant: everywhere, and about the page on screen
 	sparkle: '✦',
+	thisPage: '◧',
 	// files
 	file: '▤',
 	image: '◩',

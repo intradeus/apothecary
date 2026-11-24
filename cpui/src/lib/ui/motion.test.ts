@@ -418,6 +418,20 @@ describe('dragDismiss', () => {
 		expect(up.style.touchAction).toBe('pan-x');
 	});
 
+	it('leaves a mouse alone: its drag selects text', () => {
+		const capture = vi.spyOn(node, 'setPointerCapture');
+		action();
+
+		pointer('pointerdown', 0, 0, { pointerType: 'mouse' });
+		pointer('pointermove', 200, 0, { pointerType: 'mouse' });
+		pointer('pointerup', 200, 0, { pointerType: 'mouse' });
+		vi.runAllTimers();
+
+		expect(node.style.transform).toBe('');
+		expect(capture).not.toHaveBeenCalled();
+		expect(ondismiss).not.toHaveBeenCalled();
+	});
+
 	it('ignores anything under the 10px intent threshold', () => {
 		const capture = vi.spyOn(node, 'setPointerCapture');
 		action();

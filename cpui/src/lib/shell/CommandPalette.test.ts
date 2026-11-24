@@ -12,7 +12,7 @@ import type { Me } from '$lib/domain';
 import { aPing, aProject, aRun, aTicketRow } from '$test/fixtures';
 import { bindable } from '$test/fixtures/app.svelte';
 import { aHold, anOpenMr } from '$test/fixtures/run-components';
-import { drawer } from '$lib/assistant/drawer.svelte';
+import { assistant } from '$lib/assistant/assistant.svelte';
 import CommandPalette from './CommandPalette.svelte';
 
 vi.mock('$lib/api', () => ({
@@ -326,15 +326,15 @@ describe('CommandPalette, doing things', () => {
 		expect(goto).not.toHaveBeenCalled();
 	});
 
-	it('opens the assistant’s drawer, closing itself', async () => {
-		drawer.open = false;
+	it('opens the assistant, closing itself', async () => {
+		assistant.close();
 		const { props } = setup();
 		await userEvent.type(search(), 'ask the');
 		expect(selected()).toHaveTextContent('Ask the assistant');
 		await userEvent.keyboard('{Enter}');
 		expect(props.open).toBe(false);
-		expect(drawer.open).toBe(true);
-		drawer.open = false;
+		expect(assistant.open).toBe(true);
+		assistant.close();
 	});
 
 	it('jumps to a merge request of any workshop, reading them once a search is typed', async () => {

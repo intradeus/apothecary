@@ -1,6 +1,6 @@
 // One conversation with the person's assistant (docs/assistant-plan.md):
-// its status, its session, its messages, the answer as it is written, the
-// requests it asks the person to confirm, and the person's side — ask,
+// its status, its session, its messages (an answer once it is in: never
+// its steps or tool calls), the requests it asks the person to confirm, and the person's side — ask,
 // stop, confirm or decline, pick a model, refetch the repositories. The
 // global drawer and a page's fill modal each hold one; it lives outside
 // what shows it, so closing the drawer loses neither the stream nor the
@@ -12,7 +12,6 @@ import type {
 	AssistantFrame,
 	AssistantKind,
 	AssistantMessage,
-	AssistantRequest,
 	AssistantSession,
 	AssistantStatus
 } from '$lib/domain';
@@ -58,17 +57,12 @@ export class Conversation {
 	session = $state<AssistantSession | null>(null);
 	messages = $state<AssistantMessage[]>([]);
 	busy = $state(false);
-	/** The answer as it is written, and the tool it is using. */
-	live = $state('');
-	tool = $state('');
-	/** The engine's line on what it is doing (starting the pod…). */
+	/** The engine's line on what it is doing (starting the pod…): the
+	 *  answer itself is shown once it is in, never its steps. */
 	note = $state('');
 	error = $state('');
 	loadError = $state('');
 	fetching = $state(false);
-	/** A request proposed while the answer is written: shown, decided once
-	 *  the answer is in. */
-	liveRequest = $state<AssistantRequest | null>(null);
 	/** The message whose request is being decided. */
 	deciding = $state<number | null>(null);
 	/** A session is being opened (the first, a fresh one, another
@@ -160,7 +154,6 @@ export class Conversation {
 			this.session = open.session;
 			this.messages = open.messages;
 			this.busy = open.busy;
-			this.liveRequest = null;
 			this.#idle();
 		} catch (e) {
 			if (n === this.#loads) this.loadError = errorMessage(e);
@@ -222,20 +215,15 @@ export class Conversation {
 				if (!this.messages.some((m) => m.seq === f.message.seq))
 					this.messages = [...this.messages, f.message];
 				if (f.message.role === 'assistant') {
-					this.live = '';
-					this.tool = '';
-					this.liveRequest = null;
+					// An answer came: the pod started, its last failure is over.
+					if (!f.message.error) this.dismissPodError();
 					// Its fill's frame may be the one a gap lost.
 					this.#recover();
 				}
 				break;
 			case 'request':
+				// One proposed mid-answer (no seq yet) comes with the answer.
 				if (f.message.seq > 0) this.#replace(f.message);
-				else this.liveRequest = f.message.request ?? null;
-				break;
-			case 'delta':
-				this.live = f.text;
-				this.tool = f.tool ?? '';
 				break;
 			case 'state':
 				this.busy = f.busy;
@@ -284,7 +272,6 @@ export class Conversation {
 			this.session = open.session;
 			this.messages = open.messages;
 			this.busy = open.busy;
-			this.liveRequest = null;
 			this.#recover();
 			this.#idle();
 		} catch (e) {
@@ -316,6 +303,13 @@ export class Conversation {
 			this.error = errorMessage(e);
 			return false;
 		}
+	}
+
+	/** The pod's last failed start, put away: a warning, never a reason the
+	 *  assistant is off (the next question starts the pod again). */
+	dismissPodError(): void {
+		if (this.status?.pod.error)
+			this.status = { ...this.status, pod: { ...this.status.pod, error: undefined } };
 	}
 
 	/** The person is typing: see typing. */
@@ -396,8 +390,6 @@ export class Conversation {
 	/** Not answering: nothing is being written, no fill is this page's. */
 	#idle() {
 		if (this.busy) return;
-		this.live = '';
-		this.tool = '';
 		this.note = '';
 		this.#fill?.answered();
 	}
@@ -434,7 +426,6 @@ export class Conversation {
 		this.session = null;
 		this.messages = [];
 		this.busy = false;
-		this.liveRequest = null;
 		this.#idle();
 	}
 

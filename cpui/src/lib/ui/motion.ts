@@ -215,7 +215,8 @@ export const rubberband = (overshoot: number, dimension: number, c = 0.55) =>
  *  where it was grabbed after a 10px intent threshold, resists in the wrong
  *  direction, and on release projects the flick: past the threshold it
  *  leaves with the finger's velocity, otherwise it springs home. Clicks on
- *  controls inside still work (it only takes over once a drag is clear). */
+ *  controls inside still work (it only takes over once a drag is clear).
+ *  Touch and pen only: a mouse drag in a sheet is a text selection. */
 export const dragDismiss: Action<HTMLElement, DragDismissParams> = (node, initial) => {
 	let p = initial;
 	const axis = () => (p.direction === 'left' || p.direction === 'right' ? 'x' : 'y');
@@ -232,7 +233,9 @@ export const dragDismiss: Action<HTMLElement, DragDismissParams> = (node, initia
 	const down = (e: PointerEvent) => {
 		// A touch drag ends with no click to swallow, so the mark can't outlive it.
 		delete node.dataset.dragged;
-		if (e.button !== 0) return;
+		// A flick is a finger's (or a pen's): a mouse pressed in a sheet
+		// selects its text.
+		if (e.button !== 0 || e.pointerType === 'mouse') return;
 		start = { x: e.clientX, y: e.clientY, id: e.pointerId };
 		dragging = false;
 		hist = [];

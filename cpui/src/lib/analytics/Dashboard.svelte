@@ -22,8 +22,8 @@
 	import Panel from './Panel.svelte';
 	import PanelEditor from './PanelEditor.svelte';
 	import { DEFAULT_RANGE, RANGES, rangeFrom, scoped, type Picks, type Range } from './scope';
-	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
-	import FillButton from '$lib/assistant/FillButton.svelte';
+	import { offerPage } from '$lib/assistant/assistant.svelte';
+	import FillMark from '$lib/assistant/FillMark.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { dashboardFill } from '$lib/domain';
 	import DashboardHistory from './DashboardHistory.svelte';
@@ -43,9 +43,8 @@
 	let editorOpen = $state(false);
 	let editorAt = $state(-1);
 
-	// The local assistant on one's own dashboard: its fill replaces the
+	// The assistant's page mode on one's own dashboard: its fill replaces the
 	// panels in the edit mode (entered for it), with Undo; Save keeps them.
-	let fillOpen = $state(false);
 	const guard = new FillGuard<{ panels: PanelT[] }>(
 		() => ({ panels: $state.snapshot(editing ? draft : (dash?.panels ?? [])) as PanelT[] }),
 		(v) => {
@@ -65,6 +64,11 @@
 		editing,
 		panels: $state.snapshot(editing ? draft : (dash?.panels ?? []))
 	});
+	offerPage(() =>
+		dash && !dash.builtin
+			? { kind: 'dashboard', subject: dash.id, name: dash.name, guard, pageState }
+			: null
+	);
 
 	async function load() {
 		dash = null;
@@ -222,7 +226,7 @@
 	{:else}
 		<div class="filters">
 			{#if !dash.builtin}
-				<FillButton {guard} onclick={() => (fillOpen = true)} />
+				<FillMark {guard} />
 			{/if}
 			<Segmented
 				label={t('analytics.dashboard.range')}
@@ -239,10 +243,6 @@
 				/>
 			{/each}
 		</div>
-
-		{#if !dash.builtin}
-			<FillAssistant bind:open={fillOpen} kind="dashboard" subject={dash.id} {guard} {pageState} />
-		{/if}
 
 		{#if showHistory && !editing && !dash.builtin}
 			<DashboardHistory dashboard={dash} onrestored={load} />

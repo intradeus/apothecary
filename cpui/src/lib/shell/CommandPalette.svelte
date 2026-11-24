@@ -20,7 +20,7 @@
 	import type { TicketRow } from '$lib/domain';
 	import { isInternal } from '$lib/tickets/tracker';
 	import NewRunDialog from '$lib/run/NewRunDialog.svelte';
-	import { drawer } from '$lib/assistant/drawer.svelte';
+	import { assistant } from '$lib/assistant/assistant.svelte';
 	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
 	import { I } from '$lib/design/icons';
@@ -166,7 +166,7 @@
 				group: 'do' as const,
 				label: t('assistant.button'),
 				glyph: I.sparkle,
-				run: act(() => (drawer.open = true))
+				run: act(() => assistant.show())
 			},
 			...(writesHere
 				? [

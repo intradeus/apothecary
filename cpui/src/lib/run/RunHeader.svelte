@@ -2,14 +2,13 @@
 	// The run's top bar (DESIGN 4.5, 7.1): one glass strip. The title block —
 	// breadcrumb, a small title, a status line — then two inset groups that keep
 	// the RUN's lifecycle and the WORKSPACE's apart, then the MR island. The
-	// title gives context; the windows hold the information. Beside the title,
-	// the run's local assistant: it reads the run, its journal and its flow's
-	// other runs, and proposes a change to its flow, which opens in the flow
-	// editor against the flow as it is now (the run keeps the version it
-	// started on).
+	// title gives context; the windows hold the information. The run offers
+	// itself to the assistant's page mode: it reads the run, its journal and
+	// its flow's other runs, and proposes a change to its flow, which opens in
+	// the flow editor against the flow as it is now (the run keeps the version
+	// it started on).
 	import { goto } from '$app/navigation';
-	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
-	import FillButton from '$lib/assistant/FillButton.svelte';
+	import { offerPage } from '$lib/assistant/assistant.svelte';
 	import { HandoffGuard } from '$lib/assistant/fillGuard.svelte';
 	import { stashFlowFill } from '$lib/assistant/handoff';
 	import { to } from '$lib/core/urls';
@@ -56,7 +55,8 @@
 	let rerunOpen = $state(false);
 	const act: HeaderAct = (which, fn) => actions.run(which, () => rs.act(fn));
 
-	let assistOpen = $state(false);
+	// The assistant's page mode on a run: a change to the run's flow is a
+	// fill for another page, held here until the person takes it there.
 	const guard = new HandoffGuard<RunFill>(runFill);
 	/** The run as the person sees it, for the question. */
 	const pageState = () => ({
@@ -70,6 +70,19 @@
 		open_pings: rs.pendingPings.length,
 		merge_requests: run.mrs.map((m) => m.url)
 	});
+	offerPage(() =>
+		run.projectId
+			? {
+					kind: 'run',
+					subject: run.id,
+					workshop: run.projectId,
+					name: run.title,
+					guard,
+					pageState,
+					handoff: runHandoff
+				}
+			: null
+	);
 	/** The YAML of a change this tab could not hold for the editor: its
 	 *  callout stays, saying so, with the YAML to copy instead. */
 	let unheld = $state<string | null>(null);
@@ -94,12 +107,6 @@
 
 <header class="rh glass">
 	<RunTitle {rs} />
-	{#if run.projectId}
-		<div class="assist">
-			<FillButton {guard} onclick={() => (assistOpen = true)} />
-		</div>
-	{/if}
-
 	<div class="groups">
 		<RunControls {rs} {actions} {act} onrerun={() => (rerunOpen = true)} {onretried} />
 		<WorkspaceControls {rs} {actions} bind:envBtn bind:rebuildBtn bind:envOpen bind:rebuildOpen />
@@ -109,41 +116,30 @@
 
 <EnvMenu {rs} anchor={envBtn} bind:open={envOpen} />
 
-{#if run.projectId}
-	{@const ws = run.projectId}
-	<FillAssistant
-		bind:open={assistOpen}
-		kind="run"
-		subject={run.id}
-		workshop={ws}
-		{guard}
-		{pageState}
-	>
-		{#snippet handoff()}
-			{#if guard.handoff}
-				{@const f = guard.handoff}
-				<Callout hue="accent" glyph={I.info} ondismiss={() => guard.revert()}>
-					<div class="col">
-						<span>{t('assistant.handoff', { flow: f.flow })}</span>
-						<div class="row">
-							<button class="btn-primary btn-sm" onclick={() => openInEditor(ws, f)}
-								>{t('assistant.openInEditor')}</button
-							>
-							{#if unheld === f.yaml}
-								<button class="btn-sm" onclick={() => copyYaml(f.yaml)}
-									>{t('assistant.copyYaml')}</button
-								>
-							{/if}
-						</div>
-						{#if unheld === f.yaml}
-							<div class="error" role="alert">{t('assistant.handoffUnheld')}</div>
-						{/if}
-					</div>
-				</Callout>
-			{/if}
-		{/snippet}
-	</FillAssistant>
-{/if}
+{#snippet runHandoff()}
+	{#if guard.handoff && run.projectId}
+		{@const f = guard.handoff}
+		{@const ws = run.projectId}
+		<Callout hue="accent" glyph={I.info} ondismiss={() => guard.revert()}>
+			<div class="col">
+				<span>{t('assistant.handoff', { flow: f.flow })}</span>
+				<div class="row">
+					<button class="btn-primary btn-sm" onclick={() => openInEditor(ws, f)}
+						>{t('assistant.openInEditor')}</button
+					>
+					{#if unheld === f.yaml}
+						<button class="btn-sm" onclick={() => copyYaml(f.yaml)}
+							>{t('assistant.copyYaml')}</button
+						>
+					{/if}
+				</div>
+				{#if unheld === f.yaml}
+					<div class="error" role="alert">{t('assistant.handoffUnheld')}</div>
+				{/if}
+			</div>
+		</Callout>
+	{/if}
+{/snippet}
 
 <RebuildMenu {rs} {desk} {act} anchor={rebuildBtn} bind:open={rebuildOpen} />
 
@@ -170,9 +166,6 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-	}
-	.assist {
-		flex: none;
 	}
 	.groups {
 		flex: none;
