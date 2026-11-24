@@ -294,6 +294,17 @@ func TestWireGuardUserspaceSwitch(t *testing.T) {
 	if has(env(false)) || !has(env(true)) {
 		t.Errorf("off = %v, on = %v", env(false), env(true))
 	}
+	// The same switch reaches the project's gateway, so the live suite
+	// covers both ends of a Kata guest's tunnel.
+	for _, on := range []bool{false, true} {
+		k := &kubeFake{secrets: map[string]string{}}
+		h := New(Config{RunsDir: testRunsDir, Kube: goldenKubeConfig(k, func(c *KubeConfig) {
+			c.Firewall, c.WireGuardUserspace = true, on
+		})}).host.(*k8sHost)
+		if h.gwh == nil || h.gwh.WireGuardUserspace != on {
+			t.Errorf("WireGuardUserspace %v: gateway host %+v", on, h.gwh)
+		}
+	}
 }
 
 // A VM runtime's sandbox: no subPath (a volume each for the run folder and

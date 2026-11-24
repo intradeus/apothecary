@@ -43,7 +43,9 @@ the `apothecary` CLI from the release.
   RuntimeClass `sysbox-runc`). Install sysbox on the nodes that run them. Its
   RuntimeClass places sandbox pods on those nodes. Privileged sandboxes
   (`workspaces.runtime: privileged`) are for a cluster of your own only.
-- **Nodes need the wireguard kernel module**, in-tree since Linux 5.6.
+- **Nodes should have the wireguard kernel module**, in-tree since Linux
+  5.6. Without it, sandboxes and gateways fall back to the slower
+  `wireguard-go`.
 - **Workspace volumes need a local or block storage class.** The inner
   docker daemon cannot run on NFS.
 - **Set `workspaces.protectCIDRs`** to your cluster's pod and service ranges,

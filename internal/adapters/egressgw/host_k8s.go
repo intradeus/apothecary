@@ -38,6 +38,11 @@ type K8sHost struct {
 	Forward      bool
 	StorageSize  string // gateway PVC (caches); default 20Gi
 	StorageClass string
+	// WireGuardUserspace makes each gateway's run link wireguard-go even on
+	// a kernel with the module (APO_WG_USERSPACE): the live tests' switch,
+	// so the path a gateway on a Kata guest's kernel takes is covered where
+	// the module exists. Without it the gateway falls back on its own.
+	WireGuardUserspace bool
 
 	client *http.Client
 	mu     sync.Mutex
@@ -190,6 +195,10 @@ func (h *K8sHost) deployment(project string, labels, annotations map[string]stri
 	if len(h.ProtectCIDRs) > 0 {
 		args = append(args, "--protect-cidrs", strings.Join(h.ProtectCIDRs, ","))
 	}
+	var env []kube.EnvVar
+	if h.WireGuardUserspace {
+		env = append(env, kube.EnvVar{Name: "APO_WG_USERSPACE", Value: "1"})
+	}
 	mode := int32(0o400)
 	podLabels := map[string]string{}
 	for k, v := range labels {
@@ -217,7 +226,7 @@ func (h *K8sHost) deployment(project string, labels, annotations map[string]stri
 						SecurityContext: &kube.SecurityContext{Privileged: kube.Ptr(true)},
 					}},
 					Containers: []kube.Container{{
-						Name: "gateway", Image: h.Image, ImagePullPolicy: h.PullPolicy, Args: args,
+						Name: "gateway", Image: h.Image, ImagePullPolicy: h.PullPolicy, Args: args, Env: env,
 						SecurityContext: &kube.SecurityContext{Capabilities: &kube.Capabilities{Add: []string{"NET_ADMIN", "NET_RAW"}}},
 						Ports: []kube.ContainerPort{
 							{Name: "wg", ContainerPort: wgPort, Protocol: "UDP"},

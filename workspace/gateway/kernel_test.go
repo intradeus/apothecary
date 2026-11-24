@@ -27,13 +27,19 @@ if [ -n "$APO_FAKE_FAIL" ]; then
 fi
 exit 0
 `
-	for _, tool := range []string{"ip", "wg", "nft"} {
+	for _, tool := range []string{"ip", "wg", "nft", "mknod"} {
 		if err := os.WriteFile(filepath.Join(dir, tool), []byte(script), 0o755); err != nil {
 			t.Fatal(err)
 		}
 	}
+	// A wireguard-go that never brings up a link: a test that falls back to
+	// userspace without asking for it fails there, never on the host's own.
+	if err := os.WriteFile(filepath.Join(dir, "wireguard-go"), []byte("#!/bin/sh\necho \"wireguard-go $*\" >> \""+logPath+"\"\necho 'fake: no tun' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("APO_FAKE_FAIL", "")
+	isolateUserspace(t, dir)
 	return logPath
 }
 
@@ -48,7 +54,7 @@ func calls(t *testing.T, path string) string {
 
 func TestSetupWGConfiguresTheLink(t *testing.T) {
 	log := fakeTools(t)
-	link, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400)
+	link, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +78,7 @@ func TestSetupWGConfiguresTheLink(t *testing.T) {
 func TestSetupWGCreatesTheDeviceAndDerivesTheMTU(t *testing.T) {
 	log := fakeTools(t)
 	t.Setenv("APO_FAKE_FAIL", "ip link show wg0")
-	link, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 0)
+	link, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 0, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,7 +95,7 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 		t.Run(step, func(t *testing.T) {
 			fakeTools(t)
 			t.Setenv("APO_FAKE_FAIL", step)
-			link, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400)
+			link, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400, false)
 			if err == nil || link != nil {
 				t.Fatalf("setupWG = %v, %v; want the failure", link, err)
 			}
@@ -104,7 +110,7 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 	}
 	t.Run("address is no CIDR", func(t *testing.T) {
 		log := fakeTools(t)
-		if _, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1", 1400); err == nil || !strings.Contains(err.Error(), `wg address "10.90.0.1"`) {
+		if _, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1", 1400, false); err == nil || !strings.Contains(err.Error(), `wg address "10.90.0.1"`) {
 			t.Fatalf("err = %v, want the address named", err)
 		}
 		if got := calls(t, log); got != "" {
@@ -112,10 +118,18 @@ func TestSetupWGStopsAtTheFirstFailure(t *testing.T) {
 		}
 	})
 	t.Run("device cannot be created", func(t *testing.T) {
-		fakeTools(t)
+		log := fakeTools(t)
 		t.Setenv("APO_FAKE_FAIL", "ip link") // show and add both fail
-		if _, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400); err == nil {
+		_, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400, false)
+		if err == nil {
 			t.Fatal("setupWG must fail without a device")
+		}
+		// Neither WireGuard came up, and the error names both refusals.
+		if !strings.Contains(err.Error(), "fake: no tun") || !strings.Contains(err.Error(), "the kernel's WireGuard was refused first") {
+			t.Errorf("err = %v, want wireguard-go's words and the kernel's refusal", err)
+		}
+		if !strings.Contains(calls(t, log), "wireguard-go -f wg0\n") {
+			t.Errorf("no fallback to wireguard-go:\n%s", calls(t, log))
 		}
 	})
 }

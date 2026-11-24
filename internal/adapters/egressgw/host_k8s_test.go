@@ -179,6 +179,21 @@ func TestGatewayManifests(t *testing.T) {
 		d.Spec.Template.Spec.Containers[0].SecurityContext.Privileged != nil {
 		t.Error("only the sysctl init container may be privileged")
 	}
+	// The kernel's WireGuard unless the live tests ask for wireguard-go; the
+	// gateway falls back to it by itself, with no privilege beyond this
+	// manifest's: the same added capabilities, not privileged.
+	if env := d.Spec.Template.Spec.Containers[0].Env; len(env) != 0 {
+		t.Errorf("gateway env = %v, want none by default", env)
+	}
+	h.WireGuardUserspace = true
+	us := h.deployment("ACME", labels, nil).Spec.Template.Spec.Containers[0]
+	if len(us.Env) != 1 || us.Env[0].Name != "APO_WG_USERSPACE" || us.Env[0].Value != "1" {
+		t.Errorf("gateway env = %v, want APO_WG_USERSPACE=1", us.Env)
+	}
+	if caps := us.SecurityContext.Capabilities.Add; strings.Join(caps, ",") != "NET_ADMIN,NET_RAW" || us.SecurityContext.Privileged != nil {
+		t.Errorf("a userspace gateway is %v (privileged %v), want the manifest's NET_ADMIN and NET_RAW added, as on the kernel path", caps, us.SecurityContext.Privileged)
+	}
+	h.WireGuardUserspace = false
 	np := h.networkPolicy("ACME", labels)
 	b, _ := json.Marshal(np)
 	for _, want := range []string{`"podSelector":{"matchLabels":{"apothecary.io/gateway":"acme"}}`,

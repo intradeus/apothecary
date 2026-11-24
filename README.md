@@ -204,7 +204,9 @@ Any Kubernetes cluster, k3s included, with:
   ([why](docs/kubernetes.md#cluster-requirements)). Or, for the `kata`
   runtime, **KVM** and Kata ≥ 4.4 with a `kata` RuntimeClass
   ([install](docs/kubernetes.md#installing-kata)).
-- **NetworkPolicy enforcement**, and the **`wireguard`** kernel module.
+- **NetworkPolicy enforcement**, and the **`wireguard`** kernel module
+  (without it, sandboxes and gateways fall back to the slower
+  `wireguard-go`).
 - A **local or block storage class**, not NFS.
 - For the assistant, nodes on **Linux ≥ 6.12** with Landlock enabled.
 

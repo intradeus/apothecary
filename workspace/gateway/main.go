@@ -189,16 +189,17 @@ func main() {
 			slog.Error("gateway: wireguard key", "err", err)
 			os.Exit(1)
 		}
-		link, err := setupWG(ext, key, wgListen, wgAddr, wgMTU)
+		link, err := setupWG(ext, key, wgListen, wgAddr, wgMTU, os.Getenv(wgUserspaceEnv) == "1")
 		if err != nil {
 			slog.Error("gateway: wireguard", "err", err)
 			os.Exit(1)
 		}
 		g.wg = link
+		go link.superviseWG(nil) // a userspace wg0 lives as long as its wireguard-go
 		// Every run of the project is a peer on this wg0: no run reaches
 		// another's address through the gateway (wg.go).
 		g.protect = append(g.protect, link.subnet)
-		slog.Info("gateway: wg0 listening", "addr", wgAddr, "udp", wgListen, "mtu", link.mtu)
+		slog.Info("gateway: wg0 listening", "addr", wgAddr, "udp", wgListen, "mtu", link.mtu, "mode", link.mode)
 	}
 	g.loadRoutes()
 	if err := g.loadPolicy(); err != nil {

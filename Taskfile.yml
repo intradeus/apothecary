@@ -63,11 +63,17 @@ tasks:
       - sh: command -v k3d
         msg: "install k3d: https://k3d.io"
       # k3d's nodes share the docker host's kernel (on macOS, the docker VM's),
-      # and every run's sandbox tunnels to its gateway over WireGuard: create
-      # a wireguard link the way the gateway does, in a throwaway netns. On
-      # Linux that also loads the module on demand.
-      - sh: docker run --rm --cap-add NET_ADMIN --network none alpine:3.21 sh -c 'ip link add apo-wgprobe type wireguard && ip link del apo-wgprobe'
-        msg: "the docker host's kernel can't create wireguard links (Linux: sudo modprobe wireguard)"
+      # and every run's sandbox tunnels to its gateway over WireGuard. Either
+      # WireGuard will do: the kernel's (a wireguard link made the way the
+      # gateway does, in a throwaway netns; on Linux that also loads the
+      # module on demand), else wireguard-go, which sandbox and gateway fall
+      # back to on a kernel without the module (a Kata guest's) and which
+      # needs a TUN device a container can make and open.
+      - sh: >-
+          docker run --rm --cap-add NET_ADMIN --network none alpine:3.21 sh -c
+          'ip link add apo-wgprobe type wireguard 2>/dev/null && ip link del apo-wgprobe && exit 0;
+          mkdir -p /dev/net; { [ -c /dev/net/tun ] || mknod /dev/net/tun c 10 200; } && exec 3<>/dev/net/tun'
+        msg: "the docker host can run neither WireGuard: no wireguard links (Linux: sudo modprobe wireguard) and no TUN device for wireguard-go"
     status:
       - test -s {{.K3D_KUBECONFIG}}
       - '{{.K3D_KUBECTL}} get --raw /readyz >/dev/null 2>&1'
