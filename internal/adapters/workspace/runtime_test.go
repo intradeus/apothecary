@@ -410,7 +410,7 @@ func TestAVMSandboxOnABlockClaim(t *testing.T) {
 	h.cfg.Storage, h.cfg.StorageClass, h.cfg.VMStorageClass = "emptydir", "local-path", "block"
 	h.rt, _ = lookupRuntime(envport.RuntimeKata)
 	sized := envport.EnvSpec{Size: envport.SandboxSize{MilliCPU: 2000, MemoryMiB: 4096}}
-	if err := h.ensurePod(ctx, "w", sized, false, egressgw.Attachment{}, discard); err != nil {
+	if _, err := h.ensurePod(ctx, "w", sized, false, egressgw.Attachment{}, discard); err != nil {
 		t.Fatal(err)
 	}
 	var pvc kube.PersistentVolumeClaim
@@ -473,7 +473,7 @@ func TestAVMSandboxTakesNoClaim(t *testing.T) {
 		_, h := k8sWith(t, k, false)
 		h.cfg.Storage = "pvc"
 		h.rt, _ = lookupRuntime(rt)
-		if err := h.ensurePod(ctx, "w", sized, false, egressgw.Attachment{}, discard); err != nil {
+		if _, err := h.ensurePod(ctx, "w", sized, false, egressgw.Attachment{}, discard); err != nil {
 			t.Fatalf("%s: %v", rt, err)
 		}
 		if got := k.obj(k.created, "PersistentVolumeClaim") != nil; got != claims {
@@ -482,7 +482,7 @@ func TestAVMSandboxTakesNoClaim(t *testing.T) {
 	}
 	k := &kubeFake{secrets: map[string]string{}}
 	_, h := k8sWith(t, k, false)
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{Runtime: envport.RuntimeKata}, false, egressgw.Attachment{}, discard); err == nil ||
+	if _, err := h.ensurePod(ctx, "w", envport.EnvSpec{Runtime: envport.RuntimeKata}, false, egressgw.Attachment{}, discard); err == nil ||
 		!strings.Contains(err.Error(), "not approved") || len(k.created) != 0 {
 		t.Errorf("unapproved: %v, created %d", err, len(k.created))
 	}

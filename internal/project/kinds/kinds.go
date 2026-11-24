@@ -149,6 +149,11 @@ type ProvisionerDeps struct {
 	// Drift hears whether a workspace's seeded shim/tools match this
 	// engine (kubernetes only); nil = log only.
 	Drift func(ctx context.Context, part string, err error)
+	// ProjectEnv reads a project's workspace environment
+	// (WorkspaceConfig.Env) as it is now: what every process the provisioner
+	// starts in that project's workspaces gets, so a change reaches the next
+	// one with no rebuild. nil = none.
+	ProjectEnv func(ctx context.Context, projectID string) (map[string]string, error)
 }
 
 type ProvisionerKind interface {

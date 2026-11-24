@@ -1208,6 +1208,7 @@ describe('projects', () => {
 				size: { cpus: null, memoryGiB: null },
 				runtime: '',
 				idleMinutes: 0,
+				env: {},
 				editor: undefined
 			},
 			defaultFlow: '',
@@ -1285,6 +1286,7 @@ describe('projects', () => {
 					code_server_extensions: ['e'],
 					browser: { enabled: true },
 					docker: true,
+					env: { JEST_MAX_WORKERS: '2' },
 					editor: {
 						theme: 't',
 						font_size: 12,
@@ -1321,6 +1323,7 @@ describe('projects', () => {
 			codeServerExtensions: ['e'],
 			browserEnabled: true,
 			docker: true,
+			env: { JEST_MAX_WORKERS: '2' },
 			editor: {
 				theme: 't',
 				fontSize: 12,

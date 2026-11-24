@@ -289,6 +289,7 @@ type testHost struct {
 	sampled    envport.ResourceSample
 	testErr    error
 	closed     bool
+	limits     envport.SandboxSize // the sandbox's limits prepare reports
 }
 
 func newTestHost(a *Adapter) *testHost { return &testHost{a: a, bridged: map[envport.EnvID]bool{}} }
@@ -329,7 +330,7 @@ func (h *testHost) prepare(ctx context.Context, name string, spec envport.EnvSpe
 		return prep{}, err
 	}
 	h.steps = append(h.steps, "prepare "+name)
-	return prep{src: src, shimDir: shimDir, toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def}, nil
+	return prep{src: src, shimDir: shimDir, toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def, limits: h.limits}, nil
 }
 
 func (h *testHost) contained(envport.Runtime) bool { return h.unpriv }

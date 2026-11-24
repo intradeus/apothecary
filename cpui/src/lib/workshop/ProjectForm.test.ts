@@ -134,7 +134,8 @@ describe('ProjectForm, draft()', () => {
 				docker: true,
 				size: { cpus: 2.5, memoryGiB: null },
 				runtime: 'sysbox',
-				idleMinutes: 45
+				idleMinutes: 45,
+				env: { NX_PARALLEL: '${APO_CPUS}', JEST_MAX_WORKERS: '2' }
 			}
 		} as Partial<Project>);
 		await userEvent.click(envcheck());
@@ -184,9 +185,31 @@ describe('ProjectForm, draft()', () => {
 				docker: true,
 				size: { cpus: 2.5, memoryGiB: null },
 				runtime: 'sysbox',
-				idleMinutes: 45
+				idleMinutes: 45,
+				env: { JEST_MAX_WORKERS: '2', NX_PARALLEL: '${APO_CPUS}' }
 			},
 			defaultFlow: 'mine'
+		});
+	});
+
+	it('saves the environment variables as edited', async () => {
+		edit({
+			workspace: { ...stored({}).workspace, env: { JEST_MAX_WORKERS: '2' } }
+		} as Partial<Project>);
+		await userEvent.clear(screen.getByRole('textbox', { name: 'Value of JEST_MAX_WORKERS' }));
+		await userEvent.type(screen.getByRole('textbox', { name: 'Value of JEST_MAX_WORKERS' }), '1');
+		await userEvent.click(screen.getByRole('button', { name: /Add a variable/ }));
+		const names = screen.getAllByRole('textbox', { name: 'Variable name' });
+		await userEvent.type(names[1], ' NX_PARALLEL ');
+		await userEvent.type(
+			screen.getByRole('textbox', { name: 'Value of NX_PARALLEL' }),
+			'${{APO_CPUS}'
+		);
+		// A row left without a name is not saved.
+		await userEvent.click(screen.getByRole('button', { name: /Add a variable/ }));
+		expect((await save()).workspace.env).toEqual({
+			JEST_MAX_WORKERS: '1',
+			NX_PARALLEL: '${APO_CPUS}'
 		});
 	});
 

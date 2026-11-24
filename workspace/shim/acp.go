@@ -480,7 +480,7 @@ func (h *agentHost) start(req startReq) (*agentProc, error) {
 	}
 	key := launchKey(req)
 	argv := req.Argv
-	base := os.Environ()
+	base := engineEnv.over(os.Environ())
 	if req.Confine != nil {
 		spec, err := json.Marshal(req.Confine)
 		if err != nil {

@@ -461,6 +461,9 @@ func (s *Service) validateProject(ctx context.Context, p *Project) error {
 	if err := validateServices(p.Workspace.Services); err != nil {
 		return err
 	}
+	if err := validateEnv(&p.Workspace); err != nil {
+		return err
+	}
 	refs := []struct{ id, port, field string }{
 		{p.RepoAccountID, PortRepository, "repo_account_id"},
 		{p.ProvisionerID, PortProvisioner, "provisioner_id"},

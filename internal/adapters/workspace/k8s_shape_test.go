@@ -49,7 +49,7 @@ func TestK8sRebuildReplacesAPodOfAnotherShape(t *testing.T) {
 		k.pod = livePod(t, h, live, strip)
 		var log strings.Builder
 		plog := func(f string, args ...any) { fmt.Fprintf(&log, f, args...) }
-		err := h.ensurePod(ctx, "w", want, rebuild, egressgw.Attachment{}, plog)
+		_, err := h.ensurePod(ctx, "w", want, rebuild, egressgw.Attachment{}, plog)
 		return k, log.String(), err
 	}
 	replaced := func(k *kubeFake) bool {
@@ -90,7 +90,7 @@ func TestK8sRebuildReplacesAPodOfAnotherShape(t *testing.T) {
 	var b strings.Builder
 	kata := small
 	kata.Runtime = envport.RuntimeKata
-	if err := h.ensurePod(ctx, "w", kata, true, egressgw.Attachment{}, func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }); err != nil {
+	if _, err := h.ensurePod(ctx, "w", kata, true, egressgw.Attachment{}, func(f string, a ...any) { fmt.Fprintf(&b, f, a...) }); err != nil {
 		// Today a kata pod refuses pvc storage at podManifest; either way the
 		// live pod must not have gone.
 		if len(k.deleted) != 0 {
@@ -110,13 +110,13 @@ func TestK8sRebuildReplacesAPodOfAnotherShape(t *testing.T) {
 	_, h = k8sWith(t, k, false)
 	h.cfg.Kube.R = failPodCreate{k}
 	k.pod = livePod(t, h, small, false)
-	if err := h.ensurePod(ctx, "w", big, true, egressgw.Attachment{}, discard); err == nil || !strings.Contains(err.Error(), "quota exceeded") {
+	if _, err := h.ensurePod(ctx, "w", big, true, egressgw.Attachment{}, discard); err == nil || !strings.Contains(err.Error(), "quota exceeded") {
 		t.Errorf("the new pod could not be made: err = %v", err)
 	}
 	// No pod yet, and one that cannot be built: refused before anything.
 	k = &kubeFake{secrets: map[string]string{}}
 	_, h = k8sWith(t, k, false)
-	if err := h.ensurePod(ctx, "w", envport.EnvSpec{Runtime: "gvisor"}, false, egressgw.Attachment{}, discard); err == nil || k.obj(k.created, "Pod") != nil {
+	if _, err := h.ensurePod(ctx, "w", envport.EnvSpec{Runtime: "gvisor"}, false, egressgw.Attachment{}, discard); err == nil || k.obj(k.created, "Pod") != nil {
 		t.Errorf("an unbuildable pod: err = %v", err)
 	}
 }

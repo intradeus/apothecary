@@ -7,9 +7,9 @@
 #   HELM_VERSION       = CI's setup-helm version
 #   TASK_VERSION       = CI's setup-task version
 #   SHELLCHECK_VERSION = the shellcheck CI installs for actionlint
-#   K3D_VERSION        = the k3d CI's sandbox-test (k8s) installs
+#   K3D_VERSION        = the k3d CI's sandbox-test (k3d) installs
 #   KUBECTL_VERSION    = the engine image's kubectl (deploy/Dockerfile), which
-#                        CI's sandbox-test (k8s) installs too
+#                        CI's sandbox-test (k3d) installs too
 # Base images come from Docker Hub (a run pulls them through the project
 # gateway's mirror); the build dials only the Go module proxy, Debian's
 # mirrors, get.helm.sh, github.com (shellcheck, k3d) and dl.k8s.io beyond
@@ -69,7 +69,7 @@ RUN set -eu; case "$(dpkg --print-architecture)" in \
     mv "/tmp/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" /usr/local/bin/shellcheck; \
     rm -rf /tmp/sc.tar.xz "/tmp/shellcheck-v${SHELLCHECK_VERSION}"
 
-# k3d and kubectl, which the k8s sandbox suite drives (task sandbox:test:k8s,
+# k3d and kubectl, which the k3d sandbox suites drive (task sandbox:test:k3d,
 # so task test). k3d against the checksums.txt of its release, kubectl against
 # the .sha256 dl.k8s.io publishes beside it; the same amd64 ones CI checks.
 # kubectl is the engine's own (the live tests drive the cluster as the engine

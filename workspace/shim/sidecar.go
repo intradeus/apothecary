@@ -291,6 +291,7 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("GET /term", s.terminal)
 	mux.HandleFunc("GET /services", serveServiceStatus)
 	mux.HandleFunc("GET /services/{name}/log", serveServiceLog)
+	mux.HandleFunc("PUT /env", putEnv)
 	return mux
 }
 
@@ -591,7 +592,7 @@ func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, shell, "-l")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	cmd.Env = append(engineEnv.over(os.Environ()), "TERM=xterm-256color", "COLORTERM=truecolor")
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGHUP) }
 	master, err := startPTY(cmd, cols, rows)
 	if err != nil {

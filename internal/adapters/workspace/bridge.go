@@ -480,7 +480,19 @@ const sidecarSock = "sidecar.sock"
 // user and PATH the harness always ran with — and it detaches itself (no
 // setsid/nohup assumed in the repo's image). It lives as long as the
 // container; a rebuilt container simply gets a new one on first use.
+//
+// The workspace's environment is not in its own (wsenv.go): each dial tells
+// it the current set, which it lays over every process it starts.
 func (a *Adapter) Sidecar(ctx context.Context, env envport.EnvID) (envport.PortConn, error) {
+	conn, err := a.sidecar(ctx, env)
+	if err != nil {
+		return nil, err
+	}
+	a.syncSidecarEnv(ctx, string(env), conn)
+	return conn, nil
+}
+
+func (a *Adapter) sidecar(ctx context.Context, env envport.EnvID) (envport.PortConn, error) {
 	conn := a.host.dial(string(env), sidecarSock)
 	if sidecarUp(ctx, conn) {
 		return conn, nil
@@ -490,11 +502,12 @@ func (a *Adapter) Sidecar(ctx context.Context, env envport.EnvID) (envport.PortC
 	if sidecarUp(ctx, conn) {
 		return conn, nil
 	}
-	res, err := a.Exec(ctx, env, envport.Command{
+	a.forgetSidecarEnv(string(env))
+	res, err := a.exec(ctx, env, envport.Command{
 		Script: `exec /opt/apothecary/shim sidecar --daemon --listen /opt/apothecary/` + sidecarSock +
 			` --repo "$HOME/repo" --log /apothecary/sidecar.log`,
 		Timeout: time.Minute,
-	})
+	}, false)
 	if err != nil {
 		return nil, err
 	}

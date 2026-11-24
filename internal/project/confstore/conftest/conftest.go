@@ -188,6 +188,7 @@ func fullProject() confstore.Project {
 			Size:        envport.SandboxSize{MilliCPU: 2500, MemoryMiB: 6144},
 			Runtime:     envport.RuntimeSysbox,
 			IdleMinutes: 45,
+			Env:         map[string]string{"JEST_MAX_WORKERS": "2", "NX_PARALLEL": "${APO_CPUS}"},
 		},
 		DefaultFlow: template(), CreatedAt: at(1), UpdatedAt: at(2)}
 }

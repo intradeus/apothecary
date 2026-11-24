@@ -275,7 +275,8 @@ func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec
 		a.recordGateway(name, spec.Project, att.GatewayIP)
 	}
 	plog("→ bringing up the sandbox pod %s (namespace %s)\n", name, h.cfg.Kube.Namespace)
-	if err := h.ensurePod(ctx, name, spec, rebuild, att, plog); err != nil {
+	limits, err := h.ensurePod(ctx, name, spec, rebuild, att, plog)
+	if err != nil {
 		return prep{}, err
 	}
 	src := a.srcDir(name)
@@ -293,7 +294,7 @@ func (h *k8sHost) prepare(ctx context.Context, name string, spec envport.EnvSpec
 	if err := h.checkTools(ctx, name); err != nil {
 		return prep{}, err
 	}
-	return prep{src: src, shimDir: filepath.Join(folder, "shim"), toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def}, nil
+	return prep{src: src, shimDir: filepath.Join(folder, "shim"), toolsDir: filepath.Join(folder, "tools"), gwIP: att.GatewayIP, def: def, limits: limits}, nil
 }
 
 // relayToken is the run's dial-in token (Secret apo-run-<name>), created once.
@@ -342,14 +343,14 @@ func (h *k8sHost) labels(name, project string) map[string]string {
 // (Failed/Succeeded) is replaced, and so is a running one whose container
 // runtime refuses exec (sysbox restarted under it) — the claim, and with it
 // the checkout and the inner daemon's images and containers, survives.
-func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, att egressgw.Attachment, plog func(string, ...any)) error {
+func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSpec, rebuild bool, att egressgw.Attachment, plog func(string, ...any)) (envport.SandboxSize, error) {
 	k := h.cfg.Kube
 	if _, err := h.relayToken(ctx, name, true, spec.Project); err != nil {
-		return err
+		return envport.SandboxSize{}, err
 	}
 	rt, err := h.runtimeFor(spec.Runtime)
 	if err != nil {
-		return err
+		return envport.SandboxSize{}, err
 	}
 	if h.keepsClaim(rt) {
 		pvc := kube.PersistentVolumeClaim{TypeMeta: kube.PVCType(),
@@ -365,25 +366,25 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 			pvc.Spec.StorageClassName = kube.Ptr(class)
 		}
 		if err := k.Create(ctx, pvc); err != nil {
-			return err
+			return envport.SandboxSize{}, err
 		}
 	}
 	np, err := h.networkPolicy(name, spec.Project)
 	if err != nil {
-		return err
+		return envport.SandboxSize{}, err
 	}
 	if err := k.Apply(ctx, np); err != nil {
-		return err
+		return envport.SandboxSize{}, err
 	}
 	var pod kube.Pod
 	found, err := k.Get(ctx, "pod", name, &pod)
 	if err != nil {
-		return err
+		return envport.SandboxSize{}, err
 	}
 	if found && (pod.Status.Phase == "Failed" || pod.Status.Phase == "Succeeded") {
 		plog("→ replacing the sandbox pod: the last one ended (%s); its volume and checkout are kept\n", pod.Status.Phase)
 		if err := k.Delete(ctx, "pod", name, true); err != nil {
-			return err
+			return envport.SandboxSize{}, err
 		}
 		found = false
 	} else if found && pod.Status.Phase == "Running" && h.refusesExec(ctx, name) {
@@ -393,7 +394,7 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		}
 		plog("→ replacing the sandbox pod: it no longer accepts exec (container runtime restarted?); %s\n", kept)
 		if err := k.Delete(ctx, "pod", name, true); err != nil {
-			return err
+			return envport.SandboxSize{}, err
 		}
 		found = false
 	}
@@ -403,7 +404,7 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 	if found && rebuild {
 		p, err := h.podManifest(ctx, name, spec, att)
 		if err != nil {
-			return err
+			return envport.SandboxSize{}, err
 		}
 		want = &p
 		replace, note := shapeChange(pod, p, name)
@@ -413,11 +414,13 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		if replace {
 			plog("→ replacing the sandbox pod: the workshop's sandbox size or runtime changed; its volume and checkout are kept\n")
 			if err := k.Delete(ctx, "pod", name, true); err != nil {
-				return err
+				return envport.SandboxSize{}, err
 			}
 			found = false
 		}
 	}
+	// live is the pod the sandbox runs as: its limits are the size hints.
+	live := pod
 	if found {
 		plog("→ reusing the sandbox pod (%s)\n", orDefault(pod.Status.Phase, "unknown phase"))
 	} else {
@@ -425,14 +428,15 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		if p == nil {
 			made, err := h.podManifest(ctx, name, spec, att)
 			if err != nil {
-				return err
+				return envport.SandboxSize{}, err
 			}
 			p = &made
 		}
 		plog("→ creating the sandbox pod (image %s)\n", h.cfg.SandboxImage)
 		if err := k.Create(ctx, *p); err != nil {
-			return err
+			return envport.SandboxSize{}, err
 		}
+		live = *p
 	}
 	h.forgetPod(name)
 	plog("→ waiting for the sandbox pod to be ready: scheduled, images pulled, its docker daemon up (up to 5m)\n")
@@ -444,9 +448,9 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		if w, werr := k.LastWarning(wctx, name); werr == nil && w != "" {
 			err = fmt.Errorf("%w; the pod's last warning: %s", err, w)
 		}
-		return err
+		return envport.SandboxSize{}, err
 	}
-	return nil
+	return podLimits(live), nil
 }
 
 // podProgressEvery paces the "still waiting" lines of waitPodReady.
