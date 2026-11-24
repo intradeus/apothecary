@@ -149,6 +149,11 @@ export interface WorkspacePolicy {
 	/** Minutes a sandbox may sit unused before it is stopped and kept: 0 or
 	 *  absent the instance's default, IDLE_NEVER never. */
 	idleMinutes?: number;
+	/** Variables every process in the workshop's workspaces gets, over the
+	 *  repository's own; a value may name ${APO_CPUS} / ${APO_MEMORY_MIB}.
+	 *  Plain configuration, not secrets. Reaches the next process started,
+	 *  with no rebuild. */
+	env?: Record<string, string>;
 }
 
 /** code-server defaults, applied as VS Code user settings when the browser

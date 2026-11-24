@@ -11,7 +11,8 @@
 	import SandboxSizeField from './SandboxSizeField.svelte';
 	import SandboxRuntimeField from './SandboxRuntimeField.svelte';
 	import SandboxIdleField from './SandboxIdleField.svelte';
-	import type { SandboxSize } from '$lib/domain';
+	import WorkspaceEnvField from './WorkspaceEnvField.svelte';
+	import type { EnvVarRow, SandboxSize } from '$lib/domain';
 
 	let {
 		blockedDomains,
@@ -22,6 +23,7 @@
 		size = $bindable(),
 		runtime = $bindable(),
 		idleMinutes = $bindable(),
+		envVars = $bindable([]),
 		projectId,
 		codeServerExtensions = $bindable(),
 		editor = $bindable(),
@@ -37,6 +39,8 @@
 		runtime: string;
 		/** Stop-on-idle: 0 the instance's default, -1 never, else minutes. */
 		idleMinutes: number;
+		/** The workspace's environment variables, as edited. */
+		envVars?: EnvVarRow[];
 		/** The workshop, once it exists. */
 		projectId?: string;
 		codeServerExtensions: string[];
@@ -63,6 +67,10 @@
 
 	<FormSub>
 		<SandboxIdleField bind:idleMinutes {runtime} />
+	</FormSub>
+
+	<FormSub>
+		<WorkspaceEnvField bind:rows={envVars} />
 	</FormSub>
 
 	<FormSub>

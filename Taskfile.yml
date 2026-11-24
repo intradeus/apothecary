@@ -183,8 +183,11 @@ tasks:
     cmds:
       - '{{.K3D_KUBECTL}} {{.CLI_ARGS}}'
 
+  # RUN picks the tests (default: every suite the k3d cluster runs, the
+  # cluster's own and the privileged sandboxes'), RUNTIME the sandboxes'
+  # runtime (default privileged).
   k8s:test-live:
-    desc: Run the live Kubernetes tests (the provisioner, the project browser, the assistant pod) against the k3d cluster
+    desc: Run the live tests the k3d cluster runs (the k8s suite and the privileged sandboxes; RUN=<-run regexp> for fewer) against the k3d cluster
     deps: [pin:kubectl]
     cmds:
       - task: k8s:ready
@@ -193,8 +196,9 @@ tasks:
         APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY={{.PULL_POLICY | default "Always"}}
+        APOTHECARY_LIVE_RUNTIME={{.RUNTIME | default "privileged"}}
         APOTHECARY_LIVE_HOST_GATEWAY="$(deploy/self-container.sh ip k3d-{{.K3D_CLUSTER}}) $(docker network inspect k3d-{{.K3D_CLUSTER}} --format '{{"{{"}}range .IPAM.Config{{"}}"}}{{"{{"}}.Gateway{{"}}"}} {{"{{"}}end{{"}}"}}' 2>/dev/null | tr ' ' '\n' | grep -m1 -E '^[0-9.]+$' || true)"
-        go test -tags live -count=1 -timeout 30m -run TestLiveK8s -v ./internal/adapters/workspace/ ./internal/adapters/browser/ ./internal/adapters/assistant/
+        go test -tags live -count=1 -timeout 30m -run '{{.RUN | default "TestLiveK8s|TestLiveSandbox"}}' -v ./internal/adapters/workspace/ ./internal/adapters/browser/ ./internal/adapters/assistant/
 
   k8s:down:
     desc: Delete the k3d cluster (its registry and everything in it)
@@ -443,8 +447,9 @@ tasks:
 
   # CHECKS: space-separated, each run in parallel with the others; a,b runs
   # a then b (ui:test and ui:lint both write cpui/.svelte-kit, so they never
-  # overlap); `sandbox` builds the sandbox images, then runs its two suites
-  # side by side on them. Ctrl-C stops them all.
+  # overlap); `sandbox` builds the sandbox images, then runs the harness
+  # suite beside the k3d ones (k8s, then privileged) on them. Ctrl-C stops
+  # them all.
   checks:
     internal: true
     silent: true
@@ -464,9 +469,16 @@ tasks:
         }
         for c in $CHECKS; do
           case $c in
+            # The k3d suites share one cluster: up once, deleted after
+            # unless it was up before.
             sandbox)
               { run sandbox:images &&
-                { run sandbox:test:harness & (export APOTHECARY_IMAGES_PREBUILT=1; run sandbox:test:k8s) & wait; }; } & ;;
+                { run sandbox:test:harness &
+                  (export APOTHECARY_IMAGES_PREBUILT=1
+                   existed=$(k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes)
+                   run sandbox:k3d:up && { run sandbox:test:k8s; run sandbox:test:privileged; }
+                   [ "$existed" = yes ] || "$TASK" k8s:down >/dev/null 2>&1) &
+                  wait; }; } & ;;
             *) (IFS=,; for t in $c; do run "$t"; done) & ;;
           esac
         done
@@ -729,7 +741,7 @@ tasks:
       - docker build -t {{.K3D_REGISTRY}}/apothecary/live-model:local internal/adapters/assistant/testdata/fakemodel
 
   sandbox:test:
-    desc: 'sandbox:images, then the harness and k8s suites side by side (needs docker, k3d; logs in build/checks/)'
+    desc: 'sandbox:images, then the harness suite beside the k3d ones (k8s, then privileged, on one cluster) (needs docker, k3d; logs in build/checks/)'
     cmds:
       - task: checks
         vars: {CHECKS: sandbox}
@@ -763,29 +775,68 @@ tasks:
         golang:{{.GO_VERSION}}
         go test -tags conformance -count=1 -timeout 20m -v -run Conformance {{.CLI_ARGS}} ./internal/project/kinds/
 
-  # Reuses the cluster if it exists (and leaves it); otherwise creates it and
-  # deletes it afterwards — pass or fail. The images are imported into the
-  # node rather than pushed to the cluster's registry and pulled back: one
-  # copy of the 2.3 GB tools bundle instead of two.
+  # The sandbox suites are split two ways. The k8s suite is the provisioner
+  # as a cluster integration, whatever runtime a sandbox runs under: the
+  # runtime probe and the cluster's refusals, the sandbox's tunnel, the
+  # project browser, the assistant pod (TestLiveK8s*). A runtime suite is a
+  # workspace sandbox's whole life under one runtime (TestLiveSandbox*, and
+  # what only that runtime has): privileged and k8s share the k3d cluster;
+  # kata has a node of its own (sandbox:test:kata).
+
+  # The k3d cluster the k8s and privileged suites run on: this tree's images
+  # (built before the cluster starts: building the tools bundle beside a
+  # running k3s starves a CI runner; already in docker when
+  # APOTHECARY_IMAGES_PREBUILT=1, as CI's sandbox-images job and sandbox:test
+  # leave them), the cluster, and the images imported straight into the
+  # node's image store: no registry push and pull, one copy of the 2.3 GB
+  # tools bundle instead of two. Left up.
+  sandbox:k3d:up:
+    deps: [pin:task, pin:k3d, pin:kubectl]
+    desc: 'The k3d cluster the k8s and privileged suites run on, with this tree''s images imported (needs docker, k3d) — CI: sandbox-test (k3d)'
+    cmds:
+      - cmd: '{{.TASK_EXE}} sandbox:images'
+        if: '[ "${APOTHECARY_IMAGES_PREBUILT:-}" != 1 ]'
+      - task: k8s:cluster
+      - task: k8s:import
+        vars: {IMAGES: '{{.SANDBOX_IMAGES}} live-model'}
+
+  # Each k3d suite reuses the cluster if it is up (and leaves it); otherwise
+  # it brings it up and deletes it afterwards, pass or fail.
   sandbox:test:k8s:
     deps: [pin:task, pin:k3d, pin:kubectl]
-    desc: 'The Kubernetes provisioner and project browser on a local k3d cluster: images, cluster, import, live tests (needs docker, k3d) — CI: sandbox-test (k8s)'
+    desc: 'The Kubernetes provisioner as a cluster integration, any runtime: the runtime probe and refusals, the sandbox tunnel, the project browser, the assistant pod, on a local k3d cluster (needs docker, k3d) — CI: sandbox-test (k3d)'
     vars:
       CLUSTER_EXISTED:
         sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
     cmds:
-      # Built before the cluster starts (building the tools bundle beside a
-      # running k3s starves a CI runner); already in docker when
-      # APOTHECARY_IMAGES_PREBUILT=1 (CI's sandbox-images job, sandbox:test).
-      - cmd: '{{.TASK_EXE}} sandbox:images'
-        if: '[ "${APOTHECARY_IMAGES_PREBUILT:-}" != 1 ]'
-      - task: k8s:cluster
+      - task: sandbox:k3d:up
       - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
-      # Straight into the node's image store: no registry push, no pull.
-      - task: k8s:import
-        vars: {IMAGES: '{{.SANDBOX_IMAGES}} live-model'}
       - task: k8s:test-live
-        vars: {PULL_POLICY: IfNotPresent}
+        vars: {PULL_POLICY: IfNotPresent, RUN: TestLiveK8s}
+
+  sandbox:test:privileged:
+    deps: [pin:task, pin:k3d, pin:kubectl]
+    desc: 'Workspace sandboxes under the privileged runtime, their whole life, on a local k3d cluster (needs docker, k3d) — CI: sandbox-test (k3d)'
+    vars:
+      CLUSTER_EXISTED:
+        sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
+    cmds:
+      - task: sandbox:k3d:up
+      - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
+      - task: k8s:test-live
+        vars: {PULL_POLICY: IfNotPresent, RUN: TestLiveSandbox, RUNTIME: privileged}
+
+  # Both k3d suites on one cluster: the second runs when the first fails.
+  sandbox:test:k3d:
+    deps: [pin:task, pin:k3d, pin:kubectl]
+    desc: 'sandbox:test:k8s, then sandbox:test:privileged, on one k3d cluster (needs docker, k3d) — CI: sandbox-test (k3d)'
+    vars:
+      CLUSTER_EXISTED:
+        sh: k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && echo yes || echo no
+    cmds:
+      - task: sandbox:k3d:up
+      - defer: '{{if eq .CLUSTER_EXISTED "no"}}{{.TASK_EXE}} k8s:down{{end}}'
+      - rc=0; {{.TASK_EXE}} sandbox:test:k8s || rc=1; {{.TASK_EXE}} sandbox:test:privileged || rc=1; exit $rc
 
   # The workspace provisioner under Kata Containers, on a throwaway k3s node in
   # one privileged container with the host's /dev/kvm (deploy/kata/rig.sh:
@@ -802,7 +853,7 @@ tasks:
   # sandbox needs of it, without building this tree's images twice.
   sandbox:test:kata:
     deps: [pin:task, pin:kubectl]
-    desc: 'The Kubernetes provisioner with sandboxes under Kata, on a k3s node in docker, nested Kubernetes inside the sandbox included (needs docker, /dev/kvm, zstd) — CI: sandbox-test (kata)'
+    desc: 'Workspace sandboxes under Kata, their whole life, on a k3s node in docker, nested Kubernetes inside the sandbox included (needs docker, /dev/kvm, zstd) — CI: sandbox-test (kata)'
     dotenv: ['deploy/kata/kata.env']
     vars:
       RIG_EXISTED:
@@ -824,7 +875,36 @@ tasks:
         APOTHECARY_LIVE_RUNTIME=kata
         APOTHECARY_LIVE_VM_STORAGE_CLASS=apo-block
         APOTHECARY_LIVE_NESTED_K8S=$K3S_IMAGE
-        go test -tags live -count=1 -timeout 40m -run 'TestLiveK8sLifecycle$|TestLiveK8sRuntimeProbe|TestLiveKataDiskLimit' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
+        go test -tags live -count=1 -timeout 40m -run 'TestLiveSandboxLifecycle$|TestLiveK8sRuntimeProbe|TestLiveKataDiskLimit' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
+
+  # The workspace provisioner under sysbox, on a throwaway k3s node in one
+  # privileged container with sysbox's daemons beside it (deploy/sysbox/rig.sh:
+  # nothing of sysbox on the host; the release pinned in sysbox.env, which
+  # deploy/k3s/install.sh installs on a real box). Never the host's own k3s.
+  # Reuses the node if it is up (and leaves it); otherwise creates it and
+  # deletes it afterwards. A sysbox sandbox keeps its run on a local-path
+  # claim and sleeps like a privileged one. No nested Kubernetes: sysbox does
+  # not give a nested pod a user namespace of its own.
+  sandbox:test:sysbox:
+    deps: [pin:task, pin:kubectl]
+    desc: 'Workspace sandboxes under sysbox, their whole life, on a k3s node in docker with sysbox beside it (needs docker) — CI: sandbox-test (sysbox)'
+    dotenv: ['deploy/sysbox/sysbox.env']
+    vars:
+      RIG_EXISTED:
+        sh: docker container inspect apo-sysbox-node >/dev/null 2>&1 && echo yes || echo no
+    cmds:
+      - cmd: '{{.TASK_EXE}} sandbox:images'
+        if: '[ "${APOTHECARY_IMAGES_PREBUILT:-}" != 1 ]'
+      - deploy/sysbox/rig.sh up
+      - defer: '{{if eq .RIG_EXISTED "no"}}deploy/sysbox/rig.sh down{{end}}'
+      - deploy/sysbox/rig.sh import {{range (splitList " " "sandbox shim tools egress-gw")}}{{$.K3D_REGISTRY}}/apothecary/{{.}}:local {{end}}
+      - >-
+        APOTHECARY_LIVE_KUBECONFIG=$PWD/deploy/.sysbox-kubeconfig
+        APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
+        APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
+        APOTHECARY_LIVE_PULL_POLICY=IfNotPresent
+        APOTHECARY_LIVE_RUNTIME=sysbox
+        go test -tags live -count=1 -timeout 40m -run 'TestLiveSandboxLifecycle$|TestLiveK8sRuntimeProbe' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
 
   k8s:import:
     internal: true

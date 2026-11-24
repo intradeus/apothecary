@@ -25,7 +25,7 @@ import (
 //   - kernel: wg0 is the kernel's, as on every runtime with the module.
 //
 // The pod's other parts (the gateway's firewall, routes into the cluster)
-// are TestLiveK8sLifecycle's; this is the tunnel alone, both ways up.
+// are TestLiveSandboxLifecycle's; this is the tunnel alone, both ways up.
 func TestLiveK8sWireGuardFallback(t *testing.T) {
 	prefix := os.Getenv("APOTHECARY_LIVE_IMAGE_PREFIX")
 	if prefix == "" {

@@ -926,6 +926,7 @@ function toWorkspacePolicy(w: Wire.ProjectView['workspace']): WorkspacePolicy {
 		size: toSandboxSize(w?.size),
 		runtime: w?.runtime ?? '',
 		idleMinutes: w?.idle_minutes ?? 0,
+		env: { ...(w?.env ?? {}) },
 		editor: w?.editor
 			? {
 					theme: w.editor.theme,

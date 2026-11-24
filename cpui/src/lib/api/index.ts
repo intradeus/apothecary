@@ -272,6 +272,7 @@ const projectBody = (p: ProjectDraft): Wire.ProjectRequest => ({
 		size: map.fromSandboxSize(p.workspace.size),
 		runtime: p.workspace.runtime || undefined,
 		idle_minutes: p.workspace.idleMinutes || undefined,
+		env: p.workspace.env,
 		...(p.workspace.egressMode ? { egress_mode: p.workspace.egressMode } : {}),
 		editor: {
 			theme: p.workspace.editor?.theme,

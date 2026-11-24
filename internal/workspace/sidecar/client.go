@@ -157,6 +157,18 @@ func (c *Client) Health(ctx context.Context) (Health, error) {
 	return h, err
 }
 
+// SetEnv tells the sidecar the workspace's environment (the engine's size
+// hints and the project's variables): laid over its own at each process it
+// starts from then on — the harness, a terminal, an SSH session — replacing
+// the set it was told before. A sidecar that predates the route answers
+// IsNoRoute.
+func (c *Client) SetEnv(ctx context.Context, env map[string]string) error {
+	if env == nil {
+		env = map[string]string{}
+	}
+	return c.do(ctx, http.MethodPut, "/env", map[string]any{"env": env}, nil)
+}
+
 // --- agent ---------------------------------------------------------------------
 
 type StartRequest struct {

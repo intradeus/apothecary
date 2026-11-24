@@ -127,6 +127,7 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 	a := workspaceadapter.New(workspaceadapter.Config{
 		RunsDir:         deps.RunsDir,
 		WorkspaceDocker: deps.WorkspaceDocker,
+		ProjectEnv:      deps.ProjectEnv,
 		Kube: &workspaceadapter.KubeConfig{
 			Kube:            &kube.Client{Kubeconfig: path, Context: cfg.Str("context", ""), Namespace: ns},
 			SandboxImage:    cfg.Str("sandbox_image", d.SandboxImage),

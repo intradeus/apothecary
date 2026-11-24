@@ -146,7 +146,8 @@ func sigName(payload []byte, sg *signalReq) string {
 func (ss *sshSession) start(argv []string, dir string) error {
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), ss.env...)
+	// What the client sends (SendEnv) over the workspace's environment.
+	cmd.Env = append(engineEnv.over(os.Environ()), ss.env...)
 	var wg sync.WaitGroup
 	if ss.pty != nil {
 		term := ss.pty.Term

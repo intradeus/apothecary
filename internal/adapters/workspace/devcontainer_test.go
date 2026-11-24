@@ -60,6 +60,8 @@ func newTestAdapter(t *testing.T, r CmdRunner) *Adapter {
 	a := NewWithRunner(Config{RunsDir: shortRunsDir(t)}, r)
 	a.host = newTestHost(a)
 	a.retryDelay = time.Millisecond
+	// The fake sidecars answer no HTTP: telling one the environment gives up fast.
+	a.sidecarEnvTimeout = 50 * time.Millisecond
 	return a
 }
 

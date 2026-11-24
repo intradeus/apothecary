@@ -23,8 +23,10 @@ unprivileged under sysbox.
   --chart-version <X.Y.Z>  the Apothecary release (default: the newest)
   --k3s-channel <channel>  the k3s release channel (default: stable; must be
                            Kubernetes 1.33 or later)
-  --sysbox-version <X.Y.Z> the sysbox release (default: 0.7.0); or set
-                           SYSBOX_DEB_URL to the .deb to install
+  --sysbox-version <X.Y.Z> the sysbox release (default: deploy/sysbox/sysbox.env's,
+                           checked against its pinned sha256; 0.7.1 or later).
+                           Another version, or SYSBOX_DEB_URL for another .deb,
+                           needs SYSBOX_DEB_SHA256: the release page lists it
   --kata                   also install Kata Containers (a VM per sandbox;
                            amd64 with KVM, /dev/kvm): workshops may then
                            choose kata beside sysbox. Kata sandboxes must be
@@ -43,8 +45,15 @@ secrets to /root/.apothecary/install.env (root only).
 EOF
 }
 
+HERE=$(cd "$(dirname "$0")" && pwd)
+SYSBOX_DIR="$HERE/../sysbox" # its pins (sysbox.env), shared with the test rig
+[ -f "$SYSBOX_DIR/sysbox.env" ] || { echo "install: run from a checkout (deploy/sysbox/sysbox.env is missing)" >&2; exit 1; }
+# shellcheck source=deploy/sysbox/sysbox.env
+. "$SYSBOX_DIR/sysbox.env"
+PINNED_SYSBOX="$SYSBOX_VERSION"
+
 DOMAIN="" EMAIL="" ADDRESS="" CHART_VERSION="" K3S_CHANNEL="stable"
-SYSBOX_VERSION="0.7.0" KEEP_USERNS=0 CLUSTER_ONLY=0 KATA=0
+KEEP_USERNS=0 CLUSTER_ONLY=0 KATA=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --domain) DOMAIN="${2:?--domain needs a host}"; shift 2 ;;
@@ -61,7 +70,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-HERE=$(cd "$(dirname "$0")" && pwd)
 KATA_DIR="$HERE/../kata" # its pins (kata.env) and configure.sh, shared with the test rig
 CHART=oci://ghcr.io/intradeus/charts/apothecary
 NAMESPACE=apothecary
@@ -177,16 +185,27 @@ installed=$(sysbox-runc --version 2>/dev/null | awk '/^version:/{print $2}' || t
 if [ -n "$installed" ] && version_ge "$installed" "$SYSBOX_VERSION"; then
   note "sysbox ${installed} is installed"
 else
-  url="${SYSBOX_DEB_URL:-https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}-0.linux_${ARCH}.deb}"
+  # The release's asset name (no "-0" since 0.7.0), and the sha256 it must
+  # have: the pin for the pinned version, else SYSBOX_DEB_SHA256.
+  url="${SYSBOX_DEB_URL:-https://github.com/nestybox/sysbox/releases/download/v${SYSBOX_VERSION}/sysbox-ce_${SYSBOX_VERSION}.linux_${ARCH}.deb}"
+  want="${SYSBOX_DEB_SHA256:-}"
+  if [ -z "$want" ] && [ -z "${SYSBOX_DEB_URL:-}" ] && [ "$SYSBOX_VERSION" = "$PINNED_SYSBOX" ]; then
+    case "$ARCH" in
+      amd64) want="$SYSBOX_SHA256_AMD64" ;;
+      arm64) want="$SYSBOX_SHA256_ARM64" ;;
+    esac
+  fi
+  [ -n "$want" ] || die "sysbox ${SYSBOX_VERSION} is not the pinned ${PINNED_SYSBOX}: set SYSBOX_DEB_SHA256 to its .deb's sha256 (the release page lists each asset's digest)"
   deb="$STATE_DIR/sysbox.deb"
   note "downloading ${url}"
-  curl -fsSL -o "$deb" "$url" || die "cannot download sysbox: check the release page (github.com/nestybox/sysbox/releases) and pass --sysbox-version or SYSBOX_DEB_URL"
+  curl -fsSL -o "$deb" "$url" || die "cannot download sysbox from ${url}: check the release page (github.com/nestybox/sysbox/releases) for the asset's name, and pass --sysbox-version or SYSBOX_DEB_URL"
+  echo "${want}  ${deb}" | sha256sum -c --quiet - || { rm -f "$deb"; die "sysbox's .deb does not have the sha256 ${want}"; }
   apt-get update -qq
   DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$deb"
   rm -f "$deb"
   installed=$(sysbox-runc --version | awk '/^version:/{print $2}')
 fi
-version_ge "$installed" 0.7.0 || die "sysbox ${installed} is too old: 0.7 or later (user namespaces for pods)"
+version_ge "$installed" 0.7.1 || die "sysbox ${installed} is too old: 0.7.1 or later (0.7.0 cannot run on containerd 2 with kernel 6.8+); rerun without --sysbox-version"
 systemctl is-active --quiet sysbox || systemctl restart sysbox
 systemctl is-active --quiet sysbox || die "sysbox does not run: journalctl -u sysbox"
 note "sysbox ${installed} running"

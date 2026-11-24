@@ -114,6 +114,9 @@ type Config struct {
 	// sandboxes too — the operator accepting that such a workspace is root on
 	// its node; "off" never. See doorOpen and checkDaemonDoor.
 	WorkspaceDocker string
+	// ProjectEnv reads a project's workspace variables as stored now
+	// (kinds.ProvisionerDeps.ProjectEnv, wsenv.go); nil = none.
+	ProjectEnv func(ctx context.Context, projectID string) (map[string]string, error)
 }
 
 type Adapter struct {
@@ -148,6 +151,16 @@ type Adapter struct {
 	// sidecarMu serializes sidecar starts, so two callers racing on a cold
 	// workspace start one (the shim's own singleton guard backs this up).
 	sidecarMu sync.Mutex
+
+	// The workspace environment (wsenv.go): what each env's is made from,
+	// the project variables last read for it, and the set its sidecar was
+	// last told.
+	envMu      sync.Mutex
+	envSrc     map[string]envSource
+	lastVars   map[string]map[string]string
+	sidecarEnv map[string]string
+	// sidecarEnvTimeout bounds telling the sidecar (syncSidecarEnv).
+	sidecarEnvTimeout time.Duration
 }
 
 // CmdRunner executes one CLI invocation (devcontainer, docker or git);
@@ -192,6 +205,11 @@ func New(cfg Config) *Adapter {
 		retryDelay: time.Second,
 		sibPorts:   map[envport.EnvID]map[int]string{},
 		defByEnv:   map[string]Definition{},
+		envSrc:     map[string]envSource{},
+		lastVars:   map[string]map[string]string{},
+		sidecarEnv: map[string]string{},
+
+		sidecarEnvTimeout: 5 * time.Second,
 	}
 	a.defs = definitions(cfg)
 	if cfg.Kube != nil {
@@ -424,6 +442,10 @@ func (a *Adapter) provision(ctx context.Context, spec envport.EnvSpec, rebuild b
 	}
 	a.recordDefinition(name, p.def)
 	plog("→ workspace definition: %s\n", p.def.Name())
+	// The sandbox's limits as its pod has them (a reused pod keeps the size
+	// it was made with): the size hints until the pod is made again.
+	a.recordEnvSource(name, envSource{Project: spec.Project, Limits: p.limits})
+	a.logWorkspaceEnv(ctx, name, plog)
 
 	removeExisting := false
 	if rebuild {
@@ -648,9 +670,18 @@ func (a *Adapter) defEnv(name, src string) defEnv {
 }
 
 // inWorkspace runs cmd inside the env's workspace container as its remote
-// user (the definition's exec), with remoteEnv set.
+// user (the definition's exec), with remoteEnv set and the workspace's
+// environment over everything else (wsenv.go).
 func (a *Adapter) inWorkspace(ctx context.Context, name string, remoteEnv []string, cmd []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
+	return a.inWorkspaceWith(ctx, name, a.workspaceEnv(ctx, name), remoteEnv, cmd, stdin, tee)
+}
+
+// inWorkspaceWith is inWorkspace with vars as the workspace's environment:
+// `env NAME=value … cmd`, so they win over the configuration's remoteEnv,
+// which the CLI lays over --remote-env.
+func (a *Adapter) inWorkspaceWith(ctx context.Context, name string, vars, remoteEnv []string, cmd []string, stdin []byte, tee io.Writer) ([]byte, []byte, int, error) {
 	bin, args := a.defFor(name).ExecArgs(name, remoteEnv...)
+	args = append(args, envPrefix(vars)...)
 	return a.runInner(ctx, name, bin, append(args, cmd...), stdin, tee)
 }
 
@@ -912,6 +943,12 @@ func (a *Adapter) waitReady(ctx context.Context, name string) error {
 const shimPathPrelude = `export PATH="$PATH:/opt/apothecary"` + "\n"
 
 func (a *Adapter) Exec(ctx context.Context, env envport.EnvID, cmd envport.Command) (envport.ExecResult, error) {
+	return a.exec(ctx, env, cmd, true)
+}
+
+// exec is Exec; withEnv false leaves the workspace's environment out (the
+// sidecar's start: it is told the set instead, syncSidecarEnv).
+func (a *Adapter) exec(ctx context.Context, env envport.EnvID, cmd envport.Command, withEnv bool) (envport.ExecResult, error) {
 	if cmd.Timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, cmd.Timeout)
@@ -947,7 +984,11 @@ func (a *Adapter) Exec(ctx context.Context, env envport.EnvID, cmd envport.Comma
 		remoteEnv = append(remoteEnv, markerVar+"="+cmd.Marker)
 		script = sweepPrelude(cmd.Marker) + script
 	}
-	stdout, stderr, code, err := a.inWorkspace(ctx, string(env), remoteEnv,
+	var vars []string
+	if withEnv {
+		vars = a.workspaceEnv(ctx, string(env))
+	}
+	stdout, stderr, code, err := a.inWorkspaceWith(ctx, string(env), vars, remoteEnv,
 		[]string{"bash", "-eo", "pipefail", "-s"}, []byte(script), teeW)
 	if scrubbed != nil {
 		scrubbed.flush()

@@ -522,6 +522,25 @@ export default {
 	'form.project.sizeOOM_one': '{count} process was killed at the memory limit',
 	'form.project.sizeOOM_other': '{count} processes were killed at the memory limit',
 	'form.project.sizeNoUsage': 'No run of this workshop has been measured since the engine started.',
+	'form.project.env': 'Environment variables',
+	'form.project.envHelp':
+		'Every process in this workshop’s workspaces gets these: the agent and its shells, command stages, terminals, services, the browser editor. They win over the repository’s own <code>containerEnv</code> and <code>remoteEnv</code>. A value may name the engine’s size hints, <code>${APO_CPUS}</code> (the sandbox’s CPU limit, whole CPUs) and <code>${APO_MEMORY_MIB}</code> — say <code>NX_PARALLEL=${APO_CPUS}</code> or <code>JEST_MAX_WORKERS=2</code>. A change reaches the next process started, with no rebuild.',
+	'form.project.envNotSecret':
+		'Plain configuration, shown back to anyone who can open this workshop — never put a credential here: use Secrets below.',
+	'form.project.envAdd': 'Add a variable',
+	'form.project.envName': 'Variable name',
+	'form.project.envValue': 'Value of {name}',
+	'form.project.envRemove': 'Remove {name}',
+	'form.project.envUnnamed': 'this variable',
+	'form.project.envIssue.name':
+		'Not a variable name: letters, digits and _, not starting with a digit.',
+	'form.project.envIssue.reservedPrefix':
+		'Names starting with {prefix} are the engine’s own: the save will be refused.',
+	'form.project.envIssue.reservedName':
+		'The engine sets this in every workspace itself: the save will be refused.',
+	'form.project.envIssue.duplicate': 'Set twice: keep one.',
+	'form.project.envIssue.tooLong': 'A value is at most {max} bytes: the save will be refused.',
+	'form.project.envTooMany': 'At most {max} variables: the save will be refused.',
 	'form.project.extensions': 'code-server extensions',
 	'form.project.extensionsHelp':
 		"VS Code extension ids from Open VSX, installed the first time the browser editor opens in a run (together with the repo's devcontainer customizations, and each harness's own extension — Codex, opencode, Claude Code — signed in like its agent) — no rebuild.",

@@ -124,7 +124,9 @@ func (r *termRegistry) create(repo, dir string, cols, rows int) (*termSession, e
 	}
 	cmd := exec.CommandContext(r.ctx, shellPath(), "-l")
 	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	// The workspace's environment as the engine last told it (wsenv.go): a
+	// session started after a change has the new set.
+	cmd.Env = append(engineEnv.over(os.Environ()), "TERM=xterm-256color", "COLORTERM=truecolor")
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGHUP) }
 	master, err := startPTY(cmd, cols, rows)
 	if err != nil {

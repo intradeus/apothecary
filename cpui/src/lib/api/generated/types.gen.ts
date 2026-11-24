@@ -2563,6 +2563,9 @@ export type WorkspaceConfig = {
 	egress_allowed_cidrs?: Array<string>;
 	egress_allowed_ports?: Array<number>;
 	egress_mode?: string;
+	env?: {
+		[key: string]: string;
+	};
 	extra_domains?: Array<string>;
 	idle_minutes?: number;
 	runtime?: string;

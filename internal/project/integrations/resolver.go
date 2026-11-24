@@ -112,6 +112,17 @@ func (r *Resolver) sandboxPolicy(ctx context.Context) (envport.SandboxPolicy, er
 	return envport.SandboxPolicy{}, fmt.Errorf("the instance's sandbox limits could not be read (System → Limits): %w", err)
 }
 
+// projectEnv is a project's workspace environment as stored now (the
+// provisioner's ProjectEnv): read at each exec, so no cached generation of
+// the provisioner holds an old one.
+func (r *Resolver) projectEnv(ctx context.Context, projectID string) (map[string]string, error) {
+	p, err := r.conf.GetProject(ctx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	return p.Workspace.Env, nil
+}
+
 // driftFor reports in's image drift to the notices; nil when none are wired.
 func (r *Resolver) driftFor(in confstore.Integration) func(ctx context.Context, part string, err error) {
 	if r.notices == nil {
@@ -546,6 +557,7 @@ func (r *Resolver) acquireProvisioner(in confstore.Integration) (kinds.Provision
 			EnginePort:      r.enginePort,
 			WorkspaceDocker: r.workspaceDocker,
 			Drift:           r.driftFor(in),
+			ProjectEnv:      r.projectEnv,
 		})
 		if err != nil {
 			return nil, nil, unresolvable(fmt.Errorf("provisioner %s: %v", in.Name, err))

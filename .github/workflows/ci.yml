@@ -21,7 +21,10 @@
 #                     chart and its README
 #   sandbox-images    the four images the sandbox suites run, built once into
 #                     the Actions cache
-#   sandbox-test      the harness, k8s and kata suites, on those images
+#   sandbox-test      the sandbox suites on those images: harness (the
+#                     harness CLIs), k3d (the k8s suite, the provisioner as
+#                     a cluster integration, then the privileged runtime's),
+#                     sysbox and kata (each runtime's, on a rig of its own)
 #   engine-image      the engine's image
 #
 # A job runs only when a change touches its side: go (everything but cpui/,
@@ -432,7 +435,7 @@ jobs:
           path: build/flows/
           retention-days: 14
 
-  # The four images the harness and k8s suites run (the engine's own is the
+  # The four images the harness and k3d suites run (the engine's own is the
   # engine-image job's), built once: sandbox-test waits for this job and
   # loads them from the cache it fills, instead of each suite building them.
   sandbox-images:
@@ -464,7 +467,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        suite: [harness, k8s, kata]
+        # k3d is two suites on one cluster: k8s, then privileged, each its
+        # own step. A runtime that needs a node of its own has a rig: sysbox
+        # (its daemons in the node's container), kata (on the runner's KVM).
+        suite: [harness, k3d, sysbox, kata]
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
@@ -476,7 +482,7 @@ jobs:
         with:
           version: 3.54.0 # .devcontainer/Dockerfile TASK_VERSION
           repo-token: ${{ secrets.GITHUB_TOKEN }}
-      # The k8s and kata suites hold their images twice at their peak
+      # The k3d, sysbox and kata suites hold their images twice at their peak
       # (docker, then the node: ≈15 GB; kata adds its 1 GB release, unpacked),
       # more than the runner has free, so the toolchains they never use go.
       # Deleting them takes about 1.5 minutes, so it runs in the background
@@ -498,7 +504,7 @@ jobs:
         if: matrix.suite == 'harness'
         run: IMAGES=tools CACHE=gha-read PREFIX=apothecary deploy/images.sh "$(go run ./cmd/apothecaryd tools-hash)"
       - name: Load the images
-        if: matrix.suite == 'k8s'
+        if: matrix.suite == 'k3d'
         run: |
           deploy/images.sh local
           # The assistant suite's fake model: one small Go binary, no cache.
@@ -507,9 +513,9 @@ jobs:
           IMAGES: sandbox shim tools egress-gw assistant
           PREFIX: k3d-registry.localhost:5111/apothecary # Taskfile K3D_REGISTRY
           CACHE: gha-read
-      # The kata suite runs workspace sandboxes only: no assistant.
-      - name: Load the images (kata)
-        if: matrix.suite == 'kata'
+      # The rig suites run workspace sandboxes only: no assistant.
+      - name: Load the images (${{ matrix.suite }})
+        if: matrix.suite == 'kata' || matrix.suite == 'sysbox'
         run: deploy/images.sh local
         env:
           IMAGES: sandbox shim tools egress-gw
@@ -521,7 +527,7 @@ jobs:
       # are imported into the node, so no registry setup is needed. The task
       # creates the cluster and deletes it again.
       - name: Kubernetes prerequisites
-        if: matrix.suite == 'k8s'
+        if: matrix.suite == 'k3d'
         env:
           K3D_VERSION: v5.9.0 # .devcontainer/Dockerfile K3D_VERSION
           K3D_SHA256: 06d8f25bc3a971c4eb29e0ff08429b180402db0f4dec838c9eac427e296800a0
@@ -542,7 +548,7 @@ jobs:
       # runner is itself a VM, so this is nested virtualization, which
       # GitHub's Linux runners expose as /dev/kvm. Its gateways run on the
       # node, so on the runner's kernel: the wireguard module as for k8s.
-      # kubectl as the k8s suite pins it; no k3d.
+      # kubectl as the k3d suites pin it; no k3d.
       - name: Kata prerequisites
         if: matrix.suite == 'kata'
         env:
@@ -560,6 +566,34 @@ jobs:
           sudo install -m 0755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
           kubectl version --client
           sudo modprobe wireguard
+      # The sysbox suite's node is k3s in one privileged container with
+      # sysbox's daemons beside it (deploy/sysbox/rig.sh): nothing of sysbox
+      # on the runner. The runner's kernel serves it, so it gets what sysbox's
+      # package would set (deploy/k3s/install.sh on a real box): inotify and
+      # keyring limits, and fusermount3 allowed to mount under
+      # /var/lib/sysboxfs where AppArmor confines it (Ubuntu 25.04+). Its
+      # gateways run on the node: the wireguard module as for k3d.
+      - name: Sysbox prerequisites
+        if: matrix.suite == 'sysbox'
+        env:
+          KUBECTL_VERSION: v1.34.1 # .devcontainer/Dockerfile KUBECTL_VERSION
+          KUBECTL_SHA256: 7721f265e18709862655affba5343e85e1980639395d5754473dafaadcaa69e3
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$KUBECTL_SHA256  $RUNNER_TEMP/kubectl" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
+          kubectl version --client
+          sudo modprobe wireguard
+          sudo sysctl -w fs.inotify.max_queued_events=1048576 fs.inotify.max_user_watches=1048576 \
+            fs.inotify.max_user_instances=1048576 kernel.keys.maxkeys=20000 kernel.keys.maxbytes=1400000
+          if [ -f /etc/apparmor.d/fusermount3 ]; then
+            sudo mkdir -p /etc/apparmor.d/local
+            printf '%s\n' \
+              'mount fstype=@{fuse_types} options=(nosuid,nodev,rw) -> /var/lib/sysboxfs/**/,' \
+              'mount fstype=@{fuse_types} options=(nosuid,nodev,ro) -> /var/lib/sysboxfs/**/,' \
+              'umount /var/lib/sysboxfs/**/,' | sudo tee -a /etc/apparmor.d/local/fusermount3 >/dev/null
+            sudo apparmor_parser -r /etc/apparmor.d/fusermount3
+          fi
       - name: Wait for the disk to be freed
         if: matrix.suite != 'harness'
         timeout-minutes: 5
@@ -569,7 +603,28 @@ jobs:
       # Strict: a live suite that would skip (a variable unset, a cluster
       # that cannot run what it tests) fails here instead. Locally it skips
       # and says why (internal/platform/livetest).
-      - run: task sandbox:test:${{ matrix.suite }}
+      - if: matrix.suite != 'k3d'
+        run: task sandbox:test:${{ matrix.suite }}
+        env:
+          APOTHECARY_IMAGES_PREBUILT: '1'
+          APOTHECARY_LIVE_STRICT: '1'
+      # The k3d suites: the cluster once, then each suite its own step (each
+      # keeps a cluster that is up), the second run when the first fails.
+      - name: The k3d cluster
+        id: k3d
+        if: matrix.suite == 'k3d'
+        run: task sandbox:k3d:up
+        env:
+          APOTHECARY_IMAGES_PREBUILT: '1'
+      - name: The k8s suite (the provisioner as a cluster integration)
+        if: matrix.suite == 'k3d'
+        run: task sandbox:test:k8s
+        env:
+          APOTHECARY_IMAGES_PREBUILT: '1'
+          APOTHECARY_LIVE_STRICT: '1'
+      - name: The privileged suite (sandboxes under the privileged runtime)
+        if: matrix.suite == 'k3d' && !cancelled() && steps.k3d.outcome == 'success'
+        run: task sandbox:test:privileged
         env:
           APOTHECARY_IMAGES_PREBUILT: '1'
           APOTHECARY_LIVE_STRICT: '1'

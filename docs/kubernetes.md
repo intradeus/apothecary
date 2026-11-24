@@ -295,6 +295,45 @@ workshop's Settings → Workspace lists its recent runs' peaks: the evidence
 for its size. A process killed at the memory limit, or the sandbox
 container killed and restarted, is told in the run's workspace log.
 
+### Size hints and workspace variables
+
+A sandbox's tools cannot always tell how big it is: under sysbox, `nproc`
+and Node's `os.cpus()` report the node's CPUs, whatever the limit, and a
+test runner that sizes its workers from them (jest's `maxWorkers: "50%"`)
+starts far more than the sandbox can hold. So every process in a workspace
+gets the sandbox's size as hints:
+
+| Variable | Value | Unset when |
+|---|---|---|
+| `APO_CPUS` | the pod's CPU limit, rounded up to whole CPUs (`4000m` → `4`, `1500m` → `2`) | the sandbox has no CPU limit |
+| `APO_MEMORY_MIB` | the pod's memory limit in MiB | it has no memory limit |
+
+The limit is the workshop's size, else the instance default, else the
+ceiling (which limits an unsized sandbox). Under Kata the hint is the limit
+too, not the guest's vCPU count, which Kata pads with one of its own. The
+hints are the limits of the pod the sandbox runs as, so like the size they
+change when the pod is made again (the next run, or a rebuild that replaces
+it), never on a live one.
+
+A workshop sets its own variables in Settings → Workspace → Environment
+variables (`workspace.env` in the project API): `JEST_MAX_WORKERS=2`, or
+`NX_PARALLEL=${APO_CPUS}`. `${APO_CPUS}` and `${APO_MEMORY_MIB}` in a value
+expand to the hint (empty without one); nothing else expands. Names are
+`[A-Za-z_][A-Za-z0-9_]*`. The `APOTHECARY_` and `APO_` prefixes are the
+engine's, and so are `PATH`, `HOME`, `TERM`, `COLORTERM`, the harness's
+launch and broker variables and the provider keys: all refused. At most 64
+variables, 4 KiB a value. They are plain configuration, shown back by the
+API and the form: credentials go in the workshop's secrets.
+
+Both reach every process in the workspace: command stages, the harness and
+the shells it opens, the run's terminal, SSH sessions, services, and the
+browser editor. Last wins: the repository's `containerEnv` and `remoteEnv`,
+then the hints, then the workshop's variables. A changed variable reaches
+the next process started in a live workspace, with no rebuild. The browser
+editor is the exception: it keeps what it had when it started, until the
+sandbox is made again. The workspace log says, at each provision, which
+hints and variables were set.
+
 ### Stopping idle sandboxes
 
 A sandbox nobody uses (no stage working, no terminal, editor, exposed port,
@@ -318,7 +357,7 @@ task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/conf
 task k8s:images     # build the six images from the working tree, push as :local
 task k8s:deploy     # helm install with charts/apothecary/ci/k3d-values.yaml
 # → http://apothecary.localhost:8090
-task k8s:test-live  # the provisioner's and the browser's live tests against the cluster
+task k8s:test-live  # the k8s suite and the privileged sandboxes' against the cluster
 task k8s:down
 ```
 

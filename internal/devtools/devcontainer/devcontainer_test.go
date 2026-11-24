@@ -175,6 +175,34 @@ func TestToolPinsMatchCI(t *testing.T) {
 	if !regexp.MustCompile(`(?m)^  sandbox:test:kata:\n(?:    .*\n)*?    dotenv: \['deploy/kata/kata.env'\]`).MatchString(read(t, "Taskfile.yml")) {
 		t.Error("Taskfile.yml's sandbox:test:kata does not read deploy/kata/kata.env")
 	}
+	// The sysbox release is one file's too (deploy/sysbox/sysbox.env): the
+	// installer and the rig source it, the Taskfile reads it, and nothing
+	// spells its download URL another way (2026-11-24: install.sh's own
+	// URL had gone stale, and 404ed).
+	sysbox := read(t, "deploy/sysbox/sysbox.env")
+	for _, pin := range []string{"SYSBOX_VERSION", "SYSBOX_SHA256_AMD64", "SYSBOX_SHA256_ARM64"} {
+		if !regexp.MustCompile(`(?m)^` + pin + `=\S+$`).MatchString(sysbox) {
+			t.Errorf("deploy/sysbox/sysbox.env does not pin %s", pin)
+		}
+		for _, f := range []string{"deploy/sysbox/rig.sh", "deploy/sysbox/Dockerfile", "deploy/k3s/install.sh", "Taskfile.yml", ".github/workflows/ci.yml"} {
+			if regexp.MustCompile(`(?m)^\s*` + pin + `[=:]`).MatchString(read(t, f)) {
+				t.Errorf("%s sets %s of its own: it is deploy/sysbox/sysbox.env's", f, pin)
+			}
+		}
+	}
+	for _, f := range []string{"deploy/sysbox/rig.sh", "deploy/k3s/install.sh"} {
+		if !regexp.MustCompile(`(?m)^\. "\S*/sysbox\.env"`).MatchString(read(t, f)) {
+			t.Errorf("%s does not source deploy/sysbox/sysbox.env", f)
+		}
+	}
+	for _, f := range []string{"deploy/sysbox/Dockerfile", "deploy/k3s/install.sh"} {
+		if !strings.Contains(read(t, f), "/sysbox-ce_${SYSBOX_VERSION}.linux_") {
+			t.Errorf("%s does not download sysbox-ce_${SYSBOX_VERSION}.linux_<arch>.deb, the release's asset name", f)
+		}
+	}
+	if !regexp.MustCompile(`(?m)^  sandbox:test:sysbox:\n(?:    .*\n)*?    dotenv: \['deploy/sysbox/sysbox.env'\]`).MatchString(read(t, "Taskfile.yml")) {
+		t.Error("Taskfile.yml's sandbox:test:sysbox does not read deploy/sysbox/sysbox.env")
+	}
 	// kubectl is the engine's: the live tests drive the cluster as it does.
 	if eng := regexp.MustCompile(`(?m)^ARG KUBECTL_VERSION=(\S+)`).FindStringSubmatch(read(t, "deploy/Dockerfile")); eng == nil || eng[1] != argDefault(t, df, "KUBECTL_VERSION") {
 		t.Errorf("deploy/Dockerfile's kubectl is %v, the devcontainer's %s", eng, argDefault(t, df, "KUBECTL_VERSION"))

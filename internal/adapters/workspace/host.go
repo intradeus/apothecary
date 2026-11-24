@@ -109,6 +109,9 @@ const daemonDoorSocket = "/var/run/docker.sock"
 type prep struct {
 	src, shimDir, toolsDir, gwIP string
 	def                          Definition
+	// limits are the sandbox's CPU and memory limits as its pod has them:
+	// the workspace's size hints (wsenv.go). Zero fields: no limit.
+	limits envport.SandboxSize
 }
 
 // sandboxFS is the small file surface the definition needs on the run folder:

@@ -149,6 +149,14 @@ type WorkspaceConfig struct {
 	// before it is stopped (its storage kept, woken on the next use): 0 the
 	// instance's default (System → Limits), envport.IdleNever never.
 	IdleMinutes int `json:"idle_minutes,omitempty"`
+	// Env is environment variables every process in this project's
+	// workspaces gets (commands, the harness and its shells, terminals,
+	// services, the editor), over the repository's own containerEnv and
+	// remoteEnv and the engine's size hints (APO_CPUS, APO_MEMORY_MIB),
+	// which a value may name as ${APO_CPUS}. Plain configuration, not
+	// secrets: shown back by the API. A change reaches the next process
+	// started in a live workspace, with no rebuild (validateEnv).
+	Env map[string]string `json:"env,omitempty"`
 }
 
 // ServiceConfig is one project service. Start runs in the run's primary

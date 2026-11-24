@@ -5901,6 +5901,10 @@ components:
           type: array
         egress_mode:
           type: string
+        env:
+          additionalProperties:
+            type: string
+          type: object
         extra_domains:
           items:
             type: string

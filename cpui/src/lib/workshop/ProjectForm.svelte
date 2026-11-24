@@ -11,6 +11,9 @@
 	import { api } from '$lib/api';
 	import {
 		INTERNAL_TRACKER,
+		envFromRows,
+		envRows,
+		type EnvVarRow,
 		type ExtraRepo,
 		type Flow,
 		type Integration,
@@ -169,6 +172,8 @@
 	let runtime = $state(init?.workspace.runtime ?? '');
 	// Stop-on-idle; 0 is the instance's default.
 	let idleMinutes = $state(init?.workspace.idleMinutes ?? 0);
+	// The workspace's environment variables, one row each.
+	let envVars = $state<EnvVarRow[]>(envRows(init?.workspace.env));
 	// Flows are user-defined — no built-in fallback exists.
 	let defaultFlow = $state(init?.defaultFlow ?? flowNames[0] ?? '');
 
@@ -276,7 +281,8 @@
 				docker,
 				size: { ...size },
 				runtime,
-				idleMinutes
+				idleMinutes,
+				env: envFromRows(envVars)
 			},
 			defaultFlow
 		};
@@ -433,6 +439,7 @@
 			bind:size
 			bind:runtime
 			bind:idleMinutes
+			bind:envVars
 			projectId={existing?.id}
 			bind:codeServerExtensions
 			bind:editor

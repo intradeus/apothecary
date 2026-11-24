@@ -779,6 +779,7 @@ describe('what each call sends', () => {
 				size: { milli_cpu: 2500, memory_mib: 6144 },
 				runtime: 'sysbox',
 				egress_mode: 'deny',
+				env: { NX_PARALLEL: '${APO_CPUS}' },
 				editor: {
 					theme: 't',
 					font_size: 12,

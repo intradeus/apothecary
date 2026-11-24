@@ -298,6 +298,7 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("DELETE /term/sessions/{id}", s.termClose)
 	mux.HandleFunc("GET /services", serveServiceStatus)
 	mux.HandleFunc("GET /services/{name}/log", serveServiceLog)
+	mux.HandleFunc("PUT /env", putEnv)
 	return mux
 }
 
