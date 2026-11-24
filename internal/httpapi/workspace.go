@@ -353,14 +353,48 @@ func (s *Server) holdsShell(r *http.Request) bool {
 }
 
 // serveTerminal upgrades to a WebSocket terminal in the run's workspace,
-// proxied to the sidecar. Not in the route table: a protocol switch is not
-// something OpenAPI describes, and the generated client would not use it.
+// proxied to the sidecar: ?session= attaches to one of its live sessions
+// (404 when it has ended), none starts one in the checkout ?repo= names
+// (409 at the sidecar's cap). Not in the route table: a protocol switch is
+// not something OpenAPI describes, and the generated client would not use
+// it.
 func (s *Server) serveTerminal(w http.ResponseWriter, r *http.Request) {
 	c, co, ok := s.workspaceFor(w, r, engine.WokeByTerminal)
 	if !ok {
 		return
 	}
 	c.TerminalProxy(co.Name).ServeHTTP(w, r)
+}
+
+// listRunTerminals lists the workspace's terminal sessions. Like opening
+// the pane, it wakes a workspace stopped when idle.
+func (s *Server) listRunTerminals(w http.ResponseWriter, r *http.Request) {
+	c, _, ok := s.workspaceFor(w, r, engine.WokeByTerminal)
+	if !ok {
+		return
+	}
+	out, err := c.TerminalSessions(r.Context())
+	if err != nil {
+		sidecarErr(w, err)
+		return
+	}
+	if out == nil {
+		out = []sidecar.TerminalSession{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// closeRunTerminal ends one terminal session.
+func (s *Server) closeRunTerminal(w http.ResponseWriter, r *http.Request) {
+	c, _, ok := s.workspaceFor(w, r, engine.WokeByTerminal)
+	if !ok {
+		return
+	}
+	if err := c.CloseTerminalSession(r.Context(), r.PathValue("session")); err != nil {
+		sidecarErr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // useFor holds the path's run's workspace for the rest of the request — the
@@ -418,6 +452,14 @@ func (s *Server) workspaceRoutes() []Route {
 		{Method: "POST", Path: "/api/runs/{id}/open-editor", ID: "openEditor", Tag: tagWorkspace,
 			Summary: "Start code-server in the workspace and get its URL",
 			Handler: s.postOpenEditor, Returns: EditorURL{}, Scope: ScopeRun, Action: authz.RunShell},
+		{Method: "GET", Path: "/api/runs/{id}/terminal/sessions", ID: "listRunTerminals", Tag: tagWorkspace,
+			Summary: "The workspace's terminal sessions, oldest first",
+			Doc:     "Each session is a login shell the workspace keeps after its terminal is closed, refreshed or left: the terminal WebSocket attaches to one by ?session= and replays its recent output. The sessions are shared: everyone holding run:shell on the run sees, attaches to and closes the same ones, scrollback included. busy says a program other than the shell runs in a session (a foreground program or a background job), command names it; a busy session keeps the workspace from being stopped when idle, with no time limit. They end with the workspace: stopped when idle, rebuilt or destroyed. Listing wakes a workspace stopped when idle, as opening the terminal does. 501 when the workspace's sidecar predates persistent sessions (restart or rebuild the workspace).",
+			Handler: s.listRunTerminals, Returns: []sidecar.TerminalSession{}, Scope: ScopeRun, Action: authz.RunShell},
+		{Method: "DELETE", Path: "/api/runs/{id}/terminal/sessions/{session}", ID: "closeRunTerminal", Tag: tagWorkspace,
+			Summary: "End one of the workspace's terminal sessions",
+			Doc:     "Hangs up the session's shell and whatever runs in it; every client attached to it is told the session ended. Sessions are shared, so this ends it for everyone. 404 when it has already ended, 501 when the workspace's sidecar predates persistent sessions.",
+			Handler: s.closeRunTerminal, Status: http.StatusNoContent, Scope: ScopeRun, Action: authz.RunShell},
 		{Method: "POST", Path: "/api/runs/{id}/messages", ID: "sendRunMessage", Tag: tagRuns,
 			Summary: "Send a message to the agent you took over",
 			Doc:     "Delivered into the agent's live session when its turn ends. 409 without a take-over: nobody else talks to the agent. A run parked on the holder of a take-over is woken by it. A message may carry files you uploaded (attachment_ids, at most 8; text is then optional): they are delivered read-only under .apothecary/attachments/takeover/ and the message names them. 400 when any of them is not one of your unsent uploads, and nothing is recorded.",

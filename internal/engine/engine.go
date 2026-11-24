@@ -202,6 +202,9 @@ type Engine struct {
 	use *idle.Tracker
 	// teardown is told about every env destroy, in registration order.
 	teardown []EnvTeardown
+	// keepAwake looks inside a workspace due to stop for a use (sleep.go);
+	// nil = none.
+	keepAwake EnvKeepAwake
 
 	// appendLocks holds one mutex per run serializing its appends (see
 	// appendLock): runID -> *sync.Mutex.
@@ -516,6 +519,8 @@ var (
 //   - EnvState: a store over the same store and resolver, on Clock.
 //   - AuthSink: a keyless sink (omp's broker logins off).
 //   - Teardown: none; hooks run in order on every workspace destroy.
+//   - KeepAwake: none; an idle workspace stops whatever runs in its
+//     terminals.
 //   - Tickets: none; a run starts from the caller's copy of its ticket, and
 //     a rerun from the old run's, instead of the ticket as it is now.
 //   - Notices: none; reaper failures are only logged.
@@ -540,11 +545,12 @@ type Deps struct {
 	ProjectSecrets ProjectSecretSource
 	Browser        browserport.Browser
 
-	RunPorts RunPorts
-	EnvState *envstate.Store
-	AuthSink *authsink.Sink
-	Teardown []EnvTeardown
-	Tickets  TicketReader
+	RunPorts  RunPorts
+	EnvState  *envstate.Store
+	AuthSink  *authsink.Sink
+	Teardown  []EnvTeardown
+	KeepAwake EnvKeepAwake
+	Tickets   TicketReader
 	// Items are the kinds of work item runs start on; nil = every kind
 	// (workitem/items).
 	Items   *workitem.Registry
@@ -600,6 +606,7 @@ func New(d Deps) *Engine {
 		envState:       d.EnvState,
 		authSink:       d.AuthSink,
 		teardown:       d.Teardown,
+		keepAwake:      d.KeepAwake,
 		tickets:        d.Tickets,
 		notices:        d.Notices,
 		use:            idle.NewAt(d.Clock),

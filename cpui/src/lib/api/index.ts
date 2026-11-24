@@ -145,7 +145,7 @@ import type {
 	WorkspaceEntry,
 	WorkspaceFile
 } from '$lib/domain';
-import type { FileLoc, PathStat, ResolvedPath } from '$lib/domain';
+import type { FileLoc, PathStat, ResolvedPath, TerminalSession } from '$lib/domain';
 
 /** Go marshals a nil slice as null, so a list endpoint can legitimately answer
  *  `null` rather than `[]`. Every list goes through here: absent and empty are
@@ -863,18 +863,32 @@ export const workspace = {
 			await unwrap(gen.getWorkspaceDiff({ path: { id: runId }, query: { path, repo } }))
 		),
 
-	/** WebSocket URL of a terminal in the workspace (binary frames are
-	 *  keystrokes/output; a JSON text frame {type:'resize',cols,rows} resizes).
+	/** The workspace's terminal sessions, oldest first: shared by everyone with
+	 *  run:shell; a busy one runs a program that keeps the workspace awake.
+	 *  501 when the workspace's sidecar predates sessions. */
+	terminals: async (runId: string): Promise<TerminalSession[]> =>
+		many(await unwrap(gen.listRunTerminals({ path: { id: runId } })), map.toTerminalSession),
+
+	/** End a terminal session's shell; 404 when it already ended. */
+	closeTerminal: (runId: string, session: string): Promise<void> =>
+		unwrapVoid(gen.closeRunTerminal({ path: { id: runId, session } })),
+
+	/** WebSocket URL of a terminal in the workspace: a new session in repo's
+	 *  checkout, or the given session re-attached (binary frames are
+	 *  keystrokes/output; JSON text frames are control: {type:'resize',cols,
+	 *  rows} from the page, {type:'session'|'exit',…} from the workspace).
 	 *  Not in the generated client: a protocol switch is not an OpenAPI call. */
 	terminalUrl: (
 		runId: string,
 		cols: number,
 		rows: number,
 		repo = '',
+		session = '',
 		page: Pick<Location, 'protocol' | 'host'> = location
 	): string => {
 		const proto = page.protocol === 'https:' ? 'wss:' : 'ws:';
 		const q = new URLSearchParams({ cols: String(cols), rows: String(rows), repo });
+		if (session) q.set('session', session);
 		return `${proto}//${page.host}/api/runs/${runId}/terminal?${q}`;
 	}
 };

@@ -9,7 +9,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
+	"time"
 
 	"apothecary/internal/ports/envport"
 	"apothecary/internal/project/resolution"
@@ -117,6 +119,36 @@ func (s *Service) Workspace(ctx context.Context, runID, repo string) (*sidecar.C
 		base = "origin/" + base
 	}
 	return sidecar.New(conn), Checkout{Checkout: *co, Base: base}, nil
+}
+
+// terminalProbeTimeout bounds one look at a workspace's terminals, so a hung
+// sidecar cannot stall the idle sweep.
+const terminalProbeTimeout = 10 * time.Second
+
+// TerminalsBusy says whether a program runs in any of the workspace's
+// terminal sessions (engine.EnvKeepAwake): the stop-on-idle sweep asks it
+// of a workspace that is due, and a busy one stays up. A provisioner without
+// a sidecar, or a sidecar that predates terminal sessions, has none running:
+// not busy, and no error. res is the run's resolution, the sweep's.
+func (s *Service) TerminalsBusy(ctx context.Context, v run.View, res *resolution.Resolution) (bool, error) {
+	sc, ok := res.Envp.(envport.Sidecar)
+	if !ok {
+		return false, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, terminalProbeTimeout)
+	defer cancel()
+	conn, err := sc.Sidecar(ctx, envport.EnvID(wsname.ForRun(v, v.RunID)))
+	if err != nil {
+		return false, fmt.Errorf("workspace sidecar: %w", err)
+	}
+	sessions, err := sidecar.New(conn).TerminalSessions(ctx)
+	switch {
+	case sidecar.IsNoRoute(err):
+		return false, nil
+	case err != nil:
+		return false, err
+	}
+	return slices.ContainsFunc(sessions, func(t sidecar.TerminalSession) bool { return t.Busy }), nil
 }
 
 // MaxLogRead caps one read of the workspace log.

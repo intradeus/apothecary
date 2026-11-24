@@ -228,10 +228,11 @@ type testSidecar struct {
 func newTestSidecar(t *testing.T, repo string) *testSidecar {
 	t.Helper()
 	evl := newEventLog()
-	sc := &sidecar{repo: repo, log: evl, agent: newAgentHost(evl)}
+	sc := &sidecar{repo: repo, log: evl, agent: newAgentHost(evl), terms: newTermRegistry()}
 	srv := httptest.NewServer(sc.routes())
 	t.Cleanup(func() {
 		sc.agent.stop()
+		sc.terms.closeAll()
 		srv.Close()
 	})
 	return &testSidecar{t: t, srv: srv, sc: sc}

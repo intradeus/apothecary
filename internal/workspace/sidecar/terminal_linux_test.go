@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -56,19 +57,9 @@ func TestTerminalThroughTheProxy(t *testing.T) {
 	srv := httptest.NewServer(New(unixDialer(sock)).TerminalProxy("repo"))
 	defer srv.Close()
 
-	c, err := net.Dial("tcp", strings.TrimPrefix(srv.URL, "http://"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer c.Close()
-	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef"))
-	_, _ = c.Write([]byte("GET /api/runs/r/terminal?cols=80&rows=24 HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n" +
-		"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " + key + "\r\n\r\n"))
-	br := bufio.NewReader(c)
-	res, err := http.ReadResponse(br, nil)
-	if err != nil || res.StatusCode != http.StatusSwitchingProtocols {
-		t.Fatalf("upgrade through the proxy: %v %v", res, err)
-	}
+	// The first attach starts a session: its frame names it, ahead of the
+	// output.
+	c, br := dialTerm(t, srv.URL, "/api/runs/r/terminal?cols=80&rows=24")
 	// One masked binary frame of keystrokes.
 	msg := []byte("echo through-$((6*7))\n")
 	frame := []byte{0x82, 0x80 | byte(len(msg)), 1, 2, 3, 4}
@@ -76,9 +67,45 @@ func TestTerminalThroughTheProxy(t *testing.T) {
 		frame = append(frame, b^[]byte{1, 2, 3, 4}[i%4])
 	}
 	_, _ = c.Write(frame)
+	got := readTermUntil(t, c, br, "through-42")
+	m := regexp.MustCompile(`"id":"([0-9a-f]{16})"`).FindStringSubmatch(got)
+	if m == nil || !strings.HasPrefix(got, `{"type":"session"`) {
+		t.Fatalf("no session frame first: %q", got)
+	}
+	c.Close()
+
+	// Re-attached by id through the proxy, the earlier output comes back.
+	c2, br2 := dialTerm(t, srv.URL, "/api/runs/r/terminal?session="+m[1])
+	defer c2.Close()
+	if again := readTermUntil(t, c2, br2, "through-42"); !strings.Contains(again, `"created":false`) {
+		t.Errorf("re-attach = %q", again)
+	}
+}
+
+func dialTerm(t *testing.T, base, path string) (net.Conn, *bufio.Reader) {
+	t.Helper()
+	c, err := net.Dial("tcp", strings.TrimPrefix(base, "http://"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := base64.StdEncoding.EncodeToString([]byte("0123456789abcdef"))
+	_, _ = c.Write([]byte("GET " + path + " HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\n" +
+		"Connection: Upgrade\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: " + key + "\r\n\r\n"))
+	br := bufio.NewReader(c)
+	res, err := http.ReadResponse(br, nil)
+	if err != nil || res.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("upgrade through the proxy: %v %v", res, err)
+	}
+	return c, br
+}
+
+// readTermUntil reads frames, text and binary alike, until want is among
+// them.
+func readTermUntil(t *testing.T, c net.Conn, br *bufio.Reader, want string) string {
+	t.Helper()
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	var got strings.Builder
-	for !strings.Contains(got.String(), "through-42") {
+	for !strings.Contains(got.String(), want) {
 		var h [2]byte
 		if _, err := io.ReadFull(br, h[:]); err != nil {
 			t.Fatalf("read: %v (so far %q)", err, got.String())
@@ -93,4 +120,5 @@ func TestTerminalThroughTheProxy(t *testing.T) {
 		_, _ = io.ReadFull(br, data)
 		got.Write(data)
 	}
+	return got.String()
 }

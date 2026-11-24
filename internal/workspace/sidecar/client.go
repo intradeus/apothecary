@@ -600,9 +600,38 @@ func (c *Client) Diff(ctx context.Context, repo, base, path string) (FileDiff, e
 	return out, err
 }
 
+// TerminalSession is one of the workspace's terminal sessions (shim
+// termSessionInfo): a login shell the sidecar keeps across clients. Busy is
+// a process other than the shell running in it; Command names that program.
+type TerminalSession struct {
+	ID        string    `json:"id"`
+	N         int       `json:"n"`
+	Repo      string    `json:"repo"`
+	Dir       string    `json:"dir"`
+	StartedAt time.Time `json:"started_at"`
+	Attached  int       `json:"attached"`
+	Busy      bool      `json:"busy"`
+	Command   string    `json:"command,omitempty"`
+}
+
+// TerminalSessions lists the live terminal sessions, oldest first.
+func (c *Client) TerminalSessions(ctx context.Context) ([]TerminalSession, error) {
+	var out []TerminalSession
+	err := c.do(ctx, http.MethodGet, "/term/sessions", nil, &out)
+	return out, err
+}
+
+// CloseTerminalSession ends a terminal session: its shell is hung up and
+// every attached client told.
+func (c *Client) CloseTerminalSession(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/term/sessions/"+url.PathEscape(id), nil, nil)
+}
+
 // TerminalProxy returns a handler that forwards a browser's WebSocket upgrade
-// to the sidecar's /term (query string preserved). httputil.ReverseProxy
-// passes a 101 Switching Protocols through and splices the two connections.
+// to the sidecar's /term, its query string preserved — ?session= attaches to
+// a live session, none creates one — except repo, which is always the
+// caller's. httputil.ReverseProxy passes a 101 Switching Protocols through
+// and splices the two connections.
 func (c *Client) TerminalProxy(repo string) http.Handler {
 	target, _ := url.Parse(base)
 	return &httputil.ReverseProxy{

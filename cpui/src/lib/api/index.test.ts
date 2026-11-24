@@ -104,6 +104,7 @@ describe('a list the engine answers null', () => {
 		['repos', () => workspace.repos('r'), 'getWorkspaceRepos'],
 		['tree', () => workspace.tree('r'), 'getWorkspaceTree'],
 		['path tree', () => workspace.pathTree('r', '/'), 'getWorkspacePathTree'],
+		['terminal sessions', () => workspace.terminals('r'), 'listRunTerminals'],
 		['denials', () => egress.denials('r'), 'listEgressDenials'],
 		['run audit', () => egress.runAudit('r'), 'getRunEgressAudit'],
 		['project audit', () => egress.projectAudit('p'), 'getProjectEgressAudit'],
@@ -402,6 +403,12 @@ describe('what each call sends', () => {
 			() => analytics.scorecards.remove('s'),
 			'deleteScorecard',
 			{ path: { id: 's' } }
+		],
+		[
+			'a terminal session’s closing',
+			() => workspace.closeTerminal('r', 's1'),
+			'closeRunTerminal',
+			{ path: { id: 'r', session: 's1' } }
 		]
 	])('sends %s', async (_, call, name, args) => {
 		const fn = reply(name);
@@ -1487,9 +1494,40 @@ describe('what each call sends', () => {
 			expect(workspace.terminalUrl('r', 80, 24, 'a b')).toContain('repo=a+b');
 		});
 
+		it('asks for a session only when it re-attaches one', () => {
+			expect(workspace.terminalUrl('r', 80, 24, 'lib', 'ab12')).toBe(
+				'ws://localhost:3000/api/runs/r/terminal?cols=80&rows=24&repo=lib&session=ab12'
+			);
+			expect(workspace.terminalUrl('r', 80, 24, 'lib', '')).not.toContain('session');
+		});
+
 		it('speaks wss on a secure page', () => {
 			const page = { protocol: 'https:', host: 'apo.test' };
-			expect(workspace.terminalUrl('r', 1, 1, '', page)).toMatch(/^wss:\/\/apo\.test\//);
+			expect(workspace.terminalUrl('r', 1, 1, '', '', page)).toMatch(/^wss:\/\/apo\.test\//);
+		});
+
+		it('lists the terminal sessions, and says when the workspace predates them', async () => {
+			const fn = reply(
+				'listRunTerminals',
+				answer([
+					{
+						id: 's1',
+						n: 1,
+						repo: '',
+						dir: '/w',
+						started_at: 't',
+						attached: 0,
+						busy: true,
+						command: 'top'
+					}
+				])
+			);
+			await expect(workspace.terminals('r')).resolves.toEqual([
+				expect.objectContaining({ id: 's1', busy: true, command: 'top', startedAt: 't' })
+			]);
+			expect(fn).toHaveBeenCalledWith({ path: { id: 'r' } });
+			reply('listRunTerminals', refused({ error: 'predates' }, 501));
+			await expect(workspace.terminals('r')).rejects.toMatchObject({ status: 501 });
 		});
 	});
 
