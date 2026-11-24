@@ -322,16 +322,34 @@ func TestSidecarTerminalRefusals(t *testing.T) {
 	}
 }
 
-// The replay is the newest termRingSize bytes: older output is gone.
+// The replay is the newest termRingSize bytes: older output is gone. The
+// flood runs with nobody attached: a client reading it live may fall
+// termClientQueue chunks behind on a loaded machine and be dropped, which is
+// publish's design, not what this test is about.
 func TestSidecarTerminalReplayIsBounded(t *testing.T) {
 	t.Setenv("SHELL", "/bin/sh")
 	ts := newTestSidecar(t, t.TempDir())
 	ws := dialWS(t, addr(ts), "/term")
 	h := ws.hello(t)
 	ws.send(wsOpBinary, []byte(fmt.Sprintf("echo OLD-$((1+1)); yes x | head -c %d; echo NEW-$((2+2))\n", 2*termRingSize)))
-	ws.readUntil(t, "NEW-4")
 	ws.c.Close()
 	ts.waitSessions("detached", func(s []termSessionInfo) bool { return len(s) == 1 && s[0].Attached == 0 })
+	// Wait for the end of the flood in the ring itself, so the replay holds
+	// it and nothing of it arrives live after the replay.
+	sess := ts.sc.terms.get(h.ID)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		sess.mu.Lock()
+		done := strings.Contains(string(sess.ring.snapshot()), "NEW-4")
+		sess.mu.Unlock()
+		if done {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the flood never reached the ring")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 
 	again := dialWS(t, addr(ts), "/term?session="+h.ID)
 	again.hello(t)
