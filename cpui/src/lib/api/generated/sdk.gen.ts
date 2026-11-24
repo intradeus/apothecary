@@ -65,6 +65,9 @@ import type {
 	ClearBuildCacheData,
 	ClearBuildCacheErrors,
 	ClearBuildCacheResponses,
+	CloseRunTerminalData,
+	CloseRunTerminalErrors,
+	CloseRunTerminalResponses,
 	CompleteSignInData,
 	CompleteSignInErrors,
 	CompleteSignInResponses,
@@ -488,6 +491,9 @@ import type {
 	ListRunsData,
 	ListRunsErrors,
 	ListRunsResponses,
+	ListRunTerminalsData,
+	ListRunTerminalsErrors,
+	ListRunTerminalsResponses,
 	ListScorecardsData,
 	ListScorecardsErrors,
 	ListScorecardsResponses,
@@ -6423,6 +6429,60 @@ export const getRunSsh = <ThrowOnError extends boolean = false>(
 			}
 		],
 		url: '/api/runs/{id}/ssh',
+		...options
+	});
+
+/**
+ * The workspace's terminal sessions, oldest first
+ *
+ * Each session is a login shell the workspace keeps after its terminal is closed, refreshed or left: the terminal WebSocket attaches to one by ?session= and replays its recent output. The sessions are shared: everyone holding run:shell on the run sees, attaches to and closes the same ones, scrollback included. busy says a program other than the shell runs in a session (a foreground program or a background job), command names it; a busy session keeps the workspace from being stopped when idle, with no time limit. They end with the workspace: stopped when idle, rebuilt or destroyed. Listing wakes a workspace stopped when idle, as opening the terminal does. 501 when the workspace's sidecar predates persistent sessions (restart or rebuild the workspace).
+ */
+export const listRunTerminals = <ThrowOnError extends boolean = false>(
+	options: Options<ListRunTerminalsData, ThrowOnError>
+): RequestResult<ListRunTerminalsResponses, ListRunTerminalsErrors, ThrowOnError> =>
+	(options.client ?? client).get<ListRunTerminalsResponses, ListRunTerminalsErrors, ThrowOnError>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/terminal/sessions',
+		...options
+	});
+
+/**
+ * End one of the workspace's terminal sessions
+ *
+ * Hangs up the session's shell and whatever runs in it; every client attached to it is told the session ended. Sessions are shared, so this ends it for everyone. 404 when it has already ended, 501 when the workspace's sidecar predates persistent sessions.
+ */
+export const closeRunTerminal = <ThrowOnError extends boolean = false>(
+	options: Options<CloseRunTerminalData, ThrowOnError>
+): RequestResult<CloseRunTerminalResponses, CloseRunTerminalErrors, ThrowOnError> =>
+	(options.client ?? client).delete<
+		CloseRunTerminalResponses,
+		CloseRunTerminalErrors,
+		ThrowOnError
+	>({
+		security: [
+			{
+				in: 'cookie',
+				name: 'apothecary_session',
+				type: 'apiKey'
+			},
+			{
+				key: 'personalToken',
+				scheme: 'bearer',
+				type: 'http'
+			}
+		],
+		url: '/api/runs/{id}/terminal/sessions/{session}',
 		...options
 	});
 

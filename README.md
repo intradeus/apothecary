@@ -65,8 +65,9 @@ query. Between the start and the end, it does whatever your flow says.
   batches, and repairs failing CI. It asks first, if you want it to.
 - **Watch and steer live.** The run page is a desk of views: the agent's
   session, its changes, files, terminal, logs, egress, ports, services and
-  vitals. *Take over* to talk to the agent; the *Ask* pane answers questions
-  about the code without touching the run.
+  vitals. Terminal sessions persist across refreshes and keep a busy
+  workspace awake. *Take over* to talk to the agent; the *Ask* pane answers
+  questions about the code without touching the run.
 - **An assistant on every page.** The sparkle at the top right opens it
   over the page: it reads the workshop's repositories, their history and
   the platform, and acts (starting runs, filing tickets, saving flows) only

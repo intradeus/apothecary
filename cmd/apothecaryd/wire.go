@@ -59,6 +59,7 @@ var (
 	_ envcheck.Flows      = (*engine.Engine)(nil)
 	_ engine.EnvTeardown  = (*egress.Service)(nil)
 	_ engine.EnvSleepHook = (*egress.Service)(nil)
+	_ engine.EnvKeepAwake = (*wsinfo.Service)(nil)
 	_ engine.EnvSleepHook = (*runports.Service)(nil)
 	_ engine.EnvTeardown  = (*runports.Service)(nil)
 	_ engine.RunPorts     = (*runports.Service)(nil)
@@ -327,6 +328,7 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 	live := tickets.NewLive(conf, resolver, tickets.WithLog(log))
 	resolver.Live = live
 	ticketFactory := &tickets.Factory{Conf: conf, Attachments: attachments, Sources: resolver, Live: live, Log: log}
+	wsSvc := wsinfo.New(runs, resolver, envSt)
 
 	e := engine.New(engine.Deps{
 		Config:   ecfg,
@@ -364,15 +366,17 @@ func buildApp(ctx context.Context, boot *config.Boot, dev bool, log *slog.Logger
 		// exposures and discovered ports, the browser's exposures, then a
 		// last flush of its egress audit.
 		Teardown: []engine.EnvTeardown{portsSvc, browserSvc, egressSvc},
-		Notices:  notes,
-		Log:      log,
+		// A workspace due to stop on idle stays up while a program runs in
+		// one of its terminals.
+		KeepAwake: wsSvc,
+		Notices:   notes,
+		Log:       log,
 	})
 	// Every connection to an exposed port is use of its run (stop-on-idle).
 	portRelay.Track = e.Use().PortConn
 	// A connection to an exposure kept across a sleep wakes its workspace.
 	portRelay.Wake = func(ctx context.Context, runID string) error { return e.WakeEnv(ctx, runID, engine.WokeByPort) }
 	egressSvc.ActiveRuns = e.ActiveRunIDs
-	wsSvc := wsinfo.New(runs, resolver, envSt)
 	checks := envcheck.NewRegistry(resolver, e, ecfg.EngineURL)
 	askSvc := ask.New(runs, resolver, e, store)
 	askSvc.Log = log

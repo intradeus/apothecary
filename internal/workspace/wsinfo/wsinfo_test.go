@@ -259,6 +259,65 @@ func TestWorkspaceRefusals(t *testing.T) {
 	})
 }
 
+// What runs in a workspace's terminals, as the idle sweep asks it: any busy
+// session keeps it up; a sidecar or provisioner without sessions has none
+// running; a sidecar that cannot be reached is an error.
+func TestTerminalsBusy(t *testing.T) {
+	ctx := context.Background()
+	h := newFixture(t)
+	env := h.addRun(t, "r1", "main")
+	v, err := h.s.Runs.View(ctx, "r1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := func(code int, body string) {
+		h.sidecarServing(t, func(w http.ResponseWriter, r *http.Request) {
+			if r.Method != http.MethodGet || r.URL.Path != "/term/sessions" {
+				t.Errorf("asked %s %s", r.Method, r.URL.Path)
+			}
+			w.WriteHeader(code)
+			_, _ = io.WriteString(w, body)
+		})
+	}
+	for _, c := range []struct {
+		name string
+		code int
+		body string
+		want bool
+	}{
+		{"busy", 200, `[{"id":"a","busy":false},{"id":"b","busy":true,"command":"opencode"}]`, true},
+		{"idle", 200, `[{"id":"a","busy":false}]`, false},
+		{"no sessions", 200, `[]`, false},
+		{"an old sidecar", 404, "404 page not found", false},
+	} {
+		answer(c.code, c.body)
+		if busy, err := h.s.TerminalsBusy(ctx, v, h.res); err != nil || busy != c.want {
+			t.Errorf("%s: busy %v, %v; want %v", c.name, busy, err, c.want)
+		}
+	}
+	if h.envp.askedEnv != env {
+		t.Errorf("asked the sidecar of %q, want %q", h.envp.askedEnv, env)
+	}
+
+	answer(500, `{"error":"boom"}`)
+	if _, err := h.s.TerminalsBusy(ctx, v, h.res); err == nil {
+		t.Error("a failing sidecar is no error")
+	}
+	h.envp.sidecar = portConn{err: errors.New("refused")}
+	if _, err := h.s.TerminalsBusy(ctx, v, h.res); err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Errorf("a sidecar that cannot be dialed: %v", err)
+	}
+	h.envp.sidecarErr = errors.New("no shim")
+	if _, err := h.s.TerminalsBusy(ctx, v, h.res); err == nil || !strings.Contains(err.Error(), "workspace sidecar: no shim") {
+		t.Errorf("a sidecar that will not start: %v", err)
+	}
+	res := *h.res
+	res.Envp = plainEnvp{h.fake}
+	if busy, err := h.s.TerminalsBusy(ctx, v, &res); busy || err != nil {
+		t.Errorf("no sidecar: %v, %v", busy, err)
+	}
+}
+
 func TestLog(t *testing.T) {
 	ctx := context.Background()
 	h := newFixture(t)

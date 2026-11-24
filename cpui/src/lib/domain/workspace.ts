@@ -79,6 +79,26 @@ export interface FileDiff {
 	truncated: boolean;
 }
 
+/** A shell living in the workspace's sidecar: shared by everyone who may
+ *  open a shell on the run, it outlives the page and ends with the shell or
+ *  the workspace. */
+export interface TerminalSession {
+	id: string;
+	/** 1-based, for display. */
+	n: number;
+	/** The checkout it opened in ('' is the primary). */
+	repo: string;
+	/** The checkout's absolute directory. */
+	dir: string;
+	startedAt: string;
+	/** How many views are attached right now. */
+	attached: number;
+	/** A program other than the shell runs in it: it keeps the workspace awake. */
+	busy: boolean;
+	/** What runs in it ('' when only the shell). */
+	command: string;
+}
+
 /** Ephemeral progress of a running agent, pushed alongside the event stream.
  *  Superseded by the persisted agent_message / agent_tool that follows (same
  *  segment / toolCallId). */

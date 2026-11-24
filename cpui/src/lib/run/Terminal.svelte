@@ -1,7 +1,12 @@
 <script lang="ts">
-	// A shell in the run's workspace, in the repo, as the workspace user —
-	// over a WebSocket to the workspace sidecar's PTY. The session lives as
-	// long as this view: leaving the tab ends the shell. Its URLs open on a
+	// One terminal session in the run's workspace, as the workspace user —
+	// over a WebSocket to the workspace sidecar's PTY. The shell lives in the
+	// sidecar, not in this view: with no `session` the workspace opens a new
+	// one in the repo and the first frame names it (onsession); with one, this
+	// view attaches to it and is sent its recent output again. Leaving only
+	// detaches; the shell ends when it exits, is closed, or the workspace
+	// stops (onended). A sidecar that predates sessions names none: the shell
+	// then ends with this view, and the bar says so. Its URLs open on a
 	// click; copy and paste follow terminalKeys, and its bar copies, pastes
 	// and jumps to either end.
 	import { api } from '$lib/api';
@@ -13,10 +18,34 @@
 	import { toast } from '$lib/ui/toast.svelte';
 	import { terminalKey, terminalShortcuts } from './terminalKeys';
 
-	let { runId, repo = '', dir = '' }: { runId: string; repo?: string; dir?: string } = $props();
+	let {
+		runId,
+		repo = '',
+		dir = '',
+		session = '',
+		legacy = false,
+		onsession,
+		onended
+	}: {
+		runId: string;
+		repo?: string;
+		dir?: string;
+		/** The session to attach to; '' opens a new one. */
+		session?: string;
+		/** Known in advance to predate sessions (the list answered 501). */
+		legacy?: boolean;
+		/** The workspace named the session this view shows. */
+		onsession?: (id: string) => void;
+		/** The session's shell ended, or the session is gone. */
+		onended?: () => void;
+	} = $props();
 
 	let host = $state<HTMLDivElement | null>(null);
-	let status = $state<'connecting' | 'open' | 'closed'>('connecting');
+	let status = $state<'connecting' | 'open' | 'closed' | 'ended'>('connecting');
+	/** null until the workspace says: a session frame (true) or plain output (false). */
+	let persistent = $state<boolean | null>(null);
+	/** The session a create learned, so Reconnect attaches to it, not a new one. */
+	let learned = '';
 	let generation = $state(0); // bump to reconnect
 	/** The terminal on screen, for the bar's buttons. */
 	let current: XTerm | null = null;
@@ -120,21 +149,50 @@
 
 			let ws: WebSocket | null = null;
 			const enc = new TextEncoder();
+			const end = () => {
+				status = 'ended';
+				onended?.();
+			};
 			const connect = () => {
 				status = 'connecting';
-				ws = new WebSocket(api.workspace.terminalUrl(runId, term.cols, term.rows, repo));
+				const asked = learned || session;
+				let opened = false;
+				ws = new WebSocket(api.workspace.terminalUrl(runId, term.cols, term.rows, repo, asked));
 				ws.binaryType = 'arraybuffer';
 				ws.onopen = () => {
+					opened = true;
 					status = 'open';
 					term.focus();
 				};
 				ws.onmessage = (m) => {
 					if (disposed) return;
+					if (typeof m.data === 'string' && m.data.startsWith('{"type":')) {
+						const frame = JSON.parse(m.data) as { type: string; id?: string };
+						if (frame.type === 'session' && frame.id) {
+							// The replay follows: start it on a clean screen.
+							term.reset();
+							persistent = true;
+							learned = frame.id;
+							onsession?.(frame.id);
+							return;
+						}
+						if (frame.type === 'exit') {
+							term.write(`\r\n\x1b[90m[${t('run.terminal.sessionEnded')}]\x1b[0m\r\n`);
+							end();
+							return;
+						}
+					}
+					persistent ??= false;
 					if (m.data instanceof ArrayBuffer) term.write(new Uint8Array(m.data));
 					else term.write(String(m.data));
 				};
 				ws.onclose = () => {
-					if (disposed) return; // this pair is gone, and maybe replaced
+					if (disposed || status === 'ended') return; // this pair is gone, or its shell
+					// Refused before the upgrade: the session asked for is gone.
+					if (!opened && asked) {
+						end();
+						return;
+					}
 					status = 'closed';
 					term.write(`\r\n\x1b[90m[${t('run.terminal.sessionClosed')}]\x1b[0m\r\n`);
 				};
@@ -176,7 +234,9 @@
 				? t('run.terminal.connected')
 				: status === 'connecting'
 					? t('run.terminal.connecting')
-					: t('run.terminal.disconnected')}{#if dir}&nbsp;· <span class="mono">~/{dir}</span
+					: status === 'ended'
+						? t('run.terminal.sessionEnded')
+						: t('run.terminal.disconnected')}{#if dir}&nbsp;· <span class="mono">~/{dir}</span
 				>{/if}</span
 		>
 		{#if status === 'closed'}
@@ -184,7 +244,11 @@
 				>{I.retry} {t('run.terminal.reconnect')}</button
 			>
 		{/if}
-		<span class="hint">{t('run.terminal.hint')}</span>
+		{#if legacy || persistent === false}
+			<span class="hint">{t('run.terminal.notPersistent')}</span>
+		{:else if persistent}
+			<span class="hint">{t('run.terminal.hint')}</span>
+		{/if}
 		<button
 			class="btn-term btn-sm"
 			disabled={!selected}
@@ -248,6 +312,10 @@
 	}
 	.live-dot.closed {
 		color: var(--term-red);
+		box-shadow: none;
+	}
+	.live-dot.ended {
+		color: var(--term-faint);
 		box-shadow: none;
 	}
 	.term {

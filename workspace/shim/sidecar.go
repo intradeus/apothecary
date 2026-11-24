@@ -22,7 +22,9 @@ package main
 //	GET  /fs/resolve      where a mentioned path lives (?path=&repo=)
 //	GET  /git/changes     the run's changes against ?base= (merge-base)
 //	GET  /git/diff        one file's unified diff (?base=&path=)
-//	GET  /term            WebSocket terminal (PTY) in the repo
+//	GET  /term            WebSocket terminal (PTY): a new session in ?repo=, or ?session= re-attached
+//	GET  /term/sessions   the live terminal sessions, each with what runs in it
+//	DELETE /term/sessions/{id}  end a terminal session
 //	GET  /services        every service's state (shim service status)
 //	GET  /services/{name}/log  the last ?tail= lines of its output
 //
@@ -38,10 +40,10 @@ package main
 //
 // The agent process lives as long as the sidecar does, which is as long as
 // the container: an engine restart neither kills a turn in flight nor loses
-// its events.
+// its events. So do the terminal sessions: a page refresh or an engine
+// restart only detaches them.
 
 import (
-	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"errors"
@@ -78,6 +80,9 @@ type sidecar struct {
 	// confinedOnly refuses an agent start with no confine rules: in the
 	// assistant pod every process the agent host starts is a session's.
 	confinedOnly bool
+	// terms is the terminal sessions (termsession.go): they outlive the
+	// WebSocket that opened them.
+	terms *termRegistry
 }
 
 // agentHostTokenHeader carries the agent host's token.
@@ -177,7 +182,7 @@ func runSidecar(args []string) {
 		}
 	}
 	evl := newEventLog()
-	s := &sidecar{repo: *repo, repos: *repos, log: evl, agent: newAgentHost(evl), writeRoot: *writeRoot, confinedOnly: *confinedOnly}
+	s := &sidecar{repo: *repo, repos: *repos, log: evl, agent: newAgentHost(evl), writeRoot: *writeRoot, confinedOnly: *confinedOnly, terms: newTermRegistry()}
 	if *tokenFile != "" {
 		b, err := os.ReadFile(*tokenFile)
 		if err != nil || strings.TrimSpace(string(b)) == "" {
@@ -289,6 +294,8 @@ func (s *sidecar) routes() http.Handler {
 	mux.HandleFunc("GET /git/changes", s.gitChanges)
 	mux.HandleFunc("GET /git/diff", s.gitDiff)
 	mux.HandleFunc("GET /term", s.terminal)
+	mux.HandleFunc("GET /term/sessions", s.termSessions)
+	mux.HandleFunc("DELETE /term/sessions/{id}", s.termClose)
 	mux.HandleFunc("GET /services", serveServiceStatus)
 	mux.HandleFunc("GET /services/{name}/log", serveServiceLog)
 	return mux
@@ -570,57 +577,76 @@ func (s *sidecar) gitDiff(w http.ResponseWriter, r *http.Request) {
 	writeJSONResp(w, 200, d)
 }
 
-// terminal runs an interactive shell in the repo on a PTY, over a WebSocket.
-// Binary frames carry terminal bytes both ways; a text frame from the client
-// is a control message: {"type":"resize","cols":N,"rows":N}.
+// terminal attaches a WebSocket to a terminal session (termsession.go):
+// ?session=<id> one that lives (404 before the upgrade when it does not),
+// none a new login shell in the checkout ?repo= names (409 before the
+// upgrade at termMaxSessions). Binary frames carry terminal bytes both ways;
+// a text frame from the client is a control message:
+// {"type":"resize","cols":N,"rows":N} — any client's applies, the last one
+// wins. The server's text frames, in order: {"type":"session","id","n",
+// "created"} first, then the session's recent output as binary frames, then
+// live output; {"type":"exit"} and a close when the shell ends. The
+// client's close only detaches: the shell runs on.
 func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
-	root, err := s.root(r)
-	if err != nil {
-		writeFSErr(w, err)
-		return
+	q := r.URL.Query()
+	cols, _ := strconv.Atoi(q.Get("cols"))
+	rows, _ := strconv.Atoi(q.Get("rows"))
+	var sess *termSession
+	created := false
+	if id := q.Get("session"); id != "" {
+		if sess = s.terms.get(id); sess == nil {
+			writeErrResp(w, http.StatusNotFound, "no such terminal session")
+			return
+		}
+	} else {
+		root, err := s.root(r)
+		if err != nil {
+			writeFSErr(w, err)
+			return
+		}
+		repo := q.Get("repo")
+		if repo == "repo" {
+			repo = ""
+		}
+		sess, err = s.terms.create(repo, root, cols, rows)
+		if errors.Is(err, errTermCap) {
+			writeErrResp(w, http.StatusConflict, err.Error())
+			return
+		}
+		if err != nil {
+			if ws, aerr := wsAccept(w, r); aerr == nil {
+				_ = ws.write(wsOpBinary, []byte("\r\nterminal unavailable: "+err.Error()+"\r\n"))
+				_ = ws.close()
+			}
+			return
+		}
+		created = true
 	}
-	cols, _ := strconv.Atoi(r.URL.Query().Get("cols"))
-	rows, _ := strconv.Atoi(r.URL.Query().Get("rows"))
-	shell := shellPath()
 	ws, err := wsAccept(w, r)
 	if err != nil {
+		if created {
+			sess.kill() // nobody will ever attach to it
+		}
 		return
 	}
 	defer ws.close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, shell, "-l")
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGHUP) }
-	master, err := startPTY(cmd, cols, rows)
+	c, replay, err := sess.attach(func() { _ = ws.c.Close() })
 	if err != nil {
-		_ = ws.write(wsOpBinary, []byte("\r\nterminal unavailable: "+err.Error()+"\r\n"))
+		_ = ws.write(wsOpText, []byte(`{"type":"exit"}`))
 		return
 	}
-	defer master.Close()
-	go func() {
-		_ = cmd.Wait()
-		_ = master.Close()
-		cancel()
-	}()
-	go func() {
-		buf := make([]byte, 32<<10)
-		for {
-			n, err := master.Read(buf)
-			if n > 0 {
-				if werr := ws.write(wsOpBinary, buf[:n]); werr != nil {
-					cancel()
-					return
-				}
-			}
-			if err != nil {
-				cancel()
-				_ = ws.c.Close()
-				return
-			}
-		}
-	}()
+	defer sess.detach(c)
+	if !created {
+		_ = resizePTY(sess.master, cols, rows)
+		sess.redraw()
+	}
+	hello, _ := json.Marshal(struct {
+		Type    string `json:"type"`
+		ID      string `json:"id"`
+		N       int    `json:"n"`
+		Created bool   `json:"created"`
+	}{"session", sess.id, sess.n, created})
+	go pumpTerminal(ws, c, hello, replay)
 	for {
 		op, data, err := ws.read()
 		if err != nil {
@@ -633,17 +659,62 @@ func (s *sidecar) terminal(w http.ResponseWriter, r *http.Request) {
 				Rows int    `json:"rows"`
 			}
 			if json.Unmarshal(data, &ctl) == nil && ctl.Type == "resize" {
-				_ = resizePTY(master, ctl.Cols, ctl.Rows)
+				_ = resizePTY(sess.master, ctl.Cols, ctl.Rows)
 				continue
 			}
 			if strings.HasPrefix(string(data), "{") {
 				continue // an unknown control message is not keystrokes
 			}
 		}
-		if _, err := master.Write(data); err != nil {
+		if _, err := sess.master.Write(data); err != nil {
 			return
 		}
 	}
+}
+
+// pumpTerminal writes a client's side of the stream: the session frame, the
+// replay, then live output until its queue closes — with {"type":"exit"}
+// and a close when the session ended, a bare disconnect when the client
+// fell too far behind. A write that fails disconnects too, which ends the
+// handler's read loop.
+func pumpTerminal(ws *wsConn, c *termClient, hello, replay []byte) {
+	defer ws.c.Close()
+	if ws.write(wsOpText, hello) != nil {
+		return
+	}
+	for len(replay) > 0 {
+		n := min(len(replay), 32<<10)
+		if ws.write(wsOpBinary, replay[:n]) != nil {
+			return
+		}
+		replay = replay[n:]
+	}
+	for chunk := range c.out {
+		if ws.write(wsOpBinary, chunk) != nil {
+			return
+		}
+	}
+	if c.ended {
+		_ = ws.write(wsOpText, []byte(`{"type":"exit"}`))
+		_ = ws.write(wsOpClose, []byte{0x03, 0xe8})
+	}
+}
+
+// termSessions lists the terminal sessions, oldest first, with what runs in
+// each.
+func (s *sidecar) termSessions(w http.ResponseWriter, r *http.Request) {
+	writeJSONResp(w, 200, s.terms.list())
+}
+
+// termClose ends a terminal session.
+func (s *sidecar) termClose(w http.ResponseWriter, r *http.Request) {
+	sess := s.terms.get(r.PathValue("id"))
+	if sess == nil {
+		writeErrResp(w, http.StatusNotFound, "no such terminal session")
+		return
+	}
+	sess.kill()
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // writeReq is a file the engine lays down for a session: its harness's

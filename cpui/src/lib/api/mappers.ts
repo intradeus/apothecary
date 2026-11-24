@@ -169,6 +169,7 @@ import type {
 	TrackerStatusList,
 	TrackerType,
 	UploadLimits,
+	TerminalSession,
 	WorkspaceChanges,
 	WorkspaceEntry,
 	WorkspaceFile,
@@ -1630,6 +1631,19 @@ export function toWorkspaceChanges(w: Wire.WorkspaceChanges): WorkspaceChanges {
 
 export function toFileDiff(w: Wire.WorkspaceDiff): FileDiff {
 	return { path: w.path, diff: w.diff, truncated: w.truncated };
+}
+
+export function toTerminalSession(w: Wire.TerminalSession): TerminalSession {
+	return {
+		id: w.id,
+		n: w.n,
+		repo: w.repo,
+		dir: w.dir,
+		startedAt: w.started_at,
+		attached: w.attached,
+		busy: w.busy,
+		command: w.command ?? ''
+	};
 }
 
 /** The agent_tool event payload (and a live delta's tool) — open JSON from the

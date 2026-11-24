@@ -15,3 +15,7 @@ func startPTY(cmd *exec.Cmd, cols, rows int) (*os.File, error) {
 }
 
 func resizePTY(master *os.File, cols, rows int) error { return nil }
+
+func ptyForeground(master *os.File) (int, error) {
+	return 0, errors.New("terminals are only supported on linux")
+}

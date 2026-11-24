@@ -185,6 +185,13 @@ func fakeSidecar(t *testing.T, seen *[]string) *httptest.Server {
 			}
 		case r.URL.Path == "/term":
 			_, _ = io.WriteString(w, "terminal for "+q.Get("repo"))
+		case r.Method == http.MethodGet && r.URL.Path == "/term/sessions":
+			_, _ = io.WriteString(w, `[{"id":"a1","n":1,"repo":"","dir":"/home/u/repo","started_at":"2026-11-24T10:00:00Z","attached":0,"busy":true,"command":"opencode"}]`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/term/sessions/gone":
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such terminal session"})
+		case r.Method == http.MethodDelete && strings.HasPrefix(r.URL.Path, "/term/sessions/"):
+			w.WriteHeader(http.StatusNoContent)
 		default:
 			http.NotFound(w, r)
 		}
@@ -252,6 +259,58 @@ func TestWorkspaceViewsThroughTheSidecar(t *testing.T) {
 	res, body = x.do(t, "GET", base+"/terminal", nil, map[string]string{"Origin": x.ts.URL})
 	if res.StatusCode != http.StatusOK || string(body) != "terminal for repo" {
 		t.Errorf("terminal = %d %s", res.StatusCode, body)
+	}
+}
+
+// The terminal sessions are the sidecar's: listed with what runs in each,
+// closed by id, an ended one still a 404, an old sidecar's missing routes a
+// 501 that says to restart the workspace.
+func TestTerminalSessionsThroughTheSidecar(t *testing.T) {
+	x := newEnv(t, engine.Config{})
+	var seen []string
+	side := fakeSidecar(t, &seen)
+	x.res.Envp = &workspaceEnv{EnvProvisioner: x.envp, sidecarAddr: strings.TrimPrefix(side.URL, "http://")}
+	x.seedLiveRun(t, "r1")
+	base := "/api/runs/r1/terminal/sessions"
+
+	res, body := x.do(t, "GET", base, nil, nil)
+	got := decode[[]sidecar.TerminalSession](t, body)
+	if res.StatusCode != http.StatusOK || len(got) != 1 || got[0].ID != "a1" || !got[0].Busy || got[0].Command != "opencode" || got[0].Dir != "/home/u/repo" {
+		t.Errorf("list = %d %s", res.StatusCode, body)
+	}
+	if res, body := x.do(t, "DELETE", base+"/a1", nil, nil); res.StatusCode != http.StatusNoContent {
+		t.Errorf("close = %d %s", res.StatusCode, body)
+	}
+	if last := seen[len(seen)-1]; last != "/term/sessions/a1?" {
+		t.Errorf("the sidecar was asked %q", last)
+	}
+	if res, body := x.do(t, "DELETE", base+"/gone", nil, nil); res.StatusCode != http.StatusNotFound || !strings.Contains(string(body), "no such terminal session") {
+		t.Errorf("an ended session = %d %s", res.StatusCode, body)
+	}
+
+	old := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(old.Close)
+	x.res.Envp = &workspaceEnv{EnvProvisioner: x.envp, sidecarAddr: strings.TrimPrefix(old.URL, "http://")}
+	for _, method := range []string{"GET", "DELETE"} {
+		path := base
+		if method == "DELETE" {
+			path += "/a1"
+		}
+		res, body := x.do(t, method, path, nil, nil)
+		if res.StatusCode != http.StatusNotImplemented || !strings.Contains(string(body), "restart or rebuild the workspace") {
+			t.Errorf("%s on an old sidecar = %d %s", method, res.StatusCode, body)
+		}
+	}
+
+	// A run with no workspace yet has no terminals to list.
+	if _, err := x.store.Append(context.Background(), "r2", &event.RunCreated{ProjectID: testProject, UserID: testUser, FlowName: "loop"}); err != nil {
+		t.Fatal(err)
+	}
+	if res, body := x.do(t, "GET", "/api/runs/r2/terminal/sessions", nil, nil); res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("no workspace = %d %s", res.StatusCode, body)
+	}
+	if res, body := x.do(t, "DELETE", "/api/runs/r2/terminal/sessions/a1", nil, nil); res.StatusCode != http.StatusServiceUnavailable {
+		t.Errorf("no workspace close = %d %s", res.StatusCode, body)
 	}
 }
 

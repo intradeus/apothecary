@@ -2167,6 +2167,17 @@ export type TakeOverRequest = {
 	force?: boolean | null;
 };
 
+export type TerminalSession = {
+	attached: number;
+	busy: boolean;
+	command?: string;
+	dir: string;
+	id: string;
+	n: number;
+	repo: string;
+	started_at: string;
+};
+
 export type TestResult = {
 	error?: string;
 	ok: boolean;
@@ -11773,6 +11784,93 @@ export type GetRunSshResponses = {
 };
 
 export type GetRunSshResponse = GetRunSshResponses[keyof GetRunSshResponses];
+
+export type ListRunTerminalsData = {
+	body?: never;
+	path: {
+		id: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/terminal/sessions';
+};
+
+export type ListRunTerminalsErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type ListRunTerminalsResponses = {
+	/**
+	 * OK
+	 */
+	200: Array<TerminalSession> | null;
+};
+
+export type ListRunTerminalsResponse = ListRunTerminalsResponses[keyof ListRunTerminalsResponses];
+
+export type CloseRunTerminalData = {
+	body?: never;
+	path: {
+		id: string;
+		session: string;
+	};
+	query?: never;
+	url: '/api/runs/{id}/terminal/sessions/{session}';
+};
+
+export type CloseRunTerminalErrors = {
+	/**
+	 * error
+	 */
+	400: unknown;
+	/**
+	 * error
+	 */
+	401: unknown;
+	/**
+	 * error
+	 */
+	403: unknown;
+	/**
+	 * error
+	 */
+	404: unknown;
+	/**
+	 * error
+	 */
+	409: unknown;
+	/**
+	 * error
+	 */
+	503: unknown;
+};
+
+export type CloseRunTerminalResponses = {
+	/**
+	 * No Content
+	 */
+	204: void;
+};
+
+export type CloseRunTerminalResponse = CloseRunTerminalResponses[keyof CloseRunTerminalResponses];
 
 export type WaitRunData = {
 	body?: never;

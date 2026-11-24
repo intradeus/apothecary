@@ -21,7 +21,10 @@ import (
 // processes go. The next use wakes it — a stage (ensureEnv), or a person
 // opening a terminal, the editor, an exposed port, an SSH session or the
 // Files view (UseEnv). Only runs without a live loop sleep: a loop ensures
-// its workspace once and its stages expect it there.
+// its workspace once and its stages expect it there. What runs inside the
+// workspace is asked last (EnvKeepAwake): a terminal session running a
+// program — an agent's TUI left working, a build — is a use, though no
+// page holds the workspace.
 //
 // A sweep and a use meet through two claims, taken in opposite orders: the
 // sweep claims the "sleeping" op, then looks at the run's use and its loop
@@ -61,6 +64,15 @@ func (e *Engine) UseEnv(ctx context.Context, runID, by string) (release func(), 
 // stopped, and the wake brings back what it kept.
 type EnvSleepHook interface {
 	Slept(runID string)
+}
+
+// EnvKeepAwake looks inside a workspace that is due to stop for a use the
+// engine cannot see from outside: a terminal session with a program running
+// in it (wsinfo.Service). It is asked only for a run already due and able
+// to sleep. Busy counts as a use (Touch), so the next look is an idle period
+// away; an error is not busy: a broken probe must never pin a workspace up.
+type EnvKeepAwake interface {
+	TerminalsBusy(ctx context.Context, v run.View, res *resolution.Resolution) (bool, error)
 }
 
 // idleFloor is the shortest idle period: below it a run is not even
@@ -107,18 +119,35 @@ func (e *Engine) SleepIdle(ctx context.Context) []string {
 		// runtime) is passed over quietly: an instance-wide idle default
 		// reaches it too, and a warning every sweep would say nothing new.
 		if sleeper, err := canSleep(res); err == nil && idle.Due(c, idleFor) {
-			switch err := e.sleepEnv(ctx, v, sleeper, c.After); {
-			case err == nil:
-				slept = append(slept, runID)
-			case errors.Is(err, errStillInUse):
-				// Used, or its loop started, since the sweep looked: not idle.
-			default:
-				e.log.WarnContext(ctx, "stopping an idle workspace failed", logs.RunID, runID, "err", err)
+			if e.keptAwake(ctx, v, res) {
+				e.use.Touch(runID)
+			} else {
+				switch err := e.sleepEnv(ctx, v, sleeper, c.After); {
+				case err == nil:
+					slept = append(slept, runID)
+				case errors.Is(err, errStillInUse):
+					// Used, or its loop started, since the sweep looked: not idle.
+				default:
+					e.log.WarnContext(ctx, "stopping an idle workspace failed", logs.RunID, runID, "err", err)
+				}
 			}
 		}
 		res.Close()
 	}
 	return slept
+}
+
+// keptAwake asks EnvKeepAwake whether the run's workspace is busy inside.
+func (e *Engine) keptAwake(ctx context.Context, v run.View, res *resolution.Resolution) bool {
+	if e.keepAwake == nil {
+		return false
+	}
+	busy, err := e.keepAwake.TerminalsBusy(ctx, v, res)
+	if err != nil {
+		e.log.WarnContext(ctx, "asking an idle workspace's terminals what runs in them failed; stopping it", logs.RunID, v.RunID, "err", err)
+		return false
+	}
+	return busy
 }
 
 func (e *Engine) loopLive(runID string) bool {

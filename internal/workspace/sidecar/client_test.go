@@ -561,13 +561,14 @@ func TestServiceLog(t *testing.T) {
 	}
 }
 
-// The proxy keeps the browser's query, pins repo to the caller's choice (never
-// the browser's), and always lands on /term.
+// The proxy keeps the browser's query (a session to attach to among it),
+// pins repo to the caller's choice (never the browser's), and always lands
+// on /term.
 func TestTerminalProxyRewrites(t *testing.T) {
 	var got *http.Request
 	c := serve(t, func(_ http.ResponseWriter, r *http.Request) { got = r })
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest("GET", "/api/runs/r1/terminal?cols=80&repo=evil", nil)
+	req := httptest.NewRequest("GET", "/api/runs/r1/terminal?cols=80&repo=evil&session=0123456789abcdef", nil)
 	c.TerminalProxy("lib").ServeHTTP(rec, req)
 	if got == nil {
 		t.Fatal("the sidecar saw nothing")
@@ -575,8 +576,43 @@ func TestTerminalProxyRewrites(t *testing.T) {
 	if got.URL.Path != "/term" || got.Host != "sidecar" {
 		t.Errorf("forwarded to %s (host %s)", got.URL.Path, got.Host)
 	}
-	if got.URL.Query().Get("repo") != "lib" || got.URL.Query().Get("cols") != "80" {
-		t.Errorf("query = %v", got.URL.Query())
+	q := got.URL.Query()
+	if q.Get("repo") != "lib" || q.Get("cols") != "80" || q.Get("session") != "0123456789abcdef" {
+		t.Errorf("query = %v", q)
+	}
+}
+
+func TestTerminalSessions(t *testing.T) {
+	ctx := context.Background()
+	c, rec := recording(t, `[{"id":"a1","n":1,"repo":"","dir":"/home/u/repo","started_at":"2026-11-24T10:00:00Z","attached":2,"busy":true,"command":"opencode"},{"id":"b2","n":2,"repo":"lib","dir":"/home/u/repos/lib","started_at":"2026-11-24T11:00:00Z","attached":0,"busy":false}]`)
+	got, err := c.TerminalSessions(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec.method != "GET" || rec.path != "/term/sessions" {
+		t.Errorf("request = %s %s", rec.method, rec.path)
+	}
+	want := TerminalSession{ID: "a1", N: 1, Dir: "/home/u/repo", StartedAt: time.Date(2026, 11, 24, 10, 0, 0, 0, time.UTC), Attached: 2, Busy: true, Command: "opencode"}
+	if len(got) != 2 || got[0] != want || got[1].Repo != "lib" || got[1].Busy || got[1].Command != "" {
+		t.Errorf("sessions = %+v", got)
+	}
+
+	if err := c.CloseTerminalSession(ctx, "a1"); err != nil || rec.method != "DELETE" || rec.path != "/term/sessions/a1" {
+		t.Errorf("close = %v: %s %s", err, rec.method, rec.path)
+	}
+
+	// A sidecar from before sessions has no such route: a plain 404.
+	old := serve(t, func(w http.ResponseWriter, _ *http.Request) { http.NotFound(w, nil) })
+	if _, err := old.TerminalSessions(ctx); !IsNoRoute(err) {
+		t.Errorf("an old sidecar's list = %v, want no route", err)
+	}
+	// One that has the route but not the session says so in its JSON.
+	gone := serve(t, func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":"no such terminal session"}`)
+	})
+	if err := gone.CloseTerminalSession(ctx, "zz"); !IsStatus(err, http.StatusNotFound) || IsNoRoute(err) {
+		t.Errorf("an ended session's close = %v", err)
 	}
 }
 

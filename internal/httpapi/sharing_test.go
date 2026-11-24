@@ -131,6 +131,8 @@ func TestSharedWorkshop(t *testing.T) {
 			{"PUT", projPath + "/secrets/token", "project:secrets"},
 			{"POST", projPath + "/tickets", "ticket:write"},
 			{"GET", runPath + "/terminal", "run:shell"},
+			{"GET", runPath + "/terminal/sessions", "run:shell"},
+			{"DELETE", runPath + "/terminal/sessions/a1", "run:shell"},
 			{"POST", projPath + "/members", "project:members"},
 			{"POST", "/api/flow-templates/builder/copy", "project:author"},
 		} {
@@ -142,6 +144,8 @@ func TestSharedWorkshop(t *testing.T) {
 
 	t.Run("an operator runs, no shell, no settings", func(t *testing.T) {
 		x.expect(t, "operator", sameOrigin(operator), "GET", runPath+"/terminal", nil, 403)
+		x.expect(t, "operator", operator, "GET", runPath+"/terminal/sessions", nil, 403)
+		x.expect(t, "operator", operator, "DELETE", runPath+"/terminal/sessions/a1", nil, 403)
 		x.expect(t, "operator", operator, "PUT", projPath+"/secrets/token", ProjectSecretRequest{Value: "x"}, 403)
 		x.expect(t, "operator", operator, "POST", pingPath+"/answer", AnswerPingRequest{Answer: "accept", Content: map[string]any{"answer": "postgres"}}, 200)
 	})
@@ -149,6 +153,8 @@ func TestSharedWorkshop(t *testing.T) {
 	t.Run("a maintainer shells, configures and shares, but the workshop stays the owner's", func(t *testing.T) {
 		// Past the guard to the workspace, which the fake cannot host.
 		x.expect(t, "maintainer", sameOrigin(maintainer), "GET", runPath+"/terminal", nil, http.StatusServiceUnavailable)
+		x.expect(t, "maintainer", maintainer, "GET", runPath+"/terminal/sessions", nil, http.StatusServiceUnavailable)
+		x.expect(t, "maintainer", maintainer, "DELETE", runPath+"/terminal/sessions/a1", nil, http.StatusServiceUnavailable)
 		x.expect(t, "maintainer", maintainer, "PUT", projPath+"/secrets/token", ProjectSecretRequest{Value: "x"}, 200)
 		x.expect(t, "maintainer", maintainer, "POST", projPath+"/members", MemberRequest{Login: "newbie", Role: "viewer"}, 201)
 		x.expect(t, "maintainer", maintainer, "DELETE", projPath, nil, 403)
@@ -164,6 +170,8 @@ func TestSharedWorkshop(t *testing.T) {
 			t.Errorf("a stranger's runs = %v", got)
 		}
 		x.expect(t, "stranger", stranger, "POST", runPath+"/abort", nil, 404)
+		x.expect(t, "stranger", stranger, "GET", runPath+"/terminal/sessions", nil, 404)
+		x.expect(t, "stranger", stranger, "DELETE", runPath+"/terminal/sessions/a1", nil, 404)
 	})
 
 	t.Run("taken off the workshop, gone the next request", func(t *testing.T) {
@@ -416,6 +424,8 @@ func TestDemotedOwnerKeepsNothing(t *testing.T) {
 		{"GET", runPath},
 		{"POST", runPath + "/abort"},
 		{"GET", runPath + "/terminal"},
+		{"GET", runPath + "/terminal/sessions"},
+		{"DELETE", runPath + "/terminal/sessions/a1"},
 	} {
 		x.expect(t, "guest", sameOrigin, c.method, c.path, map[string]any{"name": "x", "value": "x"}, 404)
 	}
