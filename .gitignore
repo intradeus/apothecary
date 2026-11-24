@@ -6,6 +6,8 @@ deploy/.k3d-kubeconfig
 deploy/.k3d-master-key
 # the Kata rig's kubeconfig (deploy/kata/rig.sh)
 deploy/.kata-kubeconfig
+# the sysbox rig's kubeconfig (deploy/sysbox/rig.sh)
+deploy/.sysbox-kubeconfig
 
 # --- Go --------------------------------------------------------------------
 # locally built binaries go to build/ (`task build`; the image builds its own).

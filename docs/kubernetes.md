@@ -357,7 +357,7 @@ task k8s:cluster    # a k3d cluster + image registry; never touches ~/.kube/conf
 task k8s:images     # build the six images from the working tree, push as :local
 task k8s:deploy     # helm install with charts/apothecary/ci/k3d-values.yaml
 # → http://apothecary.localhost:8090
-task k8s:test-live  # the provisioner's and the browser's live tests against the cluster
+task k8s:test-live  # the k8s suite and the privileged sandboxes' against the cluster
 task k8s:down
 ```
 

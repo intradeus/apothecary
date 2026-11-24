@@ -52,8 +52,12 @@ starting over. `--help` lists the options.
      (`/etc/sysctl.d/60-apothecary-userns.conf`).
      `--keep-userns-restriction` leaves it in place.
 3. **sysbox.** Installs the `sysbox-ce` package from sysbox's GitHub
-   releases (default 0.7.0, `--sysbox-version`, or `SYSBOX_DEB_URL` for
-   another `.deb`), and checks the service runs. sysbox runs each sandbox
+   releases and checks the service runs. The version and each `.deb`'s
+   sha256 are pinned in `deploy/sysbox/sysbox.env`, which CI's sysbox suite
+   runs on too; the download is checked against the pin. Another version
+   (`--sysbox-version`, 0.7.1 or later: 0.7.0 cannot run on containerd 2
+   with kernel 6.8+) or another `.deb` (`SYSBOX_DEB_URL`) needs its sha256
+   in `SYSBOX_DEB_SHA256`. sysbox runs each sandbox
    unprivileged, in a user namespace, while still nesting a docker daemon.
    First it writes `/etc/needrestart/conf.d/apothecary.conf`, so that
    Ubuntu's `needrestart` never restarts sysbox, containerd or k3s after an

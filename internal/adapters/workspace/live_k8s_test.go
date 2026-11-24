@@ -2,9 +2,12 @@
 
 package workspace
 
-// Live test of the Kubernetes host against a real cluster (k3d locally:
-// task sandbox:test:k8s, or task k8s:cluster k8s:images k8s:test-live to
-// keep the cluster). It needs:
+// Live tests of the Kubernetes host against a real cluster. Two suites:
+// TestLiveK8s* is the provisioner as a cluster integration, any runtime
+// (task sandbox:test:k8s); TestLiveSandbox* is a workspace sandbox's whole
+// life under one runtime (task sandbox:test:privileged on k3d,
+// sandbox:test:sysbox and sandbox:test:kata on their rigs). task sandbox:k3d:up then
+// k8s:test-live keeps the k3d cluster between runs. It needs:
 //
 //   - APOTHECARY_LIVE_KUBECONFIG: a kubeconfig for a THROWAWAY cluster. The
 //     test creates and deletes its own namespace; it never uses kubectl's
@@ -19,7 +22,8 @@ package workspace
 //   - APOTHECARY_LIVE_WG_USERSPACE=1 to run each sandbox's tunnel as
 //     wireguard-go (the Kata guest's path) on a kernel with the module.
 //   - APOTHECARY_LIVE_RUNTIME (default privileged): the sandboxes' runtime.
-//     kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
+//     sysbox needs a cluster with sysbox (task sandbox:test:sysbox,
+//     deploy/sysbox). kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
 //     its sandboxes are sized, on emptyDir disks, and tunnel through
 //     wireguard-go (the stock guest kernel has no WireGuard).
 //   - APOTHECARY_LIVE_VM_STORAGE_CLASS: a class of raw block volumes for a
@@ -153,7 +157,7 @@ spec:
   ports: [{port: 9418, targetPort: 9418}]
 `
 
-func TestLiveK8sLifecycle(t *testing.T) {
+func TestLiveSandboxLifecycle(t *testing.T) {
 	c, ns := liveKube(t)
 	prefix := os.Getenv("APOTHECARY_LIVE_IMAGE_PREFIX")
 	if prefix == "" {
@@ -500,7 +504,7 @@ func TestLiveK8sLifecycle(t *testing.T) {
 }
 
 // liveNestedKubernetes is what this repository's own sandbox suites ask of
-// a sandbox (task sandbox:test:k8s inside it): a Kubernetes node on the
+// a sandbox (task sandbox:test:k3d inside it): a Kubernetes node on the
 // sandbox's docker daemon, and on it a pod with a user namespace of its own
 // (hostUsers: false, the assistant pod's shape), mapped wherever the nested
 // kubelet picks in the 32-bit id space. Under sysbox that pod cannot start

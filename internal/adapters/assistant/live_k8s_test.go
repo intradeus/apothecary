@@ -70,7 +70,7 @@ func TestLiveK8sAssistantPod(t *testing.T) {
 	if ok, why := userNamespaces(ctx, t, c, prefix+"/egress-gw:local", pull); !ok {
 		livetest.Skip(t, "this cluster cannot make a pod's user namespace, and the assistant pod has one (hostUsers: false): %s. "+
 			"A k3d cluster on a docker daemon that is itself in a user namespace (a sysbox workspace) cannot: "+
-			"see docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md. CI's sandbox-test (k8s) runs this test", why)
+			"see docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md. CI's sandbox-test (k3d) runs this test", why)
 	}
 
 	repo := assistantport.Repo{Workshop: "01LIVEWORKSHOP", WorkshopName: "live", Name: "hello", URL: liveRepoURL}
