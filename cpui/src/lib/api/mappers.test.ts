@@ -2104,6 +2104,32 @@ describe('the workspace', () => {
 			truncated: false
 		});
 	});
+
+	it('reads a terminal session, busy or at its prompt', () => {
+		const w = {
+			id: 'abc',
+			n: 2,
+			repo: 'lib',
+			dir: '/home/dev/lib',
+			started_at: '2026-11-24T10:00:00Z',
+			attached: 1,
+			busy: true,
+			command: 'opencode'
+		};
+		expect(map.toTerminalSession(w)).toEqual({
+			id: 'abc',
+			n: 2,
+			repo: 'lib',
+			dir: '/home/dev/lib',
+			startedAt: '2026-11-24T10:00:00Z',
+			attached: 1,
+			busy: true,
+			command: 'opencode'
+		});
+		expect(
+			map.toTerminalSession({ ...w, busy: false, command: undefined, attached: 0 })
+		).toMatchObject({ busy: false, command: '', attached: 0 });
+	});
 });
 
 describe('the live agent stream', () => {

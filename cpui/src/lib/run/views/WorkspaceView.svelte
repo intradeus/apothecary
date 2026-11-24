@@ -3,10 +3,12 @@
 	// each with its own repo picker on a multi-repo run. Without a workspace
 	// they say so and point at the Record, which outlives it. Files keeps its
 	// tabs and tree in the run's store: its picker only moves the tree's root.
+	// The terminal's sessions live in the workspace: its picker only says where
+	// a new one opens, and never ends a shell.
 	import { t } from '$lib/i18n/index.svelte';
 	import Changes from '../Changes.svelte';
 	import Files from '../Files.svelte';
-	import Terminal from '../Terminal.svelte';
+	import Terminals from '../Terminals.svelte';
 	import RepoBar from '../RepoBar.svelte';
 	import NoWorkspace from '../NoWorkspace.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
@@ -64,8 +66,8 @@
 			{#if checkouts.length > 1}
 				<RepoBar {checkouts} bind:value={repo} {hint} />
 			{/if}
-			{#key repo}
-				{#if kind === 'changes'}
+			{#if kind === 'changes'}
+				{#key repo}
 					<Changes
 						runId={rs.runId}
 						{repo}
@@ -73,13 +75,13 @@
 						{visible}
 						oncount={(n) => (rs.changesCount = repo ? rs.changesCount : n)}
 					/>
-				{:else if rs.canShell}
-					<Terminal runId={rs.runId} {repo} {dir} />
-				{:else}
-					<!-- A shell is run:shell in the run's workshop. -->
-					<EmptyState compact title={t('common.needsPermission')} />
-				{/if}
-			{/key}
+				{/key}
+			{:else if rs.canShell}
+				<Terminals runId={rs.runId} {repo} {dir} {checkouts} {visible} />
+			{:else}
+				<!-- A shell is run:shell in the run's workshop. -->
+				<EmptyState compact title={t('common.needsPermission')} />
+			{/if}
 		{/if}
 	</div>
 {/if}

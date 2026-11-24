@@ -116,10 +116,11 @@ func TestAnIdleWorkspaceSleepsAndWakes(t *testing.T) {
 }
 
 // What keeps a workspace up: a period of never, use, a live loop, an op in
-// flight, a provisioner that cannot keep a stopped one (its storage, the
-// run's runtime, none that sleeps at all). None of them is a warning: the
-// sweep passes over them every minute, and an instance-wide idle default
-// reaches sandboxes their provisioner cannot keep.
+// flight, a program running in one of its terminals, a provisioner that
+// cannot keep a stopped one (its storage, the run's runtime, none that
+// sleeps at all). None of them is a warning: the sweep passes over them
+// every minute, and an instance-wide idle default reaches sandboxes their
+// provisioner cannot keep.
 func TestWhatKeepsAWorkspaceUp(t *testing.T) {
 	ctx := context.Background()
 	for name, arm := range map[string]func(h *harness, id string){
@@ -132,6 +133,7 @@ func TestWhatKeepsAWorkspaceUp(t *testing.T) {
 		"no sleeper": func(h *harness, id string) {
 			h.res.Envp = struct{ envport.EnvProvisioner }{h.envp}
 		},
+		"terminal busy": func(h *harness, id string) { h.e.keepAwake = &fakeKeepAwake{busy: true} },
 	} {
 		t.Run(name, func(t *testing.T) {
 			h, id, c := idleRun(t)
@@ -149,6 +151,87 @@ func TestWhatKeepsAWorkspaceUp(t *testing.T) {
 				t.Errorf("the sweep said: %s", logged.String())
 			}
 		})
+	}
+}
+
+// fakeKeepAwake answers what runs in a workspace's terminals.
+type fakeKeepAwake struct {
+	busy  bool
+	err   error
+	asked atomic.Int32
+}
+
+func (f *fakeKeepAwake) TerminalsBusy(_ context.Context, v run.View, res *resolution.Resolution) (bool, error) {
+	if v.RunID == "" || res == nil {
+		panic("asked about no run")
+	}
+	f.asked.Add(1)
+	return f.busy, f.err
+}
+
+// A program running in a terminal keeps a due workspace up, as a use: the
+// sweep asks again an idle period later, and stops it once nothing runs.
+// Only a run that is due and can sleep is asked.
+func TestABusyTerminalKeepsAWorkspaceAwake(t *testing.T) {
+	h, id, c := idleRun(t)
+	ctx := context.Background()
+	ka := &fakeKeepAwake{busy: true}
+	h.e.keepAwake = ka
+
+	c.advance(29 * time.Minute)
+	h.e.SleepIdle(ctx)
+	if n := ka.asked.Load(); n != 0 {
+		t.Fatalf("asked %d times before the period", n)
+	}
+	c.advance(time.Minute)
+	if slept := h.e.SleepIdle(ctx); len(slept) != 0 || len(h.envp.Slept) != 0 {
+		t.Fatalf("slept %v with a program running", slept)
+	}
+	if n := ka.asked.Load(); n != 1 {
+		t.Errorf("asked %d times, want once", n)
+	}
+	if d := h.e.use.IdleFor(id); d != 0 {
+		t.Errorf("idle for %s after a busy answer, want a use now", d)
+	}
+	c.advance(29 * time.Minute)
+	h.e.SleepIdle(ctx)
+	if n := ka.asked.Load(); n != 1 {
+		t.Errorf("asked again within the period: %d", n)
+	}
+	ka.busy = false
+	c.advance(time.Minute)
+	if slept := h.e.SleepIdle(ctx); !slices.Equal(slept, []string{id}) {
+		t.Errorf("slept %v once nothing ran, want %s", slept, id)
+	}
+	if n := ka.asked.Load(); n != 2 {
+		t.Errorf("asked %d times, want twice", n)
+	}
+
+	// A workspace that cannot sleep is never asked.
+	h2, _, c2 := idleRun(t)
+	ka2 := &fakeKeepAwake{busy: true}
+	h2.e.keepAwake = ka2
+	h2.envp.CannotSleep = errors.New("emptydir")
+	c2.advance(2 * time.Hour)
+	h2.e.SleepIdle(ctx)
+	if n := ka2.asked.Load(); n != 0 {
+		t.Errorf("a workspace that cannot sleep was asked %d times", n)
+	}
+}
+
+// A probe that fails is not busy: the workspace stops as it would without
+// one, and the failure is said once.
+func TestAFailedTerminalProbeLetsTheWorkspaceSleep(t *testing.T) {
+	h, id, c := idleRun(t)
+	var logged strings.Builder
+	h.e.log = slog.New(slog.NewTextHandler(&logged, nil))
+	h.e.keepAwake = &fakeKeepAwake{busy: true, err: errors.New("sidecar gone")}
+	c.advance(time.Hour)
+	if slept := h.e.SleepIdle(context.Background()); !slices.Equal(slept, []string{id}) {
+		t.Errorf("slept %v, want %s", slept, id)
+	}
+	if n := strings.Count(logged.String(), "level=WARN"); n != 1 || !strings.Contains(logged.String(), "sidecar gone") {
+		t.Errorf("logged %d warnings: %s", n, logged.String())
 	}
 }
 

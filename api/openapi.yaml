@@ -4935,6 +4935,34 @@ components:
           nullable: true
           type: boolean
       type: object
+    TerminalSession:
+      properties:
+        attached:
+          type: integer
+        busy:
+          type: boolean
+        command:
+          type: string
+        dir:
+          type: string
+        id:
+          type: string
+        "n":
+          type: integer
+        repo:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+      required:
+        - attached
+        - busy
+        - dir
+        - id
+        - "n"
+        - repo
+        - started_at
+      type: object
     TestResult:
       properties:
         error:
@@ -15981,6 +16009,102 @@ paths:
       tags:
         - workspace
       x-apothecary-action: run:read
+  /api/runs/{id}/terminal/sessions:
+    get:
+      description: 'Each session is a login shell the workspace keeps after its terminal is closed, refreshed or left: the terminal WebSocket attaches to one by ?session= and replays its recent output. The sessions are shared: everyone holding run:shell on the run sees, attaches to and closes the same ones, scrollback included. busy says a program other than the shell runs in a session (a foreground program or a background job), command names it; a busy session keeps the workspace from being stopped when idle, with no time limit. They end with the workspace: stopped when idle, rebuilt or destroyed. Listing wakes a workspace stopped when idle, as opening the terminal does. 501 when the workspace''s sidecar predates persistent sessions (restart or rebuild the workspace).'
+      operationId: listRunTerminals
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                items:
+                  $ref: '#/components/schemas/TerminalSession'
+                nullable: true
+                type: array
+          description: OK
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: The workspace's terminal sessions, oldest first
+      tags:
+        - workspace
+      x-apothecary-action: run:shell
+  /api/runs/{id}/terminal/sessions/{session}:
+    delete:
+      description: Hangs up the session's shell and whatever runs in it; every client attached to it is told the session ended. Sessions are shared, so this ends it for everyone. 404 when it has already ended, 501 when the workspace's sidecar predates persistent sessions.
+      operationId: closeRunTerminal
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema:
+            type: string
+        - in: path
+          name: session
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          content:
+            application/json: {}
+          description: error
+        "401":
+          content:
+            application/json: {}
+          description: error
+        "403":
+          content:
+            application/json: {}
+          description: error
+        "404":
+          content:
+            application/json: {}
+          description: error
+        "409":
+          content:
+            application/json: {}
+          description: error
+        "503":
+          content:
+            application/json: {}
+          description: error
+      security:
+        - session: []
+        - personalToken: []
+      summary: End one of the workspace's terminal sessions
+      tags:
+        - workspace
+      x-apothecary-action: run:shell
   /api/runs/{id}/wait:
     get:
       description: 'Answers when the run differs from seen (what an earlier answer returned; none: the run as it is now), or when timeout seconds pass (default 50, at most 55): changed says which. A run that has ended answers at once. Pass seen back to wait for the next change without missing one between calls.'

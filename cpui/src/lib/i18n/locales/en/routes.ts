@@ -277,7 +277,7 @@ export default {
 	'page.limits.sizeNone': 'none',
 	'page.limits.idle': 'Stop when idle',
 	'page.limits.idleHelp':
-		'Minutes a sandbox may sit unused (no agent working, no terminal, editor, port or SSH connection) before it is stopped, its checkout and containers kept for the next use to start again. Only for storage that outlives a pod. A workshop may set its own. Empty: never.',
+		'Minutes a sandbox may sit unused (no agent working, no program running in a terminal, no terminal, editor, port or SSH connection) before it is stopped, its checkout and containers kept for the next use to start again. Only for storage that outlives a pod. A workshop may set its own. Empty: never.',
 	'page.limits.idleIs': 'after {m} min',
 	'page.limits.idleNever': 'never',
 	'page.limits.sizeUnset': 'not set',

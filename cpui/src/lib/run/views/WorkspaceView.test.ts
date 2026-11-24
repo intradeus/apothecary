@@ -18,7 +18,9 @@ vi.mock('$lib/api', () => ({
 			file: vi.fn(),
 			pathTree: vi.fn(),
 			stat: vi.fn(),
-			terminalUrl: vi.fn()
+			terminalUrl: vi.fn(),
+			terminals: vi.fn(),
+			closeTerminal: vi.fn()
 		}
 	}
 }));
@@ -30,6 +32,7 @@ vi.mock('@xterm/xterm', () => ({
 		open() {}
 		focus() {}
 		write() {}
+		reset() {}
 		dispose() {}
 		onData = () => ({ dispose() {} });
 		onResize = () => ({ dispose() {} });
@@ -97,6 +100,7 @@ describe('WorkspaceView', () => {
 		vi.mocked(api.workspace.stat).mockResolvedValue([]);
 		localStorage.clear();
 		vi.mocked(api.workspace.terminalUrl).mockReturnValue('ws://terminal.test');
+		vi.mocked(api.workspace.terminals).mockResolvedValue([]);
 		// jsdom would dial it for real.
 		vi.stubGlobal(
 			'WebSocket',
@@ -119,6 +123,7 @@ describe('WorkspaceView', () => {
 			expect(api.workspace.changes).not.toHaveBeenCalled();
 			expect(api.workspace.tree).not.toHaveBeenCalled();
 			expect(api.workspace.terminalUrl).not.toHaveBeenCalled();
+			expect(api.workspace.terminals).not.toHaveBeenCalled();
 			expect(screen.getByText('No live workspace')).toBeInTheDocument();
 		});
 
@@ -191,11 +196,12 @@ describe('WorkspaceView', () => {
 			expect(api.workspace.changes).not.toHaveBeenCalled();
 		});
 
-		it('opens a shell on the terminal view', async () => {
+		it('opens a shell on the terminal view, in a new session when there is none', async () => {
 			show('terminal');
 			await vi.waitFor(() =>
-				expect(api.workspace.terminalUrl).toHaveBeenCalledWith(RUN, 80, 24, '')
+				expect(api.workspace.terminalUrl).toHaveBeenCalledWith(RUN, 80, 24, '', '')
 			);
+			expect(api.workspace.terminals).toHaveBeenCalledWith(RUN);
 		});
 
 		it('shows the shell’s directory: the primary checkout’s', async () => {
@@ -254,12 +260,18 @@ describe('WorkspaceView', () => {
 			expect(repoRadio('lib')).not.toBeChecked();
 		});
 
-		it('opens a new shell in the repo picked, and says where', async () => {
+		it('keeps the shell across a repo switch, and opens the next session in the repo picked', async () => {
 			show('terminal', multi());
-			await userEvent.click(repoRadio('lib'));
+			await vi.waitFor(() => expect(api.workspace.terminalUrl).toHaveBeenCalledOnce());
+			expect(await screen.findByText('~/repo')).toBeInTheDocument();
 
+			await userEvent.click(repoRadio('lib'));
+			await tick();
+			expect(api.workspace.terminalUrl).toHaveBeenCalledOnce();
+
+			await userEvent.click(screen.getByRole('button', { name: 'New terminal session' }));
 			await vi.waitFor(() =>
-				expect(api.workspace.terminalUrl).toHaveBeenLastCalledWith(RUN, 80, 24, 'lib')
+				expect(api.workspace.terminalUrl).toHaveBeenLastCalledWith(RUN, 80, 24, 'lib', '')
 			);
 			expect(await screen.findByText('~/repos/lib')).toBeInTheDocument();
 		});
@@ -267,7 +279,7 @@ describe('WorkspaceView', () => {
 		it.each([
 			['changes', 'refreshes every 5s'],
 			['files', 'read-only · first 1 MB'],
-			['terminal', 'xterm · a shell in the repo']
+			['terminal', 'xterm · a new session opens in the repo picked']
 		] as const)('explains the %s view', (kind, hint) => {
 			show(kind, multi());
 			expect(screen.getByText(hint)).toBeInTheDocument();
@@ -334,6 +346,7 @@ describe('WorkspaceView', () => {
 		await tick();
 		expect(screen.getByText('Your role in this workshop does not allow this')).toBeInTheDocument();
 		expect(api.workspace.terminalUrl).not.toHaveBeenCalled();
+		expect(api.workspace.terminals).not.toHaveBeenCalled();
 		fleet.projects = [];
 	});
 });

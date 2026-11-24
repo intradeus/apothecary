@@ -89,6 +89,10 @@ const xterm = vi.hoisted(() => {
 		scrollToBottom() {
 			this.scrolled.push('bottom');
 		}
+		resets = 0;
+		reset() {
+			this.resets++;
+		}
 		dispose() {
 			this.disposed = true;
 		}
@@ -161,11 +165,23 @@ const lastTerm = () => xterm.FakeTerminal.made.at(-1)!;
 const lastSocket = () => FakeSocket.made.at(-1)!;
 
 /** Rendered, with the terminal built and its socket dialling. */
-async function connect(props: { runId?: string; repo?: string; dir?: string } = {}) {
+async function connect(
+	props: {
+		runId?: string;
+		repo?: string;
+		dir?: string;
+		session?: string;
+		legacy?: boolean;
+		onsession?: (id: string) => void;
+		onended?: () => void;
+	} = {}
+) {
 	const view = render(Terminal, { runId: 'r1', ...props });
 	await vi.waitFor(() => expect(FakeSocket.made).not.toHaveLength(0));
 	return view;
 }
+const sessionFrame = (id: string, created = true) =>
+	JSON.stringify({ type: 'session', id, n: 1, created });
 /** Socket events set state outside a user event: let the view catch up. */
 const reads = (word: string) =>
 	vi.waitFor(() => expect(screen.getByText(word)).toBeInTheDocument());
@@ -195,9 +211,24 @@ describe('Terminal', () => {
 		expect(screen.getByText('connecting…')).toBeInTheDocument();
 	});
 
-	it('tells you it ends with the tab', () => {
-		render(Terminal, { runId: 'r1' });
-		expect(screen.getByText('ends when you leave this tab')).toBeInTheDocument();
+	it('says nothing of how long it lasts until the workspace says', async () => {
+		await connect();
+		expect(screen.queryByText(/ends with the workspace/)).not.toBeInTheDocument();
+		expect(screen.queryByText(/predates/)).not.toBeInTheDocument();
+	});
+
+	it('says it outlives the tab once the workspace names its session', async () => {
+		await connect();
+		lastSocket().opened();
+		lastSocket().onmessage?.({ data: sessionFrame('s1') });
+		expect(
+			await screen.findByText('keeps running when you leave; ends with the workspace')
+		).toBeInTheDocument();
+	});
+
+	it('says it ends with the tab when it is known to predate sessions', () => {
+		render(Terminal, { runId: 'r1', legacy: true });
+		expect(screen.getByText(/^ends when you leave this tab: .*restart it/)).toBeInTheDocument();
 	});
 
 	it('shows where it opens, when told', async () => {
@@ -215,7 +246,7 @@ describe('Terminal', () => {
 
 		expect(lastTerm().mountedIn).toBe(container.querySelector('.term'));
 		expect(lastTerm().addon?.fits).toBe(1);
-		expect(api.workspace.terminalUrl).toHaveBeenCalledExactlyOnceWith('r1', 80, 24, 'docs');
+		expect(api.workspace.terminalUrl).toHaveBeenCalledExactlyOnceWith('r1', 80, 24, 'docs', '');
 		expect(lastSocket().url).toBe('ws://engine/term');
 		expect(lastSocket().binaryType).toBe('arraybuffer');
 	});
@@ -244,6 +275,48 @@ describe('Terminal', () => {
 			lastSocket().onmessage?.({ data: 'hello' });
 
 			expect(lastTerm().written).toEqual(['hello']);
+		});
+
+		it('starts a named session on a clean screen and reports it', async () => {
+			const onsession = vi.fn();
+			await connect({ onsession });
+			lastSocket().opened();
+
+			lastSocket().onmessage?.({ data: sessionFrame('ab12') });
+			lastSocket().onmessage?.({ data: new Uint8Array([104]).buffer });
+
+			expect(onsession).toHaveBeenCalledExactlyOnceWith('ab12');
+			expect(lastTerm().resets).toBe(1);
+			expect(lastTerm().written).toEqual([new Uint8Array([104])]);
+		});
+
+		it('takes output with no session first for a workspace that predates them', async () => {
+			const onsession = vi.fn();
+			await connect({ onsession });
+			lastSocket().opened();
+
+			lastSocket().onmessage?.({ data: new Uint8Array([36]).buffer });
+
+			expect(await screen.findByText(/^ends when you leave this tab/)).toBeInTheDocument();
+			expect(onsession).not.toHaveBeenCalled();
+			expect(lastTerm().resets).toBe(0);
+		});
+
+		it('writes a control frame it does not know as text', async () => {
+			await connect();
+			lastSocket().onmessage?.({ data: '{"type":"other"}' });
+			expect(lastTerm().written).toEqual(['{"type":"other"}']);
+		});
+
+		it('attaches to the session it is given', async () => {
+			await connect({ session: 'ab12', repo: 'docs' });
+			expect(api.workspace.terminalUrl).toHaveBeenCalledExactlyOnceWith(
+				'r1',
+				80,
+				24,
+				'docs',
+				'ab12'
+			);
 		});
 	});
 
@@ -336,6 +409,64 @@ describe('Terminal', () => {
 
 			lastSocket().opened();
 			await reads('connected');
+		});
+
+		it('re-attaches to the session it was opened as on Reconnect', async () => {
+			const onended = vi.fn();
+			await connect({ onended });
+			lastSocket().opened();
+			lastSocket().onmessage?.({ data: sessionFrame('ab12') });
+			lastSocket().closed();
+
+			await userEvent.click(await screen.findByRole('button', { name: /Reconnect/ }));
+
+			await vi.waitFor(() => expect(FakeSocket.made).toHaveLength(2));
+			expect(vi.mocked(api.workspace.terminalUrl).mock.lastCall).toEqual([
+				'r1',
+				80,
+				24,
+				'',
+				'ab12'
+			]);
+			expect(onended).not.toHaveBeenCalled();
+		});
+	});
+
+	describe('when the shell ends', () => {
+		it('says the session ended, and offers no Reconnect', async () => {
+			const onended = vi.fn();
+			await connect({ onended });
+			lastSocket().opened();
+			lastSocket().onmessage?.({ data: sessionFrame('ab12') });
+
+			lastSocket().onmessage?.({ data: '{"type":"exit"}' });
+			lastSocket().closed();
+
+			expect(onended).toHaveBeenCalledOnce();
+			await reads('session ended');
+			expect(lastTerm().written.at(-1)).toContain('[session ended]');
+			expect(lastTerm().written.join('')).not.toContain('session closed');
+			expect(screen.queryByRole('button', { name: /Reconnect/ })).not.toBeInTheDocument();
+		});
+
+		it('ends when the session it asked for is refused before opening', async () => {
+			const onended = vi.fn();
+			await connect({ session: 'gone', onended });
+
+			lastSocket().closed();
+
+			expect(onended).toHaveBeenCalledOnce();
+			await reads('session ended');
+		});
+
+		it('offers Reconnect when a new session is refused before opening', async () => {
+			const onended = vi.fn();
+			await connect({ onended });
+
+			lastSocket().closed();
+
+			expect(await screen.findByRole('button', { name: /Reconnect/ })).toBeInTheDocument();
+			expect(onended).not.toHaveBeenCalled();
 		});
 	});
 

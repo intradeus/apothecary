@@ -23,7 +23,7 @@ export default {
 	'runview.ask.untitled': 'New session',
 	'runview.workspace.hint_changes': 'refreshes every 5s',
 	'runview.workspace.hint_files': 'read-only · first 1 MB',
-	'runview.workspace.hint_terminal': 'xterm · a shell in the repo',
+	'runview.workspace.hint_terminal': 'xterm · a new session opens in the repo picked',
 	'runview.session.noconv_over': 'No conversation was recorded for this run.',
 	'runview.session.noconv_pending':
 		'No conversation yet. When an agent stage starts, its prompt, replies and tool calls appear here as they happen.',
