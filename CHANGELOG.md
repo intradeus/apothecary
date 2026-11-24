@@ -2,6 +2,16 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.3.0 (2026-11-24)
+
+### Features
+
+- **gateway**: fall back to wireguard-go without kernel WireGuard
+
+### Fixes
+
+- **gateway**: own one wireguard-go and restore every peer on restart
+
 ## v5.2.0 (2026-11-23)
 
 ### Features
