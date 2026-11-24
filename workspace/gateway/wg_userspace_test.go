@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -51,7 +52,8 @@ esac
 		"wg":    common,
 		"mknod": common,
 		// Foreground, as the real one with -f: wg0 lives as long as it does.
-		"wireguard-go": common + `case "$APO_FAKE_WGO" in
+		"wireguard-go": common + `echo $$ >> "` + filepath.Join(dir, "pids") + `"
+case "$APO_FAKE_WGO" in
   die) echo "fake: cannot open tun" >&2; exit 1;;
   slow) sleep 30 >/dev/null 2>&1 & s=$!; trap 'kill $s; exit 0' TERM; wait; exit 0;;
 esac
@@ -75,20 +77,47 @@ rm -f "` + up + `"
 	return logPath, dir
 }
 
-// stopWG ends a test's wireguard-go and its supervisor.
-func stopWG(t *testing.T, l *wgLink, quit chan struct{}) {
+// stopWG stops a test's wireguard-go once the test ends.
+func stopWG(t *testing.T, l *wgLink) {
 	t.Helper()
 	t.Cleanup(func() {
-		if quit != nil {
-			close(quit)
-		}
 		l.mu.Lock()
 		defer l.mu.Unlock()
-		if l.wgo != nil && l.wgo.cmd.Process != nil {
+		if l.wgo != nil {
 			_ = l.wgo.cmd.Process.Signal(syscall.SIGTERM)
-			<-l.wgo.done
+			<-l.wgo.exited
 		}
 	})
+}
+
+// supervise runs l's supervisor for the rest of the test. At the end it
+// stops the supervisor and waits for it to return before it stops
+// wireguard-go: a supervisor still running would see that exit and
+// restart, or read the pacing the next test resets.
+func supervise(t *testing.T, l *wgLink) {
+	t.Helper()
+	quit, done := make(chan struct{}), make(chan struct{})
+	go func() { l.superviseWG(quit); close(done) }()
+	stopWG(t, l) // cleanups run last-registered first: this one after the next
+	t.Cleanup(func() { close(quit); <-done })
+}
+
+// liveWireguardGo lists the stand-in wireguard-go processes still running
+// (or not yet reaped) of the ones started under dir.
+func liveWireguardGo(t *testing.T, dir string) []string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join(dir, "pids"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var live []string
+	for _, pid := range strings.Fields(string(b)) {
+		n, _ := strconv.Atoi(pid)
+		if n > 0 && syscall.Kill(n, 0) == nil {
+			live = append(live, pid)
+		}
+	}
+	return live
 }
 
 func waitUntil(t *testing.T, what string, ok func() bool) {
@@ -108,7 +137,7 @@ func TestSetupWGFallsBackToWireguardGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopWG(t, l, nil)
+	stopWG(t, l)
 	if l.mode != wgUserspace || !strings.Contains(l.kernelWhy, "Unknown device type") {
 		t.Errorf("mode = %q (%q), want userspace after the kernel's refusal", l.mode, l.kernelWhy)
 	}
@@ -155,7 +184,7 @@ func TestSetupWGUserspaceOnRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stopWG(t, l, nil)
+	stopWG(t, l)
 	got := calls(t, log)
 	if l.mode != wgUserspace || l.kernelWhy != "" {
 		t.Errorf("mode = %q (%q), want userspace, asked for", l.mode, l.kernelWhy)
@@ -177,7 +206,7 @@ func TestSetupWGUserspaceFailures(t *testing.T) {
 		{"configuring the link fails", "ip address replace", "", "fake failure"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			kataTools(t)
+			_, dir := kataTools(t)
 			wgUpTimeout = 300 * time.Millisecond
 			t.Setenv("APO_FAKE_FAIL", c.fail)
 			t.Setenv("APO_FAKE_WGO", c.wgo)
@@ -190,6 +219,11 @@ func TestSetupWGUserspaceFailures(t *testing.T) {
 			}
 			if c.fail != "ip address replace" && !strings.Contains(err.Error(), "Unknown device type") {
 				t.Errorf("err = %v, want the kernel's refusal named too", err)
+			}
+			// Stopped and reaped, whichever step failed: a wireguard-go left
+			// running would hold the TUN device against the next start.
+			if live := liveWireguardGo(t, dir); len(live) != 0 {
+				t.Errorf("wireguard-go still running after the failure: pids %v", live)
 			}
 		})
 	}
@@ -210,10 +244,8 @@ func TestSuperviseWGRestartsWireguardGo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	quit := make(chan struct{})
-	stopWG(t, l, quit)
 	l.reconcilePeers(map[string]Peer{"run-1": {PublicKey: "pk1", IP: "10.90.0.2"}})
-	go l.superviseWG(quit)
+	supervise(t, l)
 
 	first := l.wgo
 	if err := os.WriteFile(log, nil, 0o644); err != nil { // only what the restart runs
@@ -247,6 +279,105 @@ func TestSuperviseWGRestartsWireguardGo(t *testing.T) {
 	}
 }
 
+// Restarts that time out (a wireguard-go alive but with no wg0) each stop
+// their own child: retries never pile up processes racing for the TUN
+// device and socket, and the next good start is the only one left.
+func TestSuperviseWGStopsEveryFailedStart(t *testing.T) {
+	_, dir := kataTools(t)
+	wgUpTimeout = 200 * time.Millisecond
+	l, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	supervise(t, l)
+	l.mu.Lock()
+	first := l.wgo
+	l.mu.Unlock()
+
+	t.Setenv("APO_FAKE_WGO", "slow")
+	_ = first.cmd.Process.Signal(syscall.SIGTERM)
+	starts := func() int {
+		b, _ := os.ReadFile(filepath.Join(dir, "pids"))
+		return len(strings.Fields(string(b)))
+	}
+	waitUntil(t, "three timed-out restarts", func() bool { return starts() >= 4 })
+	if live := liveWireguardGo(t, dir); len(live) > 1 {
+		t.Fatalf("%d wireguard-go running during the retries (pids %v), want at most the one starting", len(live), live)
+	}
+	t.Setenv("APO_FAKE_WGO", "")
+	waitUntil(t, "wg0 back", func() bool {
+		_, err := os.Stat(filepath.Join(dir, "wg0-up"))
+		return err == nil
+	})
+	waitUntil(t, "only the good start left", func() bool { return len(liveWireguardGo(t, dir)) == 1 })
+}
+
+// Recovery is not done while a peer is missing: a failed peer list or peer
+// update is retried, on the wireguard-go already running, until every peer
+// is back. Routes changing meanwhile (the control API) race safely with it.
+func TestSuperviseWGRetriesUntilEveryPeerIsBack(t *testing.T) {
+	for _, fail := range []string{"wg set wg0 peer pk2", "wg show wg0 peers"} {
+		t.Run(fail, func(t *testing.T) {
+			log, dir := kataTools(t)
+			l, err := setupWG("no-such-uplink", "/keys/wg", 51820, "10.90.0.1/16", 1400, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			peers := map[string]Peer{"run-1": {PublicKey: "pk1", IP: "10.90.0.2"}, "run-2": {PublicKey: "pk2", IP: "10.90.0.3"}}
+			l.reconcilePeers(peers)
+			supervise(t, l)
+			// The control API keeps applying the same routes throughout.
+			stopRoutes := make(chan struct{})
+			routesDone := make(chan struct{})
+			go func() {
+				defer close(routesDone)
+				for {
+					select {
+					case <-stopRoutes:
+						return
+					case <-time.After(10 * time.Millisecond):
+						l.reconcilePeers(peers)
+					}
+				}
+			}()
+			defer func() { close(stopRoutes); <-routesDone }()
+
+			l.mu.Lock()
+			first := l.wgo
+			l.mu.Unlock()
+			t.Setenv("APO_FAKE_FAIL", fail)
+			_ = first.cmd.Process.Signal(syscall.SIGTERM)
+			// Started again once, then configured over and over while the
+			// peers fail: the link is retried, not declared back.
+			waitUntil(t, "retries on the new wireguard-go", func() bool {
+				return strings.Count(calls(t, log), "wg set wg0 private-key") >= 4
+			})
+			if n := len(strings.Fields(mustRead(t, filepath.Join(dir, "pids")))); n != 2 {
+				t.Errorf("%d wireguard-go started, want the first and one restart: a peer failure is no reason for another", n)
+			}
+			t.Setenv("APO_FAKE_FAIL", "")
+			// Once the peers go through, the retries stop.
+			waitUntil(t, "the retries to stop", func() bool {
+				a := strings.Count(calls(t, log), "wg set wg0 private-key")
+				time.Sleep(3 * wgRestartBackoff)
+				return strings.Count(calls(t, log), "wg set wg0 private-key") == a
+			})
+			if !strings.Contains(calls(t, log), "wg set wg0 peer pk2 allowed-ips 10.90.0.3/32") {
+				t.Error("pk2 was never put back")
+			}
+		})
+	}
+}
+
+func mustRead(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
 // On a kernel link there is no process to watch; quit ends a supervisor
 // waiting on one, and one backing off between failed restarts.
 func TestSuperviseWGStops(t *testing.T) {
@@ -267,11 +398,13 @@ func TestSuperviseWGStops(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			if failing {
+				wgRestartBackoff = time.Hour // set before the supervisor reads it
+			}
 			quit := make(chan struct{})
 			done := make(chan struct{})
 			go func() { l.superviseWG(quit); close(done) }()
 			if failing {
-				wgRestartBackoff = time.Hour
 				t.Setenv("APO_FAKE_WGO", "die")
 				_ = l.wgo.cmd.Process.Signal(syscall.SIGTERM)
 				waitUntil(t, "a failed restart", func() bool { return strings.Count(calls(t, log), "wireguard-go -f wg0") >= 2 })
@@ -282,7 +415,7 @@ func TestSuperviseWGStops(t *testing.T) {
 			case <-time.After(5 * time.Second):
 				t.Fatal("superviseWG did not return on quit")
 			}
-			stopWG(t, l, nil)
+			stopWG(t, l)
 		})
 	}
 }

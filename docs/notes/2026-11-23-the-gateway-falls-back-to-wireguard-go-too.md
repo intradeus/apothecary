@@ -35,14 +35,26 @@ VXLAN, user namespaces, BPF, TUN.
   (misc 10:200) with the container's default `CAP_MKNOD`. The control
   socket's directory, `/var/run/wireguard`, links to
   `/etc/wireguard/run`, the one place a host's wg AppArmor profile lets
-  `wg` reach. The gateway container keeps `NET_ADMIN` and `NET_RAW` and
-  nothing more. A pod of that shape could make and open a TUN device on
-  this host's k3s (containerd 2, runc) and inside a Kata guest's docker.
+  `wg` reach. The fallback adds no privilege beyond the existing gateway
+  manifest. That manifest adds `NET_ADMIN` and `NET_RAW` to the runtime's
+  default capability set and drops none of it, and the fallback relies on
+  one of those defaults, `CAP_MKNOD`, to make the device. A pod of that
+  shape could make and open a TUN device on this host's k3s (containerd 2,
+  runc) and inside a Kata guest's docker. A runtime or policy that drops
+  `CAP_MKNOD` and hands out no `/dev/net/tun` leaves a node without the
+  module with no WireGuard at all; the gateway's error says so.
 - **Supervision.** A dead `wireguard-go` takes wg0 with it, along with its
   key, port, address and every peer. So it would cut off every run of the
   project at once. `superviseWG` starts it again and restores the link,
-  then reconciles the last peer set (`reconcilePeers` keeps it). A restart
-  that fails is retried every 2 s.
+  then reconciles the last peer set (`reconcilePeers` keeps it). Recovery
+  is complete only when every peer is back: a failed peer list or a failed
+  peer update, even one of many, is retried every 2 s, as a failed start
+  is. A peer left out would keep its run offline until the routes next
+  changed. Retries reuse a `wireguard-go` that is running with its wg0.
+- **One `wireguard-go` at a time.** A start that fails stops and reaps its
+  own child, a timed-out one that is alive but has no wg0 included, and a
+  new start first stops any previous child. Retries therefore never leave
+  processes racing for the TUN device and the control socket.
 - **`WG_PROCESS_FOREGROUND=1`** in `wireguard-go`'s environment. Without
   it, `wireguard-go` opens with a banner saying the kernel has WireGuard
   and userspace is not needed. That is false here, and misleading in the
@@ -62,7 +74,8 @@ VXLAN, user namespaces, BPF, TUN.
 ## Measured (in a Kata sandbox on the 4.4.0 stock guest kernel, 6.18.62)
 
 The gateway image of this change ran in the Kata sandbox's docker, with
-`NET_ADMIN` and `NET_RAW` only and one peer in `routes.json`. A second
+`NET_ADMIN` and `NET_RAW` added to docker's default capabilities (the
+gateway pod's shape) and one peer in `routes.json`. A second
 container ran `wireguard-go` as the peer.
 
 - The gateway fell back by itself ("Unknown device type", then `mode:
@@ -85,11 +98,17 @@ why docs/kubernetes.md still asks for the module where nodes can have it.
 
 - `TestSetupWGFallsBackToWireguardGo`, `TestSetupWGUserspaceOnRequest`,
   `TestSetupWGUserspaceFailures`, `TestSuperviseWGRestartsWireguardGo`,
-  `TestSuperviseWGStops`, `TestTailLog` (unit, `workspace/gateway`). They
+  `TestSuperviseWGStopsEveryFailedStart`,
+  `TestSuperviseWGRetriesUntilEveryPeerIsBack`, `TestSuperviseWGStops`,
+  `TestTailLog` (unit, `workspace/gateway`). The stand-in `wireguard-go`
+  records its process ids, so the tests check that no failed start is left
+  running. The peer test runs recovery against concurrent route updates,
+  so `-race` covers the shared peer set. They
   use stand-ins for a kernel without WireGuard (`kataTools`), and the TUN
   and socket paths are redirected, so no test touches the host's own.
 - `TestGatewayManifests`: the switch reaches the gateway's env, and a
-  userspace gateway gains no privilege. `TestWireGuardUserspaceSwitch`:
+  userspace gateway's manifest adds the same capabilities as the kernel
+  path's and is not privileged. `TestWireGuardUserspaceSwitch`:
   the workspace's switch reaches the gateway host.
 - `TestLiveK8sLifecycle` reads the gateway's mode from its log. It must be
   userspace under `APOTHECARY_LIVE_WG_USERSPACE=1`, and userspace without

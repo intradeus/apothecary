@@ -67,7 +67,10 @@ type wgLink struct {
 
 	mu    sync.Mutex      // serializes setting wg0 up against peer changes
 	peers map[string]Peer // the peer set last reconciled, for a restart
-	wgo   *wgProc         // the running wireguard-go (userspace only)
+	// wgo is the link's one wireguard-go (userspace only): a start that
+	// fails stops its own child, and a new start stops the previous one,
+	// so no two ever race for the TUN device and the control socket.
+	wgo *wgProc
 }
 
 func runCmd(name string, args ...string) (string, error) {
@@ -186,19 +189,34 @@ func (l *wgLink) up() error {
 	return nil
 }
 
-// wgProc is a running wireguard-go: done receives its exit, out its last
-// lines (it logs only errors by default).
+// wgProc is a started wireguard-go: exited closes once it has exited and
+// been reaped, err is then its exit; out keeps its last lines (it logs
+// only errors by default).
 type wgProc struct {
-	cmd  *exec.Cmd
-	done chan error
-	out  *tailLog
+	cmd    *exec.Cmd
+	exited chan struct{}
+	err    error
+	out    *tailLog
+}
+
+// stop kills the process, if it still runs, and returns once it is reaped.
+func (p *wgProc) stop() {
+	_ = p.cmd.Process.Kill()
+	<-p.exited
 }
 
 // startUserspace makes the TUN device if the runtime handed out none (with
 // the container's default CAP_MKNOD: misc device 10:200), keeps the control
 // socket where a host's wg AppArmor profile lets wg reach it, starts
 // wireguard-go in the foreground as this process's child and waits for wg0.
+// Called with l.mu held, when wg0 is absent: a previous wireguard-go still
+// running without it is stopped first. On failure the new child is stopped
+// and reaped too, and l.wgo is nil.
 func (l *wgLink) startUserspace() error {
+	if l.wgo != nil {
+		l.wgo.stop()
+		l.wgo = nil
+	}
 	if fi, err := os.Stat(tunPath); err != nil || fi.Mode()&os.ModeCharDevice == 0 {
 		if err := os.MkdirAll(filepath.Dir(tunPath), 0o755); err != nil {
 			return fmt.Errorf("no %s, and it cannot be made here: %w", tunPath, err)
@@ -224,7 +242,7 @@ func (l *wgLink) startUserspace() error {
 			return err
 		}
 	}
-	p := &wgProc{done: make(chan error, 1), out: &tailLog{max: 20}}
+	p := &wgProc{exited: make(chan struct{}), out: &tailLog{max: 20}}
 	p.cmd = exec.Command(wireguardGo, "-f", wgDev)
 	// Without it, wireguard-go opens with a banner saying the kernel has
 	// WireGuard and it is not needed: false here, and a misleading log.
@@ -233,36 +251,42 @@ func (l *wgLink) startUserspace() error {
 	if err := p.cmd.Start(); err != nil {
 		return fmt.Errorf("start %s: %w", wireguardGo, err)
 	}
-	go func() { p.done <- p.cmd.Wait() }()
-	l.wgo = p
+	go func() { p.err = p.cmd.Wait(); close(p.exited) }()
 	for deadline := time.Now().Add(wgUpTimeout); ; time.Sleep(100 * time.Millisecond) {
 		if _, err := l.run("ip", "link", "show", wgDev); err == nil {
+			l.wgo = p
 			slog.Info("gateway: wg0 is wireguard-go", "pid", p.cmd.Process.Pid)
 			return nil
 		}
 		select {
-		case err := <-p.done:
-			p.done <- err // superviseWG reads it too
-			return fmt.Errorf("wireguard-go exited before wg0 came up (%v): %s", err, p.out.String())
+		case <-p.exited:
+			return fmt.Errorf("wireguard-go exited before wg0 came up (%v): %s", p.err, p.out.String())
 		default:
 		}
 		if time.Now().After(deadline) {
+			// Alive but no wg0: left running, it would hold the TUN device
+			// and the socket against the next start.
+			p.stop()
 			return fmt.Errorf("wireguard-go did not bring up wg0 within %s: %s", wgUpTimeout, p.out.String())
 		}
 	}
 }
 
-// stopUserspace kills a wireguard-go left behind by a failed setup.
+// stopUserspace stops a wireguard-go left behind by a setup that failed
+// after it started. Called with l.mu held.
 func (l *wgLink) stopUserspace() {
-	if l.wgo != nil && l.wgo.cmd.Process != nil {
-		_ = l.wgo.cmd.Process.Kill()
+	if l.wgo != nil {
+		l.wgo.stop()
+		l.wgo = nil
 	}
 }
 
 // superviseWG restarts a dead wireguard-go and puts wg0 back as it was: the
 // link, its key and port, address, MTU and every peer. Without it one dead
-// process would cut every run of the project off. Returns when quit closes;
-// does nothing on a kernel link.
+// process would cut every run of the project off. It retries until all of
+// that is back, peers included: a peer left out would keep its run offline
+// until the routes next changed. Returns when quit closes; does nothing on
+// a kernel link.
 func (l *wgLink) superviseWG(quit <-chan struct{}) {
 	for {
 		l.mu.Lock()
@@ -271,22 +295,24 @@ func (l *wgLink) superviseWG(quit <-chan struct{}) {
 		if p == nil {
 			return
 		}
-		var err error
 		select {
 		case <-quit:
 			return
-		case err = <-p.done:
+		case <-p.exited:
 		}
-		slog.Warn("gateway: wireguard-go exited; restarting it", "err", err, "output", p.out.String())
+		slog.Warn("gateway: wireguard-go exited; restarting it", "err", p.err, "output", p.out.String())
 		for {
 			l.mu.Lock()
 			err := l.up()
 			if err == nil {
-				l.reconcileLocked(l.peers)
+				if perr := l.reconcileLocked(l.peers); perr != nil {
+					err = fmt.Errorf("wg0 is up, but not every peer is back: %w", perr)
+				}
 			}
+			peers := len(l.peers)
 			l.mu.Unlock()
 			if err == nil {
-				slog.Info("gateway: wg0 back (userspace WireGuard)", "peers", len(l.peers))
+				slog.Info("gateway: wg0 back (userspace WireGuard)", "peers", peers)
 				break
 			}
 			slog.Warn("gateway: wireguard-go restart failed; retrying", "err", err)
@@ -358,15 +384,18 @@ func (l *wgLink) reconcilePeers(peers map[string]Peer) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.peers = peers
-	l.reconcileLocked(peers)
+	_ = l.reconcileLocked(peers) // each failure is logged; the next routes change retries
 }
 
-func (l *wgLink) reconcileLocked(peers map[string]Peer) {
+// reconcileLocked is reconcilePeers' work, with l.mu held. It returns every
+// failure, a partial one included, for a restart to retry.
+func (l *wgLink) reconcileLocked(peers map[string]Peer) error {
 	out, err := l.run("wg", "show", wgDev, "peers")
 	if err != nil {
 		slog.Warn("wg: list peers", "err", err)
-		return
+		return fmt.Errorf("wg: list peers: %w", err)
 	}
+	var errs []error
 	have := map[string]bool{}
 	for _, k := range strings.Fields(out) {
 		have[k] = true
@@ -385,6 +414,7 @@ func (l *wgLink) reconcileLocked(peers map[string]Peer) {
 		want[p.PublicKey] = true
 		if _, err := l.run("wg", "set", wgDev, "peer", p.PublicKey, "allowed-ips", p.IP+"/32"); err != nil {
 			slog.Warn("wg: peer", "ip", p.IP, "run_id", run, "err", err)
+			errs = append(errs, fmt.Errorf("wg: peer %s (run %s): %w", p.IP, run, err))
 		}
 	}
 	var stale []string
@@ -397,6 +427,8 @@ func (l *wgLink) reconcileLocked(peers map[string]Peer) {
 	for _, k := range stale {
 		if _, err := l.run("wg", "set", wgDev, "peer", k, "remove"); err != nil {
 			slog.Warn("wg: remove peer", "err", err)
+			errs = append(errs, fmt.Errorf("wg: remove peer: %w", err))
 		}
 	}
+	return errors.Join(errs...)
 }

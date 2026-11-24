@@ -29,8 +29,9 @@ itself, in a namespace of its own:
 - The **`wireguard` kernel module** on the nodes (in-tree since Linux 5.6;
   loaded on demand). Where a kernel has none (a Kata guest's, or the nodes
   of a k3d cluster inside a Kata workspace), the sandbox and the gateway
-  each run `wireguard-go` instead, on their own, with no more privilege:
-  it needs a TUN device, which they make. The gateway carries all of a
+  each run `wireguard-go` instead, on their own, with no privilege beyond
+  their existing manifests: it needs a TUN device, which they make with
+  the runtime's default `CAP_MKNOD` when none is handed out. The gateway carries all of a
   project's runs, so userspace costs it CPU and throughput the module does
   not: keep the module where the nodes can have it.
 - Nodes may confine `/usr/bin/wg` with AppArmor (Ubuntu 26.04 ships
