@@ -3,7 +3,7 @@
 	// YAML, Validate, Versions, Clone, Delete… / Reset, Save. Validate's popover
 	// hangs off its button.
 	import { fleet } from '$lib/app/fleet.svelte';
-	import { ago, fmtAbs } from '$lib/core/format';
+	import { ago, fmtAbs, hasTime } from '$lib/core/format';
 	import { to } from '$lib/core/urls';
 	import type { FlowEditor } from '$lib/flow/flowEditor.svelte';
 	import ValidationPopover from '$lib/flow/ValidationPopover.svelte';
@@ -49,7 +49,7 @@
 	<div class="meta">
 		{#if doc?.description}<span class="truncate desc">{doc.description}</span>{/if}
 		{#if doc}<span>{t('page.flow.stages', { count: ed.stageCount })}</span>{/if}
-		{#if flow}<span title={fmtAbs(flow.updatedAt)}
+		{#if flow && hasTime(flow.updatedAt)}<span title={fmtAbs(flow.updatedAt)}
 				>{t('page.flow.savedAgo', { ago: ago(flow.updatedAt) })}</span
 			>{/if}
 	</div>

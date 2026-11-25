@@ -1,9 +1,12 @@
 <script lang="ts" module>
+	import type { GlyphName } from '$lib/design/glyphs';
+
 	export interface SideNavItem {
 		id: string;
 		label: string;
 		href?: string;
-		icon?: string;
+		/** Its SVG icon ($lib/design/glyphs). */
+		icon?: GlyphName;
 		/** A quieter second line. */
 		sub?: string;
 		/** A step number (stepped forms); `done` ticks it. */
@@ -26,6 +29,7 @@
 	import { indicator } from './motion';
 	import { keepInView } from './inview';
 	import { I } from '$lib/design/icons';
+	import Glyph from './Glyph.svelte';
 
 	let {
 		items,
@@ -51,7 +55,7 @@
 		{#if it.step !== undefined}
 			<span class="n" class:done={it.done}>{it.done ? I.ok : it.step}</span>
 		{:else if it.icon}
-			<span class="ic">{it.icon}</span>
+			<span class="ic"><Glyph name={it.icon} size="16px" /></span>
 		{/if}
 		<span class="col">
 			<span class="truncate">{it.label}</span>

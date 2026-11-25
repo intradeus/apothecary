@@ -54,6 +54,14 @@
 		padding: 0 10px;
 		cursor: text;
 	}
+	/* A phone's filter row stacks its controls full width: the search too,
+	   not 280px over the selects that fill the row. */
+	@media (max-width: 760px) {
+		:global(.filters) > .si {
+			flex: 1 1 100%;
+			width: auto;
+		}
+	}
 	.g {
 		color: var(--text-muted);
 		font-size: var(--fs-lead);

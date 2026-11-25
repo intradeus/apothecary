@@ -203,9 +203,12 @@
 			<div class="r head">
 				<span>{t('runview.egress.col_host')}</span><span>{t('runview.egress.col_seen')}</span><span
 					>{t('runview.egress.col_rule')}</span
-				><span>{t('runview.egress.col_proto')}</span><span class="rt">×</span><span class="rt"
-					>{t('runview.egress.col_out_in')}</span
-				><span class="rt">{t('runview.egress.col_last')}</span>
+				><span>{t('runview.egress.col_proto')}</span><span
+					class="rt"
+					title={t('runview.egress.col_hits_title')}>{t('runview.egress.col_hits')}</span
+				><span class="rt">{t('runview.egress.col_out_in')}</span><span class="rt"
+					>{t('runview.egress.col_last')}</span
+				>
 			</div>
 			{#each shown as r (r.host + ':' + r.port + ':' + r.verdict)}
 				{@const rule = shownRule(r.host)}

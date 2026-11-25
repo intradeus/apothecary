@@ -120,7 +120,6 @@
 					if (draft) draft[key] = on ? null : (fleet.limits?.[key] ?? null) || 1;
 				}}
 			/>
-			<span class="muted small">{t('page.limits.noCap')}</span>
 		</div>
 	{/if}
 {/snippet}
@@ -260,7 +259,7 @@
 	}
 	.bar {
 		position: sticky;
-		bottom: 0;
+		bottom: var(--foot-stick);
 		margin-top: auto;
 	}
 </style>

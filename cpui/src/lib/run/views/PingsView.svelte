@@ -5,6 +5,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import PingCard from '$lib/pings/PingCard.svelte';
 	import PingPill from '$lib/ui/PingPill.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import { ago, fmtAbs, fmtClock } from '$lib/core/format';
 	import { answerMeta, curatable, isAgentPing, isDocumentPing } from '$lib/core/ping';
 	import ReviewHistory from '$lib/review/ReviewHistory.svelte';
@@ -38,8 +39,8 @@
 		<span>{summary || t('runview.pings.none_yet')}</span>
 	</div>
 	{#if list.length === 0}
-		<div class="empty-line">
-			{t('runview.pings.empty')}
+		<div class="none">
+			<EmptyState compact title={t('runview.pings.emptyTitle')} text={t('runview.pings.empty')} />
 		</div>
 	{/if}
 	{#each list as p (p.id)}
@@ -124,8 +125,16 @@
 		font-size: var(--fs-help);
 		color: var(--text-faint);
 	}
-	.pv .empty-line {
-		padding-left: 0;
+	/* The run panes' empty state: the shared one, centred in the room left
+	   (by its margins, so a short window scrolls to it rather than cut it). */
+	.pv > .none {
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+	}
+	.none > :global(*) {
+		margin-block: auto;
 	}
 	.pr {
 		overflow: hidden;

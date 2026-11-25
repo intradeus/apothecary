@@ -180,6 +180,7 @@
 
 <PageHeader
 	crumbs={[
+		{ label: t('nav.desk'), href: to.desk() },
 		{ label: t('page.analytics.title'), href: to.analytics() },
 		{ label: dash?.name ?? '…' }
 	]}

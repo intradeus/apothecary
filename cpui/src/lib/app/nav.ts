@@ -3,8 +3,8 @@
 // renamed page or a new section changes one entry.
 
 import { to } from '$lib/core/urls';
+import type { GlyphName } from '$lib/design/glyphs';
 import { t } from '$lib/i18n/index.svelte';
-import { I } from '$lib/design/icons';
 import { WORK_ITEMS } from './workItems';
 
 export interface NavItem {
@@ -20,7 +20,8 @@ export interface NavItem {
 		| 'analytics'
 		| 'system';
 	label: string;
-	icon: string;
+	/** Its SVG icon ($lib/design/glyphs). */
+	icon: GlyphName;
 	href: () => string;
 	/** The second key of its "G then …" chord. */
 	chord?: string;
@@ -36,7 +37,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.desk');
 		},
-		icon: I.desk,
+		icon: 'desk',
 		href: () => to.desk(),
 		chord: 'd',
 		mobile: true,
@@ -47,7 +48,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.inbox');
 		},
-		icon: I.inbox,
+		icon: 'inbox',
 		href: () => to.inbox(),
 		chord: 'i',
 		mobile: true,
@@ -58,7 +59,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.notices');
 		},
-		icon: I.notices,
+		icon: 'notices',
 		href: () => to.notices(),
 		mobile: false,
 		match: (p) => p.startsWith(to.notices())
@@ -68,7 +69,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.runs');
 		},
-		icon: I.runs,
+		icon: 'runs',
 		href: () => to.runs(),
 		chord: 'r',
 		mobile: true,
@@ -79,7 +80,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.warRoom');
 		},
-		icon: I.warRoom,
+		icon: 'warRoom',
 		href: () => to.warRoom(),
 		chord: 'w',
 		mobile: false,
@@ -102,7 +103,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.skills');
 		},
-		icon: I.skills,
+		icon: 'skills',
 		href: () => to.skills(),
 		mobile: false,
 		match: (p) => p.startsWith(to.skills())
@@ -112,7 +113,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.analytics');
 		},
-		icon: I.analytics,
+		icon: 'analytics',
 		href: () => to.analytics(),
 		chord: 'a',
 		mobile: false,
@@ -123,7 +124,7 @@ export const NAV: readonly NavItem[] = [
 		get label() {
 			return t('nav.system');
 		},
-		icon: I.system,
+		icon: 'system',
 		href: () => to.system(),
 		mobile: false,
 		match: (p) => p.startsWith('/system')

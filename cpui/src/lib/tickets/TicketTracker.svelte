@@ -121,7 +121,11 @@
 	<div class="pane-body rows">
 		<div class="line">
 			<span class="field-label">{t('tickets.col.status')}</span>
-			<TicketStatusChip status={ticket.status} done={ticket.done} size="md" />
+			<!-- The status once: the select shows it when it can change, the chip
+			     when it cannot. -->
+			{#if !options.length}
+				<TicketStatusChip status={ticket.status} done={ticket.done} size="md" />
+			{/if}
 			{#if options.length}
 				<span class="sel">
 					<Select
@@ -201,7 +205,7 @@
 					>{t('tickets.saveBranch')}</button
 				>
 			{/if}
-			<span class="help">{t('tickets.branchHelp')}</span>
+			<span class="help branch-help">{t('tickets.branchHelp')}</span>
 		</form>
 
 		{#if ticket.links.length}
@@ -251,6 +255,12 @@
 	.branch {
 		flex: 1;
 		min-width: 18ch;
+	}
+	/* Under the field, not beside it: beside, it squeezed the branch name
+	   until its end was cut. */
+	.branch-help {
+		flex-basis: 100%;
+		padding-left: 72px;
 	}
 	.links {
 		list-style: none;

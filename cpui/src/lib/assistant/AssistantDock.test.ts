@@ -403,6 +403,22 @@ describe('AssistantDock', () => {
 			).toHaveLength(1);
 		});
 
+		it('wears the page mode’s colour while the page can be filled, and toggles the card', async () => {
+			render(AssistantDock);
+			expect(button()).not.toHaveClass('paged');
+			offer();
+			await waitFor(() => expect(button()).toHaveClass('paged'));
+			expect(button()).toHaveAttribute('aria-expanded', 'false');
+			await userEvent.click(button());
+			expect(button()).toHaveAttribute('aria-expanded', 'true');
+			expect(sheet()).toBeInTheDocument();
+			// It stays where it is, open: a click on it folds the card.
+			await userEvent.click(button());
+			await waitFor(() => expect(sheet()).not.toBeInTheDocument());
+			withdraw();
+			await waitFor(() => expect(button()).not.toHaveClass('paged'));
+		});
+
 		it('opens no page conversation until its mode shows', async () => {
 			offer();
 			render(AssistantDock);

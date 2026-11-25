@@ -10,7 +10,6 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import type { Run } from '$lib/domain';
 	import { isInternal } from '$lib/tickets/tracker';
-	import NewTicketLink from '$lib/tickets/NewTicketLink.svelte';
 	import NewWorkshopLink from '$lib/workshop/NewWorkshopLink.svelte';
 	import Segmented from '$lib/ui/Segmented.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
@@ -212,12 +211,13 @@
 									: t('page.desk.allOnShelf')}
 								text={t('page.desk.nothingRunning')}
 							>
+								<!-- The quiet workshops, each a link. No "new ticket" here: it
+								     was the first one's only, and the header has its own. -->
 								<span class="qn">
-									{#each quiet as p, i (p.id)}{#if i}<span class="faint"> · </span>{/if}<a
+									{#each quiet as p, i (p.id)}{#if i}<span class="faint">{' · '}</span>{/if}<a
 											href={to.workshop(p.id)}>{p.name}</a
 										>{/each}
 								</span>
-								<NewTicketLink project={quiet[0]} label={t('page.desk.newTicket')} cls="btn-sm" />
 							</EmptyState>
 						{/if}
 						{#if !cards.length && filter !== 'all' && !quiet.length}
@@ -272,7 +272,7 @@
 		flex-wrap: wrap;
 		margin: var(--shell-gap) var(--shell-gap) 0;
 		/* Clear of the assistant's floating button, wrapped or not. */
-		padding: 12px var(--assistant-inset) 12px 16px;
+		padding: 12px 16px;
 		border-radius: var(--r-pane);
 	}
 	.tt {

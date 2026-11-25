@@ -2,14 +2,14 @@ import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 import { I } from '$lib/design/icons';
-import SideNav from './SideNav.svelte';
+import SideNav, { type SideNavItem } from './SideNav.svelte';
 
 const steps = [
 	{ id: 'repo', label: 'Repository', step: 1, done: true },
 	{ id: 'flow', label: 'Flow', step: 2, sub: 'Pick one' }
 ];
-const links = [
-	{ id: 'general', label: 'General', href: '/system/general', icon: I.system },
+const links: SideNavItem[] = [
+	{ id: 'general', label: 'General', href: '/system/general', icon: 'system' },
 	{ id: 'users', label: 'Users', href: '/system/users', count: 4, hot: true },
 	{ id: 'keys', label: 'Keys', href: '/system/keys', count: 0 }
 ];
@@ -109,7 +109,9 @@ describe('SideNav', () => {
 	it('shows the second line and the icon', () => {
 		render(SideNav, { items: [...steps, ...links], active: 'repo' });
 		expect(screen.getByText('Pick one')).toBeInTheDocument();
-		expect(screen.getByRole('link', { name: /General/ })).toHaveTextContent(I.system);
+		expect(
+			screen.getByRole('link', { name: /General/ }).querySelector('svg[data-glyph="system"]')
+		).not.toBeNull();
 	});
 
 	it('shows a count, hot when it needs someone, and none at zero', () => {

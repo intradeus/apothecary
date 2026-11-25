@@ -13,6 +13,11 @@ describe('ConfigCard', () => {
 		expect(card.getByText('GitLab')).toBeInTheDocument();
 	});
 
+	it('leaves out a kind the name already says', () => {
+		render(ConfigCard, { title: 'GitLab', kind: 'gitlab' });
+		expect(within(screen.getByRole('article')).getAllByText(/gitlab/i)).toHaveLength(1);
+	});
+
 	it('draws the glyph tile in its hue', () => {
 		render(ConfigCard, { title: 'Ops', glyph: '#', hue: 'accent' });
 		expect(screen.getByText('#')).toHaveClass('tone-accent');

@@ -348,11 +348,11 @@
 	.select:active {
 		transform: none;
 	}
+	/* Focused or open: a firmer fill, no blue border or ring. */
 	.select:focus-visible,
 	.select.open {
 		outline: none;
-		border-color: var(--brand);
-		box-shadow: 0 0 0 3px var(--brand-bg);
+		background: var(--fill-3);
 	}
 	.select.invalid {
 		border-color: var(--danger);

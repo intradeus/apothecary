@@ -121,7 +121,7 @@
 >
 	{#snippet meta()}<span>{t('page.analytics.meta')}</span>{/snippet}
 	{#snippet actions()}
-		<a class="btn" href={to.scorecards()}>{t('page.analytics.toScorecards')}</a>
+		<a class="btn btn-lg" href={to.scorecards()}>{t('page.analytics.toScorecards')}</a>
 		<button class="btn-primary btn-lg" disabled={busy} onclick={create}
 			>{I.add} {t('page.analytics.new')}</button
 		>

@@ -1,5 +1,8 @@
 <script lang="ts">
 	// Chrome buttons on the sidebar: the shared icon button, a size up.
+	import Glyph from '$lib/ui/Glyph.svelte';
+	import type { GlyphName } from '$lib/design/glyphs';
+
 	let {
 		icon,
 		title,
@@ -7,7 +10,7 @@
 		size,
 		onclick
 	}: {
-		icon: string;
+		icon: GlyphName;
 		title: string;
 		label: string;
 		/** The rail's slim expand, the full sidebar's square collapse. */
@@ -22,7 +25,7 @@
 	class:sm={size === 'sm'}
 	{title}
 	aria-label={label}
-	{onclick}>{icon}</button
+	{onclick}><Glyph name={icon} size={size === 'exp' ? '14px' : '16px'} /></button
 >
 
 <style>

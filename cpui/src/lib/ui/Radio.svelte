@@ -113,9 +113,9 @@
 	.ring.on::after {
 		transform: scale(1);
 	}
+	/* Reached by the keyboard: its edge firms up, no ring. */
 	input:focus-visible + .ring {
-		outline: 2px solid var(--brand);
-		outline-offset: 2px;
+		border-color: var(--text-muted);
 	}
 	.rd:active:not(.off) .ring {
 		transform: scale(var(--press-scale));

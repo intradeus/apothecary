@@ -257,7 +257,8 @@
 				<Skeleton pane lines={4} />
 			{:else if groups.length === 0}
 				{#if !fleet.held.length}
-					<div class="full glass pane">
+					<!-- No pane around it: the empty state is its own frame. -->
+					<div class="full">
 						<EmptyState title={t('inbox.empty.title')} text={t('inbox.empty.text')}>
 							<a class="btn" href={to.runs()}>{t('inbox.openRuns')}</a>
 						</EmptyState>

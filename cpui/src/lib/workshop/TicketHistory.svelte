@@ -286,10 +286,13 @@
 		align-items: center;
 		gap: 8px;
 	}
+	/* A button: the global one centres its content, a version reads from the
+	   left like the rows around it. */
 	.ver {
 		flex: 1;
 		display: flex;
 		align-items: center;
+		justify-content: flex-start;
 		flex-wrap: wrap;
 		gap: 8px;
 		text-align: left;

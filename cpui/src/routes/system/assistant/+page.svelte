@@ -93,45 +93,45 @@
 			<a href={to.system('integrations')}>{t('page.system.integrations.label')}</a>
 		</p>
 	{:else}
-		<form
-			class="form"
-			onsubmit={(e) => {
-				e.preventDefault();
-				save({ integration, model, skillsets }, t('ui.save.saved'));
-			}}
-		>
-			<div class="field">
-				<label for="as-harness">{t('assistant.harness')}</label>
-				<Select
-					id="as-harness"
-					options={harnesses}
-					bind:value={integration}
-					onchange={pickHarness}
-					disabled={busy}
-				/>
+		<!-- A titled section like Account's: the form inside, Save at its end. -->
+		<section class="glass pane form-dense">
+			<div class="pane-head">
+				<h2>{t('assistant.settingsTitle')}</h2>
+				<span class="muted small">{t('assistant.settingsSub')}</span>
 			</div>
-			<div class="field">
-				<label for="as-model">{t('assistant.model')}</label>
-				<Select id="as-model" options={models} bind:value={model} disabled={busy} />
-			</div>
-			<div class="field">
-				<SkillsetPicker bind:value={skillsets} idPrefix="as" />
-			</div>
-			<p class="help">{t('assistant.settingsApply')}</p>
-			{#if error}<p class="help hue-warning" role="alert">{error}</p>{/if}
-			<div>
-				<button class="btn-primary" type="submit" disabled={busy} aria-busy={busy}
-					>{t('common.save')}</button
-				>
-			</div>
-		</form>
+			<form
+				class="pane-body col"
+				onsubmit={(e) => {
+					e.preventDefault();
+					save({ integration, model, skillsets }, t('ui.save.saved'));
+				}}
+			>
+				<div class="field">
+					<label for="as-harness">{t('assistant.harness')}</label>
+					<Select
+						id="as-harness"
+						options={harnesses}
+						bind:value={integration}
+						onchange={pickHarness}
+						disabled={busy}
+					/>
+				</div>
+				<div class="field">
+					<label for="as-model">{t('assistant.model')}</label>
+					<Select id="as-model" options={models} bind:value={model} disabled={busy} />
+				</div>
+				<div class="field">
+					<span class="field-label">{t('run.start.skillsets')}</span>
+					<SkillsetPicker bind:value={skillsets} idPrefix="as" />
+				</div>
+				<p class="help">{t('assistant.settingsApply')}</p>
+				{#if error}<p class="help hue-warning" role="alert">{error}</p>{/if}
+				<div class="form-actions">
+					<button class="btn-primary" type="submit" disabled={busy} aria-busy={busy}
+						>{t('common.save')}</button
+					>
+				</div>
+			</form>
+		</section>
 	{/if}
 {/if}
-
-<style>
-	.form {
-		display: flex;
-		flex-direction: column;
-		gap: var(--shell-gap);
-	}
-</style>

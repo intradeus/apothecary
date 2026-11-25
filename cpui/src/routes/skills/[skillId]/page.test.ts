@@ -104,6 +104,11 @@ describe('the skill page’s assistant', () => {
 		vi.mocked(api.skills.get).mockResolvedValue(detail);
 		render(Page);
 		await screen.findByRole('button', { name: 'Fill with the assistant' });
+		// The loaded SKILL.md is in the editor, not an empty one that would
+		// be saved over it.
+		await waitFor(() =>
+			expect(screen.getByRole('textbox', { name: /SKILL\.md/ })).toHaveValue(md('notes'))
+		);
 		await openIt();
 		expect(panel().dataset.subject).toBe('sk1');
 		expect(await readPage()).toEqual({

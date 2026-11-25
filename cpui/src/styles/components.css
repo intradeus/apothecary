@@ -25,6 +25,33 @@
 	background: var(--inset-bg);
 	border: 1px solid var(--inset-line);
 }
+/* Fab: a squircle button in the corner over every page (FabCorner): the
+ * assistant, a run's Layout. Sky-tinted island, opaque over content. */
+.fab {
+	position: relative;
+	width: var(--fab-size);
+	height: var(--fab-size);
+	padding: 0;
+	display: grid;
+	place-items: center;
+	border-radius: var(--r-row);
+	/* Over content, so opaque under the tint. */
+	background: linear-gradient(var(--brand-bg), var(--brand-bg)), var(--island-bg);
+	border: 1px solid var(--brand-line);
+	box-shadow: var(--specular), var(--shadow-float);
+	font-size: var(--fs-section);
+	font-weight: 400;
+	color: var(--brand-light);
+}
+.fab:hover,
+.fab[aria-expanded='true'] {
+	background: linear-gradient(var(--fill-3), var(--fill-3)), var(--island-bg);
+	box-shadow:
+		var(--specular),
+		var(--shadow-float),
+		0 0 var(--glow-md) var(--brand-glow);
+}
+
 /* Island: anything that floats over content (popovers, menus, modals, the
  * MR island, drag ghosts). Opaque, so nothing ghosts through. */
 .island {
@@ -101,8 +128,7 @@
 }
 :where(button:not(.svelte-flow *, .xterm *)):focus-visible,
 .btn:focus-visible {
-	outline: 2px solid var(--brand);
-	outline-offset: 2px;
+	background: var(--fill-3);
 }
 :where(button:not(.svelte-flow *, .xterm *)):disabled,
 .btn[aria-disabled='true'] {
@@ -680,8 +706,7 @@ a.brand {
 	opacity: 0.8;
 }
 .menu-item:focus-visible {
-	outline: 2px solid var(--brand);
-	outline-offset: -2px;
+	background: var(--fill-3);
 }
 .menu-item.on {
 	background: var(--selected-bg);
@@ -735,10 +760,6 @@ a.brand {
 input::placeholder,
 textarea::placeholder {
 	color: var(--text-faint);
-}
-:where(input, textarea):focus {
-	border-color: var(--brand);
-	box-shadow: 0 0 0 3px var(--brand-bg);
 }
 input.invalid,
 textarea.invalid {
@@ -826,10 +847,6 @@ fieldset.field > legend {
 	border-radius: var(--r-row);
 	background: var(--fill-1);
 	border: 1px solid var(--line-strong);
-}
-.fieldbox:focus-within {
-	border-color: var(--brand);
-	box-shadow: 0 0 0 3px var(--brand-bg);
 }
 .fieldbox.invalid {
 	border-color: var(--danger);
@@ -977,8 +994,7 @@ tr.sel {
 	background: var(--fill-3);
 }
 .rowbtn:focus-visible {
-	outline: 2px solid var(--brand);
-	outline-offset: -2px;
+	background: var(--fill-3);
 }
 .rowbtn.on {
 	background: var(--selected-bg);
@@ -1223,7 +1239,9 @@ dl.kv.code > dd {
 }
 .filters > .fieldbox,
 .filters .select,
-.filters > .seg {
+.filters > .seg,
+.filters > button,
+.filters > .btn {
 	box-sizing: border-box;
 	height: var(--filter-h);
 }

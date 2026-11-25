@@ -16,7 +16,7 @@ The import graph is the architecture. Each folder of `src/lib` has a rank, and a
 | 3 | `api` | The anti-corruption layer around the generated client (see its README). |
 | 4 | `ui` | The design system: generic components. May not know what a run is called on the wire. |
 | 5 | `app` | What every page shares: `session`, `fleet`, `prefs`, `nav`. |
-| 6 | `assistant` | The assistant: one corner over the page (`AssistantDock`: the button, a pill while it has news, a card, a drawer when expanded), in two modes — this page (a page offers itself with `offerPage`; it fills the page through the page's fill guard, with `FillMark` on the page) and everywhere (acts by requests the person confirms) — and the `Conversation` each mode holds. |
+| 6 | `assistant` | The assistant: its squircle in the bottom right corner (`AssistantDock` in the shell's `FabCorner`: the button, a pill while it has news, a card, a drawer when expanded), in two modes — this page (a page offers itself with `offerPage`; it fills the page through the page's fill guard, with `FillMark` on the page) and everywhere (acts by requests the person confirms) — and the `Conversation` each mode holds. |
 | 7+ | features | `artifacts`, `desk`, `flow`, `skills`, `system`, `analytics`, then `pings`, `review`, `curation`, `tickets`, `run`, `mrs`, `workshop`, and finally `desk-home`, `inbox`, `shell`. |
 | top | `src/routes` | Load and compose. |
 

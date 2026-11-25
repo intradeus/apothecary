@@ -1,3 +1,12 @@
+<script lang="ts" module>
+	/** How many of the newest lines are drawn, and how many more each step
+	 *  up adds. A log is DOM a line at a time: 54,000 lines drawn at once were
+	 *  five seconds of a frozen page (docs/notes, 2026-11-25). */
+	export const LOG_WINDOW = 2000;
+	/** Within this of the top, scrolling up draws the lines above. */
+	const EARLIER_PX = 300;
+</script>
+
 <script lang="ts">
 	// A program's output as lines (a run's logs, a service's tail): its URLs
 	// open on a click, it follows the bottom as it grows, and its own toolbar
@@ -9,6 +18,7 @@
 	// in it (a tail landing mid-drag would carry the selection away) or is on
 	// a match of the find.
 	import { tick, untrack, type Snippet } from 'svelte';
+	import Glyph from './Glyph.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { I } from '$lib/design/icons';
 	import { linkify } from '$lib/core/links';
@@ -45,6 +55,34 @@
 	let stick = true;
 
 	const lines = $derived((text ?? '').replace(/\n$/, '').split('\n'));
+
+	// --- the drawn window -----------------------------------------------------
+	//
+	// Only the newest lines are drawn (`shown` of them, counted from the end).
+	// Scrolling to the top, or the button there, draws the ones above and keeps
+	// the reader's place. A tail that grows slides the window while the box
+	// follows the bottom, and widens it while the reader is up the log, so
+	// their lines stay put. Text put on top (earlier output a parent loaded)
+	// is drawn: it was asked for. Anything else is a new log: its newest
+	// window. Find draws out to the match it moves to; copy takes it all.
+	let shown = $state(LOG_WINDOW);
+	let seenText = '';
+	let seenLines = 0;
+	$effect.pre(() => {
+		const now = text ?? '';
+		const count = lines.length;
+		untrack(() => {
+			const before = seenText;
+			const added = count - seenLines;
+			seenText = now;
+			seenLines = count;
+			if (!before || !now || added < 0) shown = LOG_WINDOW;
+			else if (now.length > before.length && now.endsWith(before)) shown += added;
+			else if (now.startsWith(before)) {
+				if (!stick) shown += added;
+			} else shown = LOG_WINDOW;
+		});
+	});
 
 	// A row is a line and its segments. A row nothing changed stays the same
 	// object, so the list re-renders only the rows that did: a tail its last
@@ -131,6 +169,27 @@
 		return out;
 	});
 
+	/** The first line drawn. */
+	const first = $derived(Math.max(0, lines.length - shown));
+
+	/** Draw from `line` on, at least. */
+	function draw(line: number) {
+		if (line < first) shown = lines.length - Math.max(0, line - 50);
+	}
+
+	let extending = false;
+	/** Draw the lines above, keeping what the reader sees where it is. */
+	async function showEarlier() {
+		if (extending || first === 0) return;
+		extending = true;
+		const height = viewport?.scrollHeight ?? 0;
+		const top = viewport?.scrollTop ?? 0;
+		shown += LOG_WINDOW;
+		await tick();
+		if (viewport) viewport.scrollTop = top + (viewport.scrollHeight - height);
+		extending = false;
+	}
+
 	const rows = $derived.by(() => {
 		if (cur < 0) return marked;
 		const line = matches[cur].line;
@@ -145,6 +204,7 @@
 	});
 
 	async function reveal() {
+		if (cur >= 0) draw(matches[cur].line);
 		await tick();
 		viewport?.querySelector('mark.current')?.scrollIntoView({ block: 'center' });
 	}
@@ -240,8 +300,9 @@
 	});
 
 	function onscroll() {
-		if (viewport)
-			stick = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < FOLLOW_PX;
+		if (!viewport) return;
+		stick = viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight < FOLLOW_PX;
+		if (viewport.scrollTop < EARLIER_PX && first > 0) void showEarlier();
 	}
 
 	function toTop() {
@@ -272,7 +333,7 @@
 				aria-pressed={finding}
 				title={t('ui.log.find')}
 				aria-label={t('ui.log.find')}
-				onclick={() => (finding ? closeFind() : openFind())}>{I.search}</button
+				onclick={() => (finding ? closeFind() : openFind())}><Glyph name="search" /></button
 			>
 			<button
 				class="btn-icon"
@@ -280,16 +341,17 @@
 				disabled={!text}
 				title={copied ? t('ui.log.copied') : t('ui.log.copy')}
 				aria-label={copied ? t('ui.log.copied') : t('ui.log.copy')}
-				onclick={copy}>{copied ? I.ok : I.copy}</button
+				onclick={copy}
+				>{#if copied}{I.ok}{:else}<Glyph name="copy" />{/if}</button
 			>
 			<button class="btn-icon" title={t('ui.log.top')} aria-label={t('ui.log.top')} onclick={toTop}
-				>{I.top}</button
+				><Glyph name="top" /></button
 			>
 			<button
 				class="btn-icon"
 				title={t('ui.log.bottom')}
 				aria-label={t('ui.log.bottom')}
-				onclick={follow}>{I.bottom}</button
+				onclick={follow}><Glyph name="bottom" /></button
 			>
 		</span>
 	</div>
@@ -344,8 +406,15 @@
 			{@render placeholder?.()}
 		{:else}
 			{@render head?.()}
+			{#if first > 0}
+				<button class="btn-sm earlier-lines" onclick={showEarlier}
+					>{I.up}
+					{t('ui.log.earlier', { count: Math.min(LOG_WINDOW, first) })}
+					<span class="muted">{t('ui.log.hidden', { count: first })}</span></button
+				>
+			{/if}
 			<div class="lines">
-				{#each rows as r, i (i)}<div class="l {lineClass?.(r.text) ?? ''}">
+				{#each rows.slice(first) as r, k (first + k)}<div class="l {lineClass?.(r.text) ?? ''}">
 						{#each r.segs as s, j (j)}{#if s.href}<a
 									href={s.href}
 									target="_blank"
@@ -409,6 +478,10 @@
 	.out > :global(.empty-line) {
 		font-family: var(--font-body);
 		padding: 0;
+	}
+	.earlier-lines {
+		margin: 4px 0 8px;
+		font-family: var(--font-body);
 	}
 	.l {
 		white-space: pre-wrap;

@@ -9,6 +9,7 @@
 	import { age, ago, fmtAbs, shortId, stateHueClass, stateLabel } from '$lib/core/format';
 	import { t } from '$lib/i18n/index.svelte';
 	import StatusChip from '$lib/ui/StatusChip.svelte';
+	import { I } from '$lib/design/icons';
 	import StatusMark from '$lib/ui/StatusMark.svelte';
 	import MrLink from './MrLink.svelte';
 
@@ -37,7 +38,14 @@
 
 <div class="rr rowlink">
 	{#if variant === 'finished'}
-		<StatusMark tone={mark} size="sm" title={said} />
+		<!-- An abandoned run was stopped: ■, not the bare "–" of a mark with no
+		     glyph, which read as a stray dash. -->
+		<StatusMark
+			tone={mark}
+			glyph={run.state === 'abandoned' ? I.stop : undefined}
+			size="sm"
+			title={said}
+		/>
 	{:else}
 		<StatusChip state={run.state} archived={!!run.archivedAt} compact />
 	{/if}
@@ -59,7 +67,8 @@
 		{#if trailing}
 			{@render trailing()}
 		{:else if variant === 'finished'}
-			<MrLink {run} />
+			<!-- Only a link: no merge request is nothing here, not a "—". -->
+			{#if run.mrs.length || run.mrUrl}<MrLink {run} />{/if}
 		{:else}
 			<span class="mono faint id">{shortId(run.id)}</span>
 			<span class="mono faint" title={fmtAbs(run.updatedAt)}>{age(run.updatedAt)}</span>

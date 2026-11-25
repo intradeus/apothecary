@@ -135,11 +135,17 @@
 	.hot dd {
 		text-shadow: 0 0 var(--glow-sm) var(--tone);
 	}
+	/* Framed like the counters beside it, so the two read as one HUD. */
 	.meters {
 		display: flex;
 		flex-direction: column;
 		justify-content: center;
 		gap: 6px;
+		padding: 6px 10px 7px;
+		border: 1px solid var(--term-line);
+		border-left: 2px solid var(--term-muted);
+		border-radius: var(--r-xs);
+		background: var(--term-button-bg);
 	}
 	.meter {
 		display: grid;

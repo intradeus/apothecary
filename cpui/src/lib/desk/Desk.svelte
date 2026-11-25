@@ -9,12 +9,14 @@
 		hint?: string;
 	}
 
-	/** What a view knows about where it is drawn. */
+	/** What a view knows about where it is drawn. Each field follows on its
+	 *  own: a view that reads only `visible` is not woken by every frame of a
+	 *  resize, which changes `w` and `h`. */
 	export interface ViewPlace {
 		/** Drawn right now (its leaf is on screen and it is the active tab). */
-		visible: boolean;
-		w: number;
-		h: number;
+		readonly visible: boolean;
+		readonly w: number;
+		readonly h: number;
 	}
 </script>
 
@@ -182,6 +184,28 @@
 		}
 		return m;
 	});
+
+	// One ViewPlace per view for the desk's life, each field derived on its
+	// own. A fresh { visible, w, h } on every frame of a resize made every
+	// effect reading `visible` run again (a log pane reloaded its whole log
+	// while a divider moved).
+	function place(v: ViewId): ViewPlace {
+		const visible = $derived(hosts.get(v)?.state === 'on');
+		const w = $derived(places.get(v)?.w ?? 0);
+		const h = $derived(places.get(v)?.h ?? 0);
+		return {
+			get visible() {
+				return visible;
+			},
+			get w() {
+				return w;
+			},
+			get h() {
+				return h;
+			}
+		};
+	}
+	const placeOf = new Map(VIEWS.map((v) => [v, place(v)]));
 
 	/** A view leaving with its window fades with it; one closed as a tab of
 	 *  a window that stays goes at once (the next tab is already there). */
@@ -440,11 +464,7 @@
 				}}
 				out:hostOut={v}
 			>
-				{@render view(v, {
-					visible: hs?.state === 'on',
-					w: places.get(v)?.w ?? 0,
-					h: places.get(v)?.h ?? 0
-				})}
+				{@render view(v, placeOf.get(v)!)}
 			</div>
 		{/if}
 	{/each}

@@ -133,11 +133,28 @@ describe('CommandPalette, listing', () => {
 		expect(screen.getByRole('option', { name: /Runs/ })).toHaveTextContent('G R');
 	});
 
-	it('leaves the current theme out of the actions', () => {
-		prefs.theme = 'forest';
+	it('offers no theme switching: the user card does that', async () => {
 		setup();
-		expect(screen.queryByRole('option', { name: /Use the forest theme/ })).not.toBeInTheDocument();
-		expect(screen.getByRole('option', { name: /Use the light theme/ })).toBeInTheDocument();
+		await userEvent.type(search(), 'theme');
+		expect(screen.queryByRole('option', { name: /theme/i })).not.toBeInTheDocument();
+	});
+
+	it('follows the mouse only when it moves, not a list scrolling under it', async () => {
+		setup();
+		const rows = screen.getAllByRole('option');
+		const at = { screenX: 40, screenY: 300, bubbles: true };
+		rows[1].dispatchEvent(new PointerEvent('pointermove', at));
+		await tick();
+		expect(selected()).toBe(rows[1]);
+		await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+		expect(selected()).toBe(rows[3]);
+		// The list scrolled: another row is under the still pointer.
+		rows[2].dispatchEvent(new PointerEvent('pointermove', at));
+		await tick();
+		expect(selected()).toBe(rows[3]);
+		rows[2].dispatchEvent(new PointerEvent('pointermove', { ...at, screenY: 310 }));
+		await tick();
+		expect(selected()).toBe(rows[2]);
 	});
 
 	it('lists live runs before finished ones, skips archived ones', async () => {
@@ -363,15 +380,6 @@ describe('CommandPalette, doing things', () => {
 		setup();
 		await userEvent.type(search(), 'merge');
 		expect(screen.getByRole('option', { name: /Merge requests.*G M/ })).toBeInTheDocument();
-	});
-
-	it('switches theme from a row, with no navigation', async () => {
-		const { props } = setup();
-		await userEvent.type(search(), 'forest');
-		await userEvent.keyboard('{Enter}');
-		expect(prefs.theme).toBe('forest');
-		expect(goto).not.toHaveBeenCalled();
-		expect(props.open).toBe(false);
 	});
 
 	it('offers to collapse or expand, whichever applies', async () => {

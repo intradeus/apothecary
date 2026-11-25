@@ -38,7 +38,8 @@ describe('PingsView', () => {
 		it('says when the run has raised none', () => {
 			show([]);
 			expect(screen.getByText('none yet')).toBeInTheDocument();
-			expect(screen.getByText(/^No pings\./)).toBeInTheDocument();
+			expect(screen.getByText('No pings yet')).toBeInTheDocument();
+			expect(screen.getByText(/land here, and in the inbox/)).toBeInTheDocument();
 		});
 
 		it('sums up what is pending, answered and withdrawn', () => {

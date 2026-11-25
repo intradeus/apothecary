@@ -148,9 +148,9 @@
 		border-width: 0 0 2px;
 		transform: none;
 	}
+	/* Reached by the keyboard: its edge firms up, no ring. */
 	input:focus-visible + .box {
-		outline: 2px solid var(--brand);
-		outline-offset: 2px;
+		border-color: var(--text-muted);
 	}
 	.ck:active:not(.off) .box {
 		transform: scale(var(--press-scale));

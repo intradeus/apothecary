@@ -125,6 +125,10 @@
 			name = d.skill.name;
 			files = d.contents.map(toEdit);
 			selected = files.some((f) => f.path === selected) ? selected : (files[0]?.path ?? 'SKILL.md');
+			// Into the editor now: `selected` is most often SKILL.md already, so
+			// the effect that follows it would not run, and an editor left empty
+			// would write its emptiness over the file.
+			text = files.find((f) => f.path === selected)?.text ?? '';
 			usedBy = sets.filter((s) => s.skillIds.includes(id));
 		} catch (e) {
 			loadErr = errorMessage(e);
@@ -514,7 +518,10 @@
 	.frow.sel {
 		background: var(--fill-2);
 	}
+	/* A block, not the button's centring flex: a long name starts at the left
+	   and ends in an ellipsis, instead of being cut at both ends. */
 	.fname {
+		display: block;
 		flex: 1;
 		min-width: 0;
 		text-align: left;

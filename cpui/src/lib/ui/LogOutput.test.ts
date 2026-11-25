@@ -4,7 +4,7 @@ import { createRawSnippet, tick } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { I } from '$lib/design/icons';
 import { toasts } from './toast.svelte';
-import LogOutput from './LogOutput.svelte';
+import LogOutput, { LOG_WINDOW } from './LogOutput.svelte';
 
 type Props = Parameters<typeof render<typeof LogOutput>>[1];
 
@@ -110,9 +110,11 @@ describe('LogOutput', () => {
 
 			expect(write).toHaveBeenCalledExactlyOnceWith('one\ntwo\n');
 			expect(btn('Copied')).toHaveTextContent(I.ok);
-			await vi.waitFor(() => expect(btn('Copy the whole log')).toHaveTextContent(I.copy), {
-				timeout: 3000
-			});
+			await vi.waitFor(
+				() =>
+					expect(btn('Copy the whole log').querySelector('svg[data-glyph="copy"]')).not.toBeNull(),
+				{ timeout: 3000 }
+			);
 		});
 
 		it('says in a toast when the browser refuses the clipboard', async () => {
@@ -137,7 +139,7 @@ describe('LogOutput', () => {
 			write.mockRejectedValueOnce(new Error('denied'));
 			await user.click(btn('Copied'));
 
-			expect(btn('Copy the whole log')).toHaveTextContent(I.copy);
+			expect(btn('Copy the whole log').querySelector('svg[data-glyph="copy"]')).not.toBeNull();
 			expect(toasts.list.map((x) => x.tone)).toEqual(['bad']);
 		});
 
@@ -475,6 +477,81 @@ describe('LogOutput', () => {
 			expect(screen.getByText('1,000 of 1,000')).toBeInTheDocument();
 			expect(marks(container)).toHaveLength(301);
 			expect(current(container)?.parentElement?.lastElementChild).toBe(current(container));
+		});
+	});
+
+	describe('a long log', () => {
+		/** n numbered lines, from `from`. */
+		const numbered = (n: number, from = 0) =>
+			Array.from({ length: n }, (_, i) => `line ${from + i}`).join('\n');
+		const drawn = (c: HTMLElement) =>
+			[...c.querySelectorAll('.lines > .l')].map((l) => l.textContent);
+		const total = LOG_WINDOW + 500;
+
+		it('draws only its newest lines, and the ones above on request', async () => {
+			const { container } = show({ text: numbered(total) });
+			expect(drawn(container)).toHaveLength(LOG_WINDOW);
+			expect(drawn(container)[0]).toBe('line 500');
+			expect(drawn(container).at(-1)).toBe(`line ${total - 1}`);
+			await userEvent.click(btn(/Show 500 earlier lines/));
+			expect(drawn(container)).toHaveLength(total);
+			expect(screen.queryByRole('button', { name: /earlier line/ })).toBeNull();
+		});
+
+		it('draws the lines above as the reader scrolls to the top, keeping their place', async () => {
+			const { container } = show({ text: numbered(total) });
+			let height = 1000;
+			Object.defineProperty(box(), 'scrollHeight', { get: () => height, configurable: true });
+			Object.defineProperty(box(), 'clientHeight', { value: 200, configurable: true });
+			height = 1000;
+			scrollTo(box(), 100);
+			height = 1250; // what the lines drawn above add
+			await vi.waitFor(() => expect(drawn(container)).toHaveLength(total));
+			expect(box().scrollTop).toBe(350);
+		});
+
+		it('slides along a tail it follows, and holds still for a reader up the log', async () => {
+			const { container, rerender } = show({ text: numbered(total) });
+			await rerender({ text: numbered(total + 10) });
+			expect(drawn(container)).toHaveLength(LOG_WINDOW);
+			expect(drawn(container).at(-1)).toBe(`line ${total + 9}`);
+			scrollable(box());
+			scrollTo(box(), 400);
+			await rerender({ text: numbered(total + 20) });
+			// The reader's lines stay drawn: the window widens instead.
+			expect(drawn(container)[0]).toBe('line 510');
+			expect(drawn(container)).toHaveLength(LOG_WINDOW + 10);
+		});
+
+		it('draws earlier output put on top, and starts a new log at its newest lines', async () => {
+			const { container, rerender } = show({ text: numbered(total, 1000) });
+			// The window widens by what came on top: 500 hidden above before, 500 now.
+			await rerender({ text: numbered(1000) + '\n' + numbered(total, 1000) });
+			expect(drawn(container)[0]).toBe('line 500');
+			expect(drawn(container)).toHaveLength(LOG_WINDOW + 1000);
+			await rerender({ text: numbered(total, 9000) });
+			expect(drawn(container)).toHaveLength(LOG_WINDOW);
+			expect(drawn(container)[0]).toBe('line 9500');
+		});
+
+		it('finds in the lines it has not drawn, and draws out to the match', async () => {
+			const user = userEvent.setup();
+			const { container } = show({ text: 'needle\n' + numbered(total) });
+			expect(drawn(container)).not.toContain('needle');
+			await user.click(btn('Find in the log'));
+			await user.type(field(), 'needle');
+			await vi.waitFor(() => expect(screen.getByText('1 of 1')).toBeInTheDocument());
+			await vi.waitFor(() => expect(current(container)?.parentElement).toHaveTextContent('needle'));
+			expect(drawn(container)[0]).toBe('needle');
+		});
+
+		it('copies all of it, drawn or not', async () => {
+			const writeText = vi.fn().mockResolvedValue(undefined);
+			Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true });
+			const text = numbered(total);
+			show({ text });
+			await userEvent.click(btn('Copy the whole log'));
+			expect(writeText).toHaveBeenCalledWith(text);
 		});
 	});
 });
