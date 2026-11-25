@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '$lib/api';
 import { fleet } from '$lib/app/fleet.svelte';
+import { fmtAbs } from '$lib/core/format';
 import type { Permission, Token } from '$lib/domain';
 import { confirmState } from '$lib/ui/confirm.svelte';
 import { toasts } from '$lib/ui/toast.svelte';
@@ -80,6 +81,122 @@ describe('TokenSection', () => {
 		expect(row('cli')).toHaveTextContent('never used');
 		expect(row('cli')).toHaveTextContent('signs out after 7 days unused');
 		expect(within(row('cli')).getByText('CLI')).toBeInTheDocument();
+		expect(row('full')).toHaveTextContent('never expires');
+	});
+
+	describe('a token past its expiry', () => {
+		const HOURLY = '2026-11-18T14:30:00Z';
+		const GONE = '2026-11-18T09:00:00Z';
+		const view = (name: RegExp) => screen.getByRole('radio', { name });
+		const some = () => [
+			aToken({ id: 'a', name: 'ci' }),
+			aToken({ id: 'b', name: 'session', expiresAt: HOURLY }),
+			aToken({ id: 'c', name: 'old session', expiresAt: GONE }),
+			aToken({
+				id: 'd',
+				name: 'old laptop',
+				createdAt: '2026-11-01T12:00:00Z',
+				lastUsedAt: '2026-11-09T12:00:00Z',
+				idleSeconds: 7 * 86_400
+			})
+		];
+
+		it('is left out of the list, which says how long each token has left', async () => {
+			vi.mocked(api.auth.tokens).mockResolvedValue(some());
+			render(TokenSection);
+
+			const left = await screen.findByText('expires in 2h');
+			expect(row('session')).toContainElement(left);
+			// The moment itself is behind the words.
+			expect(left).toHaveAttribute('title', fmtAbs(HOURLY));
+			expect(within(row('ci')).getByText('never expires')).not.toHaveAttribute('title');
+			expect(screen.queryByText('old session')).not.toBeInTheDocument();
+			expect(screen.queryByText('old laptop')).not.toBeInTheDocument();
+			expect(view(/Active/)).toBeChecked();
+			expect(view(/Active/)).toHaveTextContent('2');
+			expect(view(/Expired/)).toHaveTextContent('2');
+		});
+
+		it('is shown on the expired side, with when it ended, and can be revoked there', async () => {
+			vi.mocked(api.auth.tokens).mockResolvedValue(some());
+			vi.mocked(api.auth.revokeToken).mockResolvedValue(undefined as never);
+			render(TokenSection);
+			await screen.findByText('ci');
+			await userEvent.click(view(/Expired/));
+
+			expect(screen.queryByText('ci')).not.toBeInTheDocument();
+			const ended = within(row('old session')).getByText('expired 3h ago');
+			expect(ended).toHaveAttribute('title', fmtAbs(GONE));
+			// A CLI token's window ran out a week after its last use.
+			expect(within(row('old laptop')).getByText('signed out 2d ago')).toHaveAttribute(
+				'title',
+				fmtAbs('2026-11-16T12:00:00Z')
+			);
+
+			vi.mocked(api.auth.tokens).mockResolvedValue(some().filter((tk) => tk.id !== 'c'));
+			await userEvent.click(within(row('old session')).getByRole('button', { name: 'Revoke' }));
+			await confirmed(true);
+			await waitFor(() => expect(api.auth.revokeToken).toHaveBeenCalledWith('c'));
+			await waitFor(() => expect(screen.queryByText('old session')).not.toBeInTheDocument());
+			// Still the expired side.
+			expect(screen.getByText('old laptop')).toBeInTheDocument();
+			expect(view(/Expired/)).toHaveTextContent('1');
+		});
+
+		it('says when no token is on the side shown', async () => {
+			vi.mocked(api.auth.tokens).mockResolvedValue([aToken({ name: 'gone', expiresAt: GONE })]);
+			render(TokenSection);
+			expect(await screen.findByText('No active tokens')).toBeInTheDocument();
+			expect(screen.queryByText('gone')).not.toBeInTheDocument();
+			await userEvent.click(view(/Expired/));
+			expect(screen.getByText('gone')).toBeInTheDocument();
+			expect(screen.queryByText('No active tokens')).not.toBeInTheDocument();
+		});
+
+		it('says when none has expired', async () => {
+			vi.mocked(api.auth.tokens).mockResolvedValue([aToken({ name: 'ci' })]);
+			render(TokenSection);
+			await screen.findByText('ci');
+			await userEvent.click(view(/Expired/));
+			expect(screen.getByText('No expired tokens')).toBeInTheDocument();
+			expect(screen.queryByText('ci')).not.toBeInTheDocument();
+		});
+
+		it('gives way to a token just minted', async () => {
+			const tk = aToken({ id: 'new', name: 'fresh' });
+			vi.mocked(api.auth.tokens).mockResolvedValue([aToken({ name: 'gone', expiresAt: GONE })]);
+			vi.mocked(api.auth.createToken).mockResolvedValue({ token: tk, secret: 'apo_s3cret' });
+			render(TokenSection);
+			await screen.findByText('No active tokens');
+			await userEvent.click(view(/Expired/));
+			vi.mocked(api.auth.tokens).mockResolvedValue([aToken({ name: 'gone', expiresAt: GONE }), tk]);
+			await userEvent.type(screen.getByRole('textbox', { name: 'Token name' }), 'fresh');
+			await userEvent.click(submit());
+
+			expect(await screen.findByText('fresh')).toBeInTheDocument();
+			expect(view(/Active/)).toBeChecked();
+			expect(screen.queryByText('gone')).not.toBeInTheDocument();
+		});
+
+		it('leaves the active ones when its time comes, the page still open', async () => {
+			vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+			vi.setSystemTime(NOW);
+			vi.mocked(api.auth.tokens).mockResolvedValue([
+				aToken({ name: 'session', expiresAt: '2026-11-18T12:01:00Z' })
+			]);
+			const { unmount } = render(TokenSection);
+			expect(await screen.findByText('expires in 1m')).toBeInTheDocument();
+
+			vi.advanceTimersByTime(30_000);
+			expect(await screen.findByText('expires in a moment')).toBeInTheDocument();
+			vi.advanceTimersByTime(30_000);
+			expect(await screen.findByText('No active tokens')).toBeInTheDocument();
+			expect(view(/Expired/)).toHaveTextContent('1');
+
+			// The clock stops with the page.
+			unmount();
+			expect(vi.getTimerCount()).toBe(0);
+		});
 	});
 
 	it('says when there is no token', async () => {

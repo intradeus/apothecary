@@ -177,6 +177,17 @@ export function ago(ts: string | number | Date, now = Date.now()): string {
 	return t('fmt.agoD', { n: Math.floor(s / 86400) });
 }
 
+/** Relative time ahead: "in a moment", "in 3m", "in 2h", "in 4d", rounded
+ *  down (what is left is never overstated). Pass `now` from a ticking clock
+ *  to keep it live. */
+export function fromNow(ts: string | number | Date, now = Date.now()): string {
+	const s = Math.max(0, (new Date(ts).getTime() - now) / 1000);
+	if (s < 60) return t('fmt.inMoment');
+	if (s < 3600) return t('fmt.inM', { n: Math.floor(s / 60) });
+	if (s < 86400) return t('fmt.inH', { n: Math.floor(s / 3600) });
+	return t('fmt.inD', { n: Math.floor(s / 86400) });
+}
+
 /** Age without the "ago" ("38m", "2h") for dense columns. */
 export function age(ts: string | number | Date): string {
 	const s = Math.max(0, (Date.now() - new Date(ts).getTime()) / 1000);

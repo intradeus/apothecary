@@ -1,7 +1,9 @@
 <script lang="ts">
 	// The Account page's personal tokens: mint one (TokenGrantForm), its
 	// secret shown once (with the MCP client configuration when it was minted
-	// for one), and the list with what each may do and its revoke.
+	// for one), and the list with what each may do, how long it lasts and its
+	// revoke. The list is the tokens that still work; the ones past their
+	// expiry (the engine keeps them until revoked) are a switch away.
 	import { onMount } from 'svelte';
 	import { api } from '$lib/api';
 	import { fleet } from '$lib/app/fleet.svelte';
@@ -11,6 +13,7 @@
 	import type { Token } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
+	import Segmented from '$lib/ui/Segmented.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
@@ -27,6 +30,24 @@
 	let revoking = $state<string | null>(null);
 	/** The token whose calls are open. */
 	let open = $state<string | null>(null);
+
+	/** The clock the tokens' lives are read off: a token whose time comes
+	 *  while the page is open leaves the active ones. */
+	const TICK_MS = 30_000;
+	let now = $state(Date.now());
+	onMount(() => {
+		const h = setInterval(() => (now = Date.now()), TICK_MS);
+		return () => clearInterval(h);
+	});
+	const listed = $derived(tokens.map((tk) => ({ tk, life: tokenLife(tk, now) })));
+	const active = $derived(listed.filter((x) => !x.life.expired));
+	const expired = $derived(listed.filter((x) => x.life.expired));
+	let view = $state<'active' | 'expired'>('active');
+	const shown = $derived(view === 'expired' ? expired : active);
+	/** What an empty list says: no token at all, or none on this side. */
+	const none = $derived(
+		!tokens.length ? 'noTokens' : view === 'expired' ? 'noExpired' : 'noActive'
+	);
 
 	const load = async () => {
 		try {
@@ -60,6 +81,8 @@
 
 	async function created(m: { token: Token; secret: string; mcp: boolean }) {
 		minted = m;
+		// The new token is an active one: it is listed whatever was shown.
+		view = 'active';
 		await load();
 	}
 
@@ -139,9 +162,22 @@
 		{#if !loaded}
 			<Skeleton lines={2} />
 		{:else if tokens.length}
+			<div class="row">
+				<Segmented
+					options={[
+						{ value: 'active', label: t('page.account.showActive'), count: active.length },
+						{ value: 'expired', label: t('page.account.showExpired'), count: expired.length }
+					]}
+					bind:value={view}
+					size="sm"
+					glass={false}
+					label={t('page.account.show')}
+				/>
+			</div>
+		{/if}
+		{#if loaded && shown.length}
 			<div class="rows">
-				{#each tokens as tk (tk.id)}
-					{@const life = tokenLife(tk)}
+				{#each shown as { tk, life } (tk.id)}
 					<div class="r trow">
 						<span class="who">
 							<span class="nm truncate"
@@ -154,12 +190,14 @@
 							<span class="muted small truncate">{scope(tk)}</span>
 						</span>
 						<span class="mono muted">{`${tk.prefix}…`}</span>
-						<span class="muted small truncate">
-							{t('page.account.created', { ago: ago(tk.createdAt) })}
-							· {tk.lastUsedAt
-								? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt) })
-								: t('page.account.neverUsed')}{#if life.text}
-								{` · ${life.text}`}{/if}
+						<span class="when">
+							<span class="muted small truncate">
+								{t('page.account.created', { ago: ago(tk.createdAt, now) })}
+								· {tk.lastUsedAt
+									? t('page.account.lastUsed', { ago: ago(tk.lastUsedAt, now) })
+									: t('page.account.neverUsed')}
+							</span>
+							<span class="muted small truncate" title={life.at || undefined}>{life.text}</span>
 						</span>
 						<span class="row nowrap">
 							<button
@@ -179,12 +217,8 @@
 					{#if open === tk.id}<TokenCalls tokenId={tk.id} />{/if}
 				{/each}
 			</div>
-		{:else}
-			<EmptyState
-				compact
-				title={t('page.account.noTokens')}
-				text={t('page.account.noTokensText')}
-			/>
+		{:else if loaded}
+			<EmptyState compact title={t(`page.account.${none}`)} text={t(`page.account.${none}Text`)} />
 		{/if}
 	</div>
 </section>
@@ -209,7 +243,8 @@
 		grid-template-columns: minmax(0, 1fr) 110px minmax(0, 1.4fr) auto;
 		align-items: center;
 	}
-	.who {
+	.who,
+	.when {
 		display: flex;
 		flex-direction: column;
 		min-width: 0;
