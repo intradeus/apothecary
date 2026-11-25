@@ -2,6 +2,19 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.4.0 (2026-11-25)
+
+### Features
+
+- **terminal**: keep a run's terminal sessions alive across page loads
+- **sandbox**: inject env vars into sandboxes from the UI
+
+### Fixes
+
+- **assistant**: upgrades to the assistant page
+- **test**: fix tests
+- **ci**: split integration tests and add sysbox tests
+
 ## v5.3.0 (2026-11-24)
 
 ### Features
