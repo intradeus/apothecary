@@ -9,6 +9,8 @@ import type { Filled } from '$lib/domain';
 export interface PageGuard {
 	readonly changed: string[];
 	readonly pending: { fill: unknown; changed: string[] } | null;
+	/** A fill is held for another page (a handoff): its card shows it. */
+	readonly held?: boolean;
 	/** A question of this page's is being answered: a fill is its. */
 	readonly asking: boolean;
 	ask(): void;
@@ -135,6 +137,9 @@ export class HandoffGuard<T> implements PageGuard {
 	asking = $state(false);
 	/** The fill to take to its page; null: none. */
 	handoff = $state<T | null>(null);
+	get held(): boolean {
+		return this.handoff !== null;
+	}
 
 	constructor(private read: (fill: unknown) => T | null) {}
 
@@ -158,4 +163,25 @@ export class HandoffGuard<T> implements PageGuard {
 	revert() {
 		this.handoff = null;
 	}
+}
+
+/** What one conversation fills its page through: the page's guard, until
+ *  the conversation ends. An ended one's late frames ask nothing of the
+ *  page: they fill nothing, nor end a newer conversation's question. */
+export function fillHook(g: PageGuard) {
+	let ended = false;
+	return {
+		get asking() {
+			return !ended && g.asking;
+		},
+		ask: () => g.ask(),
+		answered() {
+			if (!ended) g.answered();
+		},
+		offer: (fill: unknown) => !ended && g.offer(fill),
+		end() {
+			g.answered();
+			ended = true;
+		}
+	};
 }

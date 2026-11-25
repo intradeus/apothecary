@@ -126,6 +126,8 @@ func newFakeAgentHost(t *testing.T) *fakeAgentHost {
 			if hook != nil {
 				hook(req.Text)
 			}
+			// A step (text, then a tool call) before the answer.
+			f.emit(map[string]any{"type": "message", "turn": req.Turn, "text": "Let me read the README."})
 			f.emit(map[string]any{"type": "tool_call", "turn": req.Turn, "tool": map[string]any{"title": "Read README", "status": "pending"}})
 			f.emit(map[string]any{"type": "message", "turn": req.Turn, "text": said})
 			cost := 0.5
@@ -183,15 +185,18 @@ type fakePods struct {
 	fetches int
 	state   assistantport.Status
 	ensureE error
+	// ensureCtx is the context the last Ensure ran on.
+	ensureCtx context.Context
 	// hold, when set, keeps Ensure waiting until it closes.
 	hold chan struct{}
 	// writeFail refuses a write to a path holding it.
 	writeFail string
 }
 
-func (p *fakePods) Ensure(_ context.Context, _ string, hosts []string) error {
+func (p *fakePods) Ensure(ctx context.Context, _ string, hosts []string) error {
 	p.mu.Lock()
 	p.ensured = append(p.ensured, hosts)
+	p.ensureCtx = ctx
 	hold := p.hold
 	p.mu.Unlock()
 	if hold != nil {
@@ -437,7 +442,7 @@ func TestATurn(t *testing.T) {
 		t.Errorf("a second question mid-turn = %v", err)
 	}
 	got := frames(t, w.svc, "u1", idle)
-	var fills, deltas int
+	var fills int
 	for _, f := range got {
 		switch f.Kind {
 		case "fill":
@@ -446,10 +451,8 @@ func TestATurn(t *testing.T) {
 				t.Errorf("fill frame = %+v", f)
 			}
 		case "delta":
-			deltas++
-			if strings.Contains(f.Text, "sk-secret-key") {
-				t.Error("a delta shows the API key")
-			}
+			// The answer is written unseen: no step, no tool call.
+			t.Errorf("a delta frame: %+v", f)
 		}
 	}
 	if fills != 1 {
@@ -464,6 +467,9 @@ func TestATurn(t *testing.T) {
 	}
 	if strings.Contains(all[1].Text, "sk-secret-key") || !strings.Contains(all[1].Text, "***") {
 		t.Errorf("the answer = %q, want the key scrubbed", all[1].Text)
+	}
+	if strings.Contains(all[1].Text, "README") {
+		t.Errorf("the answer = %q, want the step before the tool call left out", all[1].Text)
 	}
 	// What the harness was started with.
 	start := w.host.starts[0]
@@ -807,9 +813,10 @@ func TestStatus(t *testing.T) {
 	if st, _ := w.svc.Status(ctx, "u2", ""); st.Enabled || st.Reason != ErrNoChoice.Error() {
 		t.Errorf("no choice = %+v", st)
 	}
+	// A failed start is a warning, not a reason: the next question retries.
 	w.pods.state = assistantport.Status{State: assistantport.PodRunning, Error: "Landlock is off"}
-	if st, _ := w.svc.Status(ctx, "u1", ""); st.Enabled || st.Reason != "Landlock is off" {
-		t.Errorf("an unconfined node = %+v", st)
+	if st, _ := w.svc.Status(ctx, "u1", ""); !st.Enabled || st.Reason != "" || st.Pod.Error != "Landlock is off" {
+		t.Errorf("a failed start = %+v", st)
 	}
 	if st, _ := (&Service{}).Status(ctx, "u1", ""); st.Enabled || st.Reason == "" {
 		t.Errorf("no pods = %+v", st)
@@ -1244,13 +1251,21 @@ func TestWarm(t *testing.T) {
 		defer w.pods.mu.Unlock()
 		return slices.Clone(w.pods.ensured)
 	}
-	if err := w.svc.Warm(ctx, "u1"); err != nil {
+	// The request that asked for it ends at once: the warm goes on.
+	rctx, cancel := context.WithCancel(ctx)
+	if err := w.svc.Warm(rctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
+	cancel()
 	deadline := time.Now().Add(5 * time.Second)
 	for len(ensured()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
 	}
+	w.pods.mu.Lock()
+	if err := w.pods.ensureCtx.Err(); err != nil {
+		t.Errorf("the warm ended with its request: %v", err)
+	}
+	w.pods.mu.Unlock()
 	if err := w.svc.Warm(ctx, "u1"); err != nil {
 		t.Fatal(err)
 	}
@@ -1588,5 +1603,29 @@ func TestAStoreThatFails(t *testing.T) {
 	w.svc.Store = flakyStore{MemStore: w.store, fail: "get"}
 	if _, _, _, ok := w.svc.FillTool(ctx, live.TokenID); ok {
 		t.Error("a token whose session cannot be read binds a tool")
+	}
+}
+
+// An answer is the text after the last tool call, without inline reasoning.
+func TestAnswerText(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		do   func(a *answerText)
+		want string
+	}{
+		{"nothing", func(a *answerText) {}, ""},
+		{"one step", func(a *answerText) { a.write("Hello"); a.write(" there") }, "Hello there"},
+		{"after a tool call", func(a *answerText) { a.write("Let me look."); a.step(); a.write("It failed on CI.") }, "It failed on CI."},
+		{"ends on a tool call", func(a *answerText) { a.write("Filled the ticket."); a.step(); a.step() }, "Filled the ticket."},
+		{"a tool call first", func(a *answerText) { a.step(); a.write("Done.") }, "Done."},
+		{"thinking", func(a *answerText) { a.write("<thinking>the user wants X</thinking>\nHere is X.") }, "Here is X."},
+		{"thinking left open", func(a *answerText) { a.write("Here is X.<think>more") }, "Here is X."},
+		{"only thinking", func(a *answerText) { a.write("Answer."); a.step(); a.write("<thinking>hm</thinking>") }, "Answer."},
+	} {
+		var a answerText
+		c.do(&a)
+		if got := a.String(); got != c.want {
+			t.Errorf("%s: %q, want %q", c.name, got, c.want)
+		}
 	}
 }

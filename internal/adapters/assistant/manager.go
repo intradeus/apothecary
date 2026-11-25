@@ -42,6 +42,8 @@ type Manager struct {
 	// IdleAfter stops a pod nobody has used for this long; VolumeAfter
 	// deletes a volume unused this long (0: never).
 	IdleAfter, VolumeAfter time.Duration
+	// StartTimeout bounds one start (0: DefaultStartTimeout).
+	StartTimeout time.Duration
 	// Protocols are the transports a fetch may use (https; tests add file).
 	Protocols []string
 	Log       *slog.Logger
@@ -59,6 +61,7 @@ type personState struct {
 	standing []string // the gateway's allow list outside a fetch
 	busy     int      // fetches and turns in flight
 	err      string   // why the last start failed
+	tries    int      // starts ended: a health check clears only the err it saw
 	confined bool     // the node's kernel confines: checked once per pod
 }
 
@@ -105,25 +108,62 @@ func (m *Manager) lock(person string) func() {
 	return mu.Unlock
 }
 
+// DefaultStartTimeout bounds one start: the gateway (its rollout, up to 3
+// minutes, then its control API, up to 1), the pod (Ready within 5), then
+// the kernel check and the agent host's answer.
+const DefaultStartTimeout = 12 * time.Minute
+
+func (m *Manager) startTimeout() time.Duration {
+	if m.StartTimeout > 0 {
+		return m.StartTimeout
+	}
+	return DefaultStartTimeout
+}
+
 // Ensure brings the pod up: its gateway first (the pod's DNS and only way
 // out), then the pod, recreated on a stale image when no fetch or turn is
 // in flight, then the kernel check (no Landlock, no session) and the agent
 // host's answer.
+//
+// The start is the engine's, not the caller's: it runs on ctx's values with
+// its own deadline (StartTimeout), so a caller that stops waiting (a
+// browser that went away, a turn stopped) returns ctx's error and leaves
+// the start to finish, its outcome recorded and logged all the same.
 func (m *Manager) Ensure(ctx context.Context, person string, hosts []string) error {
 	if m.Host == nil {
 		return assistantport.ErrNoHost
 	}
+	done := make(chan error, 1)
+	go func() { done <- m.start(context.WithoutCancel(ctx), person, hosts) }()
+	select {
+	case err := <-done:
+		return err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// start is one start under the person's lock, its deadline counted from
+// when it holds it. A failed one is the pod's error (Status) until the next
+// start, a stop, or a health check that finds the pod well.
+func (m *Manager) start(ctx context.Context, person string, hosts []string) error {
 	unlock := m.lock(person)
 	defer unlock()
+	ctx, cancel := context.WithTimeout(ctx, m.startTimeout())
+	defer cancel()
 	st := m.state(person)
 	err := m.ensure(ctx, person, st, hosts)
 	m.mu.Lock()
 	st.used = m.now()
+	st.tries++
 	st.err = ""
 	if err != nil {
 		st.err = err.Error()
 	}
 	m.mu.Unlock()
+	if err != nil {
+		m.log().Error("assistant: start a pod", "person", person, "err", err)
+	}
 	return err
 }
 
@@ -143,12 +183,14 @@ func (m *Manager) ensure(ctx context.Context, person string, st *personState, ho
 	}
 	stale := found && img != m.Image
 	if !found || !running || (stale && !busy) {
-		if err := m.Host.Ensure(ctx, person, tn, stale && !busy); err != nil {
-			return fmt.Errorf("the assistant's pod: %w", err)
-		}
+		// Unchecked from here: a start that fails half-way may leave a new
+		// pod the next one finds running.
 		m.mu.Lock()
 		st.confined = false
 		m.mu.Unlock()
+		if err := m.Host.Ensure(ctx, person, tn, stale && !busy); err != nil {
+			return fmt.Errorf("the assistant's pod: %w", err)
+		}
 	}
 	_ = m.Host.Touch(ctx, person, m.now())
 	m.mu.Lock()
@@ -199,16 +241,35 @@ func (m *Manager) Status(ctx context.Context, person string) (assistantport.Stat
 	}
 	st := m.state(person)
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	failed, confined, tries := st.err, st.confined, st.tries
+	m.mu.Unlock()
 	switch {
 	case !found:
-		return assistantport.Status{State: assistantport.PodAbsent, Error: st.err}, nil
+		return assistantport.Status{State: assistantport.PodAbsent, Error: failed}, nil
 	case !running:
-		return assistantport.Status{State: assistantport.PodStarting, Error: st.err}, nil
+		return assistantport.Status{State: assistantport.PodStarting, Error: failed}, nil
 	}
-	// A pod can run and still serve no session (its node cannot confine
-	// one): the reason is the panel's to show.
-	return assistantport.Status{State: assistantport.PodRunning, Error: st.err}, nil
+	// A failed start whose pod came up since (its agent host was slow, the
+	// caller's start ran on) is over once the pod is found well: past its
+	// kernel check, its agent host answering. One that never passed the
+	// check (its node cannot confine a session) keeps its error.
+	if failed != "" && confined && m.healthy(ctx, person) {
+		m.mu.Lock()
+		if st.tries == tries {
+			st.err = ""
+		}
+		failed = st.err
+		m.mu.Unlock()
+	}
+	return assistantport.Status{State: assistantport.PodRunning, Error: failed}, nil
+}
+
+// healthy is one quick look at the agent host's /health.
+func (m *Manager) healthy(ctx context.Context, person string) bool {
+	hctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	_, err := m.call(hctx, person, http.MethodGet, "/health", nil)
+	return err == nil
 }
 
 func (m *Manager) AgentHost(ctx context.Context, person string) (assistantport.AgentHost, error) {
@@ -563,6 +624,10 @@ func (m *Manager) stopIfIdle(ctx context.Context, person string, now time.Time) 
 		m.log().Warn("assistant: stop an idle pod", "person", person, "err", err)
 		return
 	}
+	// A stopped pod starts afresh: its last start's error is over.
+	m.mu.Lock()
+	st.err = ""
+	m.mu.Unlock()
 	_ = m.Host.Touch(ctx, person, now)
 }
 

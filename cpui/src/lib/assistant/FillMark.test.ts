@@ -1,8 +1,8 @@
 import { render, screen } from '@testing-library/svelte';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { ticketFill, type TicketFields } from '$lib/domain';
-import FillButton from './FillButton.svelte';
+import FillMark from './FillMark.svelte';
 import { FillGuard } from './fillGuard.svelte';
 
 function page(init: TicketFields) {
@@ -17,17 +17,16 @@ function page(init: TicketFields) {
 
 const blank = { title: '', goal: 'my notes', changeType: 'feat', typeId: '' };
 
-describe('FillButton', () => {
-	it('opens the fill modal', async () => {
-		const onclick = vi.fn();
-		render(FillButton, { guard: page(blank).guard, onclick });
-		await userEvent.click(screen.getByRole('button', { name: 'Fill with the assistant' }));
-		expect(onclick).toHaveBeenCalledOnce();
+describe('FillMark', () => {
+	it('says nothing until a fill lands', () => {
+		render(FillMark, { guard: page(blank).guard });
+		expect(screen.queryByRole('status')).toBeNull();
+		expect(screen.queryByRole('button')).toBeNull();
 	});
 
 	it('says what a fill changed, and undoes it', async () => {
 		const p = page(blank);
-		render(FillButton, { guard: p.guard, onclick: vi.fn() });
+		render(FillMark, { guard: p.guard });
 		p.guard.ask();
 		p.guard.offer({ title: 'Fix the login page' });
 		expect(await screen.findByRole('status')).toHaveTextContent('Filled: title');
@@ -38,7 +37,7 @@ describe('FillButton', () => {
 
 	it('holds a fill over newer edits until the person picks', async () => {
 		const p = page(blank);
-		render(FillButton, { guard: p.guard, onclick: vi.fn() });
+		render(FillMark, { guard: p.guard });
 		p.guard.ask();
 		p.edit({ title: 'mine' });
 		p.guard.offer({ title: 'theirs' });

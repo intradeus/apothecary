@@ -7,8 +7,8 @@
 	import { api } from '$lib/api';
 	import { errorMessage } from '$lib/core/errors';
 	import { I } from '$lib/design/icons';
-	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
-	import FillButton from '$lib/assistant/FillButton.svelte';
+	import { assistant, offerPage } from '$lib/assistant/assistant.svelte';
+	import FillMark from '$lib/assistant/FillMark.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { takeFlowFill } from '$lib/assistant/handoff';
 	import { flowFill } from '$lib/domain';
@@ -54,13 +54,12 @@
 			if (yaml !== null) flowGuard.applyNow({ yaml });
 		});
 	});
-	let assistOpen = $state(false);
-	// The workshop's values for this flow's parameters, read when the fill
-	// modal opens: what the agent reads beside the YAML.
+	// The workshop's values for this flow's parameters, read once the
+	// assistant's panel is open: what the agent reads beside the YAML.
 	let boundParams = $state<Record<string, string>>({});
 	$effect(() => {
 		const name = ed.flow?.name;
-		if (!assistOpen || !name) return;
+		if (!assistant.open || !name) return;
 		untrack(() => {
 			api.flows.binding(projectId, name).then(
 				(b) => (boundParams = b?.params ?? {}),
@@ -68,6 +67,24 @@
 			);
 		});
 	});
+
+	// The flow offers itself to the assistant's page mode: it fills the YAML.
+	offerPage(() =>
+		ed.flow?.name
+			? {
+					kind: 'flow',
+					subject: ed.flow.name,
+					workshop: projectId,
+					name: ed.flow.name,
+					guard: flowGuard,
+					pageState: () => ({
+						yaml: ed.currentYAML(),
+						errors: ed.validation?.ok === false ? (ed.validation.errors ?? []) : [],
+						params: boundParams
+					})
+				}
+			: null
+	);
 
 	// The parser's verdict for the YAML tab's lint: its errors only.
 	const checkYaml = async (text: string) => (await api.flows.validate(text)).errors ?? [];
@@ -222,25 +239,15 @@
 					<ErrorCard cause={t('page.flow.editorFailed')} detail={errorMessage(e)} />
 				{/await}
 			{/if}
-			<!-- The local assistant floats bottom-left, beside the graph's
-			     controls: the top right is the global assistant's. -->
-			<div class="fill-at island" class:graph={ed.tab === 'graph'}>
-				<FillButton guard={flowGuard} onclick={() => (assistOpen = true)} />
-			</div>
+			<!-- What the assistant's last fill did floats bottom-left, beside
+			     the graph's controls: the top right is the assistant's. -->
+			{#if flowGuard.changed.length || flowGuard.pending}
+				<div class="fill-at island" class:graph={ed.tab === 'graph'}>
+					<FillMark guard={flowGuard} />
+				</div>
+			{/if}
 		</div>
 
-		<FillAssistant
-			bind:open={assistOpen}
-			kind="flow"
-			subject={ed.flow.name}
-			workshop={projectId}
-			guard={flowGuard}
-			pageState={() => ({
-				yaml: ed.currentYAML(),
-				errors: ed.validation?.ok === false ? (ed.validation.errors ?? []) : [],
-				params: boundParams
-			})}
-		/>
 		{#if ed.showVersions}
 			<aside class="side glass" in:slide={{ from: 'right', distance: 24 }}>
 				<FlowVersions

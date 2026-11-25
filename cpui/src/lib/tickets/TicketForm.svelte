@@ -22,8 +22,8 @@
 		ticketFill,
 		type TicketFields
 	} from '$lib/domain';
-	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
-	import FillButton from '$lib/assistant/FillButton.svelte';
+	import { offerPage } from '$lib/assistant/assistant.svelte';
+	import FillMark from '$lib/assistant/FillMark.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import FileChips from '$lib/artifacts/FileChips.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
@@ -58,10 +58,9 @@
 	let files = $state<File[]>([]);
 	let types = $state<TrackerType[]>([]);
 
-	// The local assistant: its fill sets the fields through the guard (undo,
-	// the changed marker, the click before overwriting newer edits). A new
-	// ticket's conversation is a draft's; each opening is a fresh session.
-	let fillOpen = $state(false);
+	// The assistant's page mode: its fill sets the fields through the guard
+	// (undo, the changed marker, the click before overwriting newer edits). A
+	// new ticket's conversation is a draft's.
 	const subject = init?.key ?? draftSubject();
 	const guard = new FillGuard<TicketFields>(
 		() => ({ title, goal, changeType, typeId }),
@@ -81,6 +80,14 @@
 		base_branch: branch,
 		issue_types: types.map((y) => ({ id: y.id, name: y.name, change_type: y.changeType }))
 	});
+	offerPage(() => ({
+		kind: 'ticket',
+		subject,
+		workshop: project.id,
+		name: init?.key,
+		guard,
+		pageState
+	}));
 
 	// Already-attached files, shown when editing so the list isn't invisible
 	// state the form silently round-trips.
@@ -231,7 +238,7 @@
 
 	{#if error}<div class="error">{error}</div>{/if}
 	<div class="form-actions">
-		<span class="lead"><FillButton {guard} onclick={() => (fillOpen = true)} /></span>
+		<span class="lead"><FillMark {guard} /></span>
 		{#if oncancel}<button type="button" class="btn-ghost" onclick={oncancel}
 				>{t('common.cancel')}</button
 			>{/if}
@@ -246,14 +253,6 @@
 		</button>
 	</div>
 </form>
-<FillAssistant
-	bind:open={fillOpen}
-	kind="ticket"
-	{subject}
-	workshop={project.id}
-	{guard}
-	{pageState}
-/>
 
 <style>
 	.lead {

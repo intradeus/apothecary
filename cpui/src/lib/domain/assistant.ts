@@ -102,7 +102,6 @@ export interface AssistantMessage {
 /** One event on the person's assistant stream. */
 export type AssistantFrame =
 	| { kind: 'message'; seq: number; sessionId: string; message: AssistantMessage }
-	| { kind: 'delta'; seq: number; sessionId: string; text: string; tool?: string }
 	| { kind: 'state'; seq: number; sessionId: string; busy: boolean }
 	| { kind: 'status'; seq: number; sessionId: string; text: string }
 	| {

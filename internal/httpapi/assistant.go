@@ -518,7 +518,7 @@ func (s *Server) assistantRoutes() []Route {
 			Handler: s.warmAssistant, Status: http.StatusAccepted, Enabled: haveAssistant, Action: authz.AssistantWrite},
 		{Method: "GET", Path: "/api/assistant/stream", ID: "streamAssistant", Tag: tagAssistant,
 			Summary: "Server-sent event stream of one's assistant",
-			Doc:     "Every session's answers as they are written (delta), messages as they land, a session's state, fills for the page, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.",
+			Doc:     "Every session's messages as they land (an answer once it is in), a session's state and what it is doing, fills for the page, requests, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.",
 			Query:   []Param{{Name: "after", Doc: "resume after this frame sequence", Type: "integer"}},
 			Handler: s.streamAssistant, Produces: "text/event-stream", Enabled: haveAssistant, Action: authz.AssistantRead},
 		{Method: "POST", Path: "/api/assistant/sessions/{id}/fill", ID: "fillAssistantSession", Tag: tagAssistant,

@@ -1,10 +1,12 @@
 package assistant
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -235,6 +237,11 @@ type fakeHost struct {
 	fetchErr error
 	agent    *httptest.Server
 	files    map[string]string
+	// hold, when set, keeps Ensure waiting until it closes or its context
+	// ends; ensureCtx is the context the last Ensure ran on.
+	hold      chan struct{}
+	ensureCtx context.Context
+	ensureE   error
 }
 
 func newFakeHost(t *testing.T) *fakeHost {
@@ -277,9 +284,23 @@ func newFakeHost(t *testing.T) *fakeHost {
 	return h
 }
 
-func (h *fakeHost) Ensure(_ context.Context, person string, tn tunnel, replace bool) error {
+func (h *fakeHost) Ensure(ctx context.Context, person string, tn tunnel, replace bool) error {
+	h.mu.Lock()
+	h.ensureCtx = ctx
+	hold := h.hold
+	h.mu.Unlock()
+	if hold != nil {
+		select {
+		case <-hold:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.ensureE != nil {
+		return h.ensureE
+	}
 	h.ensured = append(h.ensured, person+" replace="+map[bool]string{true: "yes", false: "no"}[replace])
 	h.pods[person] = testCfg.Image
 	h.running[person] = true
@@ -426,6 +447,147 @@ func TestEnsureStartsReusesAndRecreates(t *testing.T) {
 		t.Errorf("stale but busy: %v, %v", err, h.ensured)
 	}
 	done()
+}
+
+// lockedBuffer is a log the starts write from their own goroutines.
+type lockedBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (l *lockedBuffer) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.Write(p)
+}
+
+func (l *lockedBuffer) String() string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.b.String()
+}
+
+// podError waits for the person's pod error to be want.
+func podError(t *testing.T, m *Manager, person, want string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		st, err := m.Status(context.Background(), person)
+		if err == nil && strings.Contains(st.Error, want) && (want != "" || st.Error == "") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("pod error = %q (%v), want %q", st.Error, err, want)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// A start is the engine's: the caller going away ends its wait, not the
+// start, which runs on its own deadline and records and logs its failure.
+func TestEnsureOutlivesItsCaller(t *testing.T) {
+	m, h, _ := newManager(t)
+	var logs lockedBuffer
+	m.Log = slog.New(slog.NewTextHandler(&logs, nil))
+	h.hold = make(chan struct{})
+	h.ensureE = errors.New("no room on the node")
+	ctx, cancel := context.WithCancel(context.Background())
+	ended := make(chan error, 1)
+	go func() { ended <- m.Ensure(ctx, "usr1", nil) }()
+	for {
+		h.mu.Lock()
+		started := h.ensureCtx != nil
+		h.mu.Unlock()
+		if started {
+			break
+		}
+		time.Sleep(time.Millisecond)
+	}
+	cancel()
+	if err := <-ended; !errors.Is(err, context.Canceled) {
+		t.Errorf("the caller's wait = %v", err)
+	}
+	h.mu.Lock()
+	sctx := h.ensureCtx
+	h.mu.Unlock()
+	if sctx.Err() != nil {
+		t.Errorf("the start was cancelled with its caller: %v", sctx.Err())
+	}
+	if d, ok := sctx.Deadline(); !ok || time.Until(d) < DefaultStartTimeout-time.Minute {
+		t.Errorf("the start's deadline = %v, %v", d, ok)
+	}
+	close(h.hold)
+	podError(t, m, "usr1", "no room on the node")
+	if !strings.Contains(logs.String(), "assistant: start a pod") || !strings.Contains(logs.String(), "no room on the node") {
+		t.Errorf("the failed start is not logged: %s", logs.String())
+	}
+
+	// The engine's deadline ends a start that takes too long.
+	m.StartTimeout = 20 * time.Millisecond
+	h.hold = make(chan struct{})
+	if err := m.Ensure(context.Background(), "usr2", nil); !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("a start past its deadline = %v", err)
+	}
+	if st, _ := m.Status(context.Background(), "usr2"); st.Error == "" {
+		t.Errorf("the timed-out start left no error: %+v", st)
+	}
+}
+
+// A failed start is the pod's error until the next start, a stop, or a
+// health check that finds the pod well.
+func TestAPodErrorClears(t *testing.T) {
+	m, h, g := newManager(t)
+	ctx := context.Background()
+	if err := m.Ensure(ctx, "usr1", nil); err != nil {
+		t.Fatal(err)
+	}
+	// A later start fails with the pod up and checked: found well, over.
+	g.attachE = errors.New("gateway down")
+	if err := m.Ensure(ctx, "usr1", nil); err == nil {
+		t.Fatal("the gateway's failure was not the start's")
+	}
+	if st, _ := m.Status(ctx, "usr1"); st.State != assistantport.PodRunning || st.Error != "" {
+		t.Errorf("a healthy pod kept its error: %+v", st)
+	}
+	// One whose pod was never checked keeps it: the next start retries.
+	g.attachE = nil
+	h.ensureE = errors.New("no room on the node")
+	if err := m.Ensure(ctx, "usr2", nil); err == nil {
+		t.Fatal("the pod's failure was not the start's")
+	}
+	podError(t, m, "usr2", "no room on the node")
+	h.ensureE = nil
+	if err := m.Ensure(ctx, "usr2", nil); err != nil {
+		t.Fatal(err)
+	}
+	podError(t, m, "usr2", "")
+	// Stopped idle: its error is over.
+	h.landlock = 3
+	h.pods["usr3"], h.running["usr3"] = testCfg.Image, true
+	if err := m.Ensure(ctx, "usr3", nil); !errors.Is(err, assistantport.ErrNoLandlock) {
+		t.Fatalf("no Landlock = %v", err)
+	}
+	now := time.Now().Add(time.Hour)
+	m.Now = func() time.Time { return now }
+	m.mu.Lock()
+	m.persons["usr3"].used = now.Add(-m.IdleAfter)
+	m.mu.Unlock()
+	m.Sweep(ctx)
+	m.mu.Lock()
+	left := m.persons["usr3"].err
+	m.mu.Unlock()
+	if left != "" || !slices.Contains(h.stopped, "usr3") {
+		t.Errorf("stopped idle: err %q, stopped %v", left, h.stopped)
+	}
+	// A failed start's pod that does not answer keeps its error.
+	m.mu.Lock()
+	m.persons["usr3"].err, m.persons["usr3"].confined = "slow", true
+	m.mu.Unlock()
+	h.pods["usr3"], h.running["usr3"] = testCfg.Image, true
+	h.agent.Close()
+	if st, _ := m.Status(ctx, "usr3"); st.Error != "slow" {
+		t.Errorf("an unanswering pod lost its error: %+v", st)
+	}
 }
 
 func TestEnsureRefusesAnUnconfinedNode(t *testing.T) {

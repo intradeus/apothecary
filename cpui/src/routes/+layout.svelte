@@ -28,7 +28,7 @@
 	import { bump, indicator } from '$lib/ui/motion';
 	import Sidebar from '$lib/shell/Sidebar.svelte';
 	import CommandPalette from '$lib/shell/CommandPalette.svelte';
-	import GlobalAssistant from '$lib/assistant/GlobalAssistant.svelte';
+	import AssistantDock from '$lib/assistant/AssistantDock.svelte';
 	import LayoutButton from '$lib/desk/LayoutButton.svelte';
 	import SignIn from '$lib/shell/SignIn.svelte';
 	import Setup from '$lib/shell/Setup.svelte';
@@ -162,7 +162,8 @@
 		</Sheet>
 
 		<CommandPalette bind:open={paletteOpen} />
-		<GlobalAssistant />
+		<!-- Over the page, never in its room: the top right corner. -->
+		<AssistantDock />
 	</div>
 {/if}
 <ConfirmHost />

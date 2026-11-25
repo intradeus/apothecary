@@ -7,7 +7,6 @@ export default {
 		'Ask anything about the code as it stands — where something lives, why it is written so, what the agent changed. The session reads, never writes.',
 	'runview.ask.placeholder': 'Ask about the code…',
 	'runview.ask.keySend': 'ask',
-	'runview.ask.keyNewline': 'newline',
 	'runview.ask.attach': 'Attach',
 	'runview.ask.send': 'Ask',
 	'runview.ask.answering': 'Answering…',

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ticketFill, type TicketFields } from '$lib/domain';
-import { FillGuard, HandoffGuard } from './fillGuard.svelte';
+import { FillGuard, HandoffGuard, fillHook } from './fillGuard.svelte';
 
 function page(init: TicketFields) {
 	let cur = { ...init };
@@ -134,5 +134,27 @@ describe('HandoffGuard', () => {
 		expect(g.asking).toBe(false);
 		expect(g.changed).toEqual([]);
 		expect(g.pending).toBeNull();
+	});
+});
+
+describe('fillHook', () => {
+	it('fills through the guard until its conversation ends, then asks nothing of it', () => {
+		const g = new HandoffGuard<{ flow: string }>((f) => f as { flow: string });
+		const hook = fillHook(g);
+		hook.ask();
+		expect([hook.asking, g.asking, g.held]).toEqual([true, true, false]);
+		expect(hook.offer({ flow: 'a' })).toBe(true);
+		expect(g.held).toBe(true);
+		hook.answered();
+		expect(g.asking).toBe(false);
+		g.ask();
+		hook.end();
+		expect([hook.asking, g.asking]).toEqual([false, false]);
+		// A newer conversation's question is not this one's to end.
+		g.ask();
+		hook.answered();
+		expect(g.asking).toBe(true);
+		expect(hook.offer({ flow: 'b' })).toBe(false);
+		expect(g.handoff).toEqual({ flow: 'a' });
 	});
 });

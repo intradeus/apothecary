@@ -13,11 +13,11 @@ import { aLiveRun, aViewStore } from '$test/fixtures/run-views';
 import { deferred } from '$test/helpers';
 import { HeaderActions } from './header/actions.svelte';
 import RunHeader from './RunHeader.svelte';
+import AssistantStub from '$test/fixtures/AssistantStub.svelte';
 
-vi.mock(
-	'$lib/assistant/FillAssistant.svelte',
-	() => import('$test/fixtures/FillAssistantStub.svelte')
-);
+// The assistant's page mode, as the shell would hold it beside the page.
+beforeEach(() => void render(AssistantStub));
+
 vi.mock('$lib/api', () => ({
 	api: {
 		runs: {

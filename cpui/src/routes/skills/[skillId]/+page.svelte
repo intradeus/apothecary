@@ -10,8 +10,8 @@
 	import { api } from '$lib/api';
 	import type { Skill, SkillFileContent, SkillFields, Skillset } from '$lib/domain';
 	import { draftSubject, skillFill } from '$lib/domain';
-	import FillAssistant from '$lib/assistant/FillAssistant.svelte';
-	import FillButton from '$lib/assistant/FillButton.svelte';
+	import { offerPage } from '$lib/assistant/assistant.svelte';
+	import FillMark from '$lib/assistant/FillMark.svelte';
 	import { FillGuard } from '$lib/assistant/fillGuard.svelte';
 	import { fleet } from '$lib/app/fleet.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
@@ -55,10 +55,9 @@
 	let renameTo = $state('');
 	let uploader = $state<HTMLInputElement | null>(null);
 
-	// The local assistant: its fill sets the name and the text files through
-	// the guard; files that are not text stay as they are. A new skill's
-	// conversation is a draft's; each opening is a fresh session.
-	let fillOpen = $state(false);
+	// The assistant's page mode: its fill sets the name and the text files
+	// through the guard; files that are not text stay as they are. A new
+	// skill's conversation is a draft's.
 	let subject = $state(draftSubject());
 	// A workshop attached: the assistant reads its repositories too.
 	let assistWorkshop = $state('');
@@ -83,6 +82,15 @@
 		other_files: files.filter((f) => f.text === null).map((f) => f.path),
 		open_file: selected
 	});
+	offerPage(() => ({
+		kind: 'skill',
+		subject,
+		workshop: assistWorkshop,
+		name: name || undefined,
+		guard: skillGuard,
+		pageState: skillState,
+		workshopPicker: skillWorkshop
+	}));
 
 	const template = (n: string) => t('skills.skill.template', { name: n || 'my-skill' });
 	let templateFor = 'my-skill';
@@ -396,34 +404,13 @@
 					</div>
 				{/if}
 			{/if}
-			<div class="pane-foot">
-				<FillButton guard={skillGuard} onclick={() => (fillOpen = true)} />
-			</div>
-		</section>
-	</div>
-
-	<FillAssistant
-		bind:open={fillOpen}
-		kind="skill"
-		{subject}
-		workshop={assistWorkshop}
-		guard={skillGuard}
-		pageState={skillState}
-	>
-		{#snippet workshopPicker()}
-			{#if fleet.projects.length}
-				<div class="field">
-					<label for="sk-assist-ws">{t('assistant.skillWorkshop')}</label>
-					<Select
-						id="sk-assist-ws"
-						size="sm"
-						options={workshopOptions}
-						bind:value={assistWorkshop}
-					/>
+			{#if skillGuard.changed.length || skillGuard.pending}
+				<div class="pane-foot">
+					<FillMark guard={skillGuard} />
 				</div>
 			{/if}
-		{/snippet}
-	</FillAssistant>
+		</section>
+	</div>
 
 	{#if skill && (skill.source || usedBy.length)}
 		<div class="meta">
@@ -456,6 +443,15 @@
 		</div>
 	{/if}
 {/if}
+
+{#snippet skillWorkshop()}
+	{#if fleet.projects.length}
+		<div class="field">
+			<label for="sk-assist-ws">{t('assistant.skillWorkshop')}</label>
+			<Select id="sk-assist-ws" size="sm" options={workshopOptions} bind:value={assistWorkshop} />
+		</div>
+	{/if}
+{/snippet}
 
 <style>
 	.back {

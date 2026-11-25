@@ -8,6 +8,10 @@ import { aProject, aTicketDetail, aViewerProject } from '$test/fixtures';
 import { choose } from '$test/fixtures/app.svelte';
 import { deferred } from '$test/helpers';
 import TicketForm from './TicketForm.svelte';
+import AssistantStub from '$test/fixtures/AssistantStub.svelte';
+
+// The assistant's page mode, as the shell would hold it beside the page.
+beforeEach(() => void render(AssistantStub));
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -16,10 +20,6 @@ vi.mock('$lib/api', () => ({
 		files: { upload: vi.fn(), limits: vi.fn(), attachmentUrl: vi.fn() }
 	}
 }));
-vi.mock(
-	'$lib/assistant/FillAssistant.svelte',
-	() => import('$test/fixtures/FillAssistantStub.svelte')
-);
 
 const project = aProject({ id: 'p1', ticketSourceId: 'own' });
 const title = () => screen.getByLabelText('Title');

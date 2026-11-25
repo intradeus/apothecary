@@ -1,22 +1,49 @@
 <script lang="ts">
-	// The global assistant's conversation, as the drawer shows it
-	// (docs/assistant-plan.md): the answer as it is written, the requests it
-	// asks the person to confirm, the presets, the model, the repositories.
-	// It reads everything and changes nothing on its own: every act is a
-	// request the person confirms. The drawer's owner loads the conversation
-	// and follows its stream; this only shows it.
+	// One of the assistant's conversations, as its panel shows it
+	// (docs/assistant-plan.md): a loader while it answers, the answer once it
+	// is in (never its steps or tool calls), the presets, the model, the
+	// repositories. The panel's owner loads the conversation and follows its
+	// stream; this only shows it.
+	//
+	// Everywhere (no target): it reads everything and changes nothing on its
+	// own: every act is a request the person confirms.
+	// This page (target): it fills the page through the page's guard. Each
+	// fill shows what it changed, with Undo; an earlier one can be applied
+	// again. An answer that filled nothing can be asked again in Everywhere.
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { to } from '$lib/core/urls';
 	import { I } from '$lib/design/icons';
 	import type { AssistantMessage, AssistantRequest } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
+	import Brewing from '$lib/ui/Brewing.svelte';
 	import Callout from '$lib/ui/Callout.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
+	import PromptBox from '$lib/ui/PromptBox.svelte';
 	import Select, { type SelectOption } from '$lib/ui/Select.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import { assistant, type PageAssist } from './assistant.svelte';
 	import type { Conversation } from './conversation.svelte';
 
-	let { convo }: { convo: Conversation } = $props();
+	let {
+		convo,
+		target,
+		compact = false,
+		onexpand
+	}: {
+		convo: Conversation;
+		target?: PageAssist;
+		/** The card: the latest exchange only, no model or repositories. */
+		compact?: boolean;
+		/** Show the whole conversation (the card's "earlier messages"). */
+		onexpand?: () => void;
+	} = $props();
+
+	/** What the card shows: from the person's last question on. */
+	const shown = $derived.by(() => {
+		if (!compact) return convo.messages;
+		const at = convo.messages.findLastIndex((m) => m.role === 'person');
+		return at < 0 ? convo.messages : convo.messages.slice(at);
+	});
 
 	let draft = $state('');
 
@@ -43,6 +70,34 @@
 		if (!(await convo.ask(q))) draft = q;
 	}
 
+	/** The page's word: "ticket", "flow". */
+	const word = $derived(target ? t(`assistant.page.${target.kind}`).toLocaleLowerCase() : '');
+
+	// A question carried from the page's mode lands in Everywhere's box, to
+	// be sent as it is or reworded.
+	$effect(() => {
+		if (target || !assistant.carried) return;
+		draft = assistant.carried;
+		assistant.carried = '';
+	});
+
+	/** The newest answer that filled the page: its card has the page's Undo. */
+	const lastFill = $derived(
+		target ? (convo.messages.findLast((m) => m.fill !== undefined)?.seq ?? -1) : -1
+	);
+	/** The newest answer, when it filled nothing: it may be asked in Everywhere. */
+	const lastPlain = $derived.by(() => {
+		if (!target || convo.busy) return -1;
+		const m = convo.messages.at(-1);
+		return m?.role === 'assistant' && m.fill === undefined && !m.error ? m.seq : -1;
+	});
+
+	/** Ask in Everywhere what was asked here before answer m. */
+	function carry(m: AssistantMessage) {
+		const q = convo.messages.findLast((x) => x.role === 'person' && x.seq < m.seq);
+		if (q) assistant.carry(q.text);
+	}
+
 	/** What an act's ids name, for the person: a workshop's name, a run's
 	 *  title. An id alone hides which run an abort stops. */
 	function named(args: unknown): string[] {
@@ -57,16 +112,9 @@
 		}
 		return out;
 	}
-
-	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-			e.preventDefault();
-			void ask();
-		}
-	}
 </script>
 
-{#snippet requestCard(r: AssistantRequest, m: AssistantMessage | null)}
+{#snippet requestCard(r: AssistantRequest, m: AssistantMessage)}
 	<div class="request inset col" aria-label={t('assistant.request')}>
 		<strong class="small">{r.why}</strong>
 		<ol class="acts col">
@@ -87,9 +135,7 @@
 				</li>
 			{/each}
 		</ol>
-		{#if !m}
-			<span class="muted small">{t('assistant.requestWaits')}</span>
-		{:else if r.state === 'running'}
+		{#if r.state === 'running'}
 			<span class="pill sm tint-attention"
 				>{convo.deciding === m.seq ? t('assistant.running') : t('assistant.interrupted')}</span
 			>
@@ -115,11 +161,44 @@
 	</div>
 {/snippet}
 
+{#snippet fillCard(m: AssistantMessage, g: PageAssist)}
+	<div class="fill inset col" aria-label={t('assistant.filled', { page: word })}>
+		<strong class="small">{I.thisPage} {t('assistant.filled', { page: word })}</strong>
+		{#if m.seq === lastFill && g.guard.pending}
+			<span class="small">{t('assistant.stale')}</span>
+			<div class="row">
+				<button class="btn-primary btn-sm" onclick={() => g.guard.applyPending()}
+					>{t('assistant.applyAnyway')}</button
+				>
+				<button class="btn-sm" onclick={() => g.guard.discardPending()}
+					>{t('assistant.keepMine')}</button
+				>
+			</div>
+		{:else if m.seq === lastFill && g.guard.changed.length}
+			<span class="row">
+				<span class="small">{t('assistant.changed', { fields: g.guard.changed.join(', ') })}</span>
+				<button class="btn-sm" onclick={() => g.guard.revert()}>{t('assistant.undo')}</button>
+			</span>
+		{:else if m.seq === lastFill && g.guard.held && g.handoff}
+			{@render g.handoff()}
+		{/if}
+		{#if m.seq !== lastFill || (!g.guard.pending && !g.guard.changed.length && !g.guard.held)}
+			<button
+				class="btn-sm again"
+				onclick={() => g.guard.applyNow(m.fill)}
+				disabled={convo.busy}
+				title={t('assistant.applyAgainTip')}>{t('assistant.applyAgain')}</button
+			>
+		{/if}
+	</div>
+{/snippet}
+
 <section class="assistant col" aria-label={t('assistant.title')}>
-	{#if convo.session && convo.status?.enabled}
+	{#if target?.workshopPicker && !convo.busy}{@render target.workshopPicker()}{/if}
+	{#if convo.session && convo.status?.enabled && !compact}
 		<span class="model">
 			<Select
-				id="assistant-model"
+				id="assistant-model-{target ? 'page' : 'general'}"
 				size="sm"
 				label={t('assistant.model')}
 				options={modelOptions}
@@ -153,7 +232,15 @@
 				</div>
 			</Callout>
 		{:else}
-			{#if convo.page?.repos && convo.workshop}
+			{#if convo.status.pod.error}
+				<Callout hue="warning" glyph={I.warn} ondismiss={() => convo.dismissPodError()}>
+					<div class="col">
+						<strong>{t('assistant.podFailed')}</strong>
+						<span class="muted small">{convo.status.pod.error}</span>
+					</div>
+				</Callout>
+			{/if}
+			{#if convo.page?.repos && convo.workshop && !compact}
 				<div class="repos row" aria-label={t('assistant.repos')}>
 					{#each convo.status.repos as r (r.name)}
 						<span
@@ -177,14 +264,22 @@
 			<!-- Not .log: that is LogOutput's monospace (components.css). -->
 			<div class="thread col" aria-live="polite" aria-busy={convo.switching}>
 				{#if !convo.messages.length && !convo.busy}
-					<p class="muted">{t('assistant.drawerEmpty')}</p>
+					<p class="muted">
+						{target ? t('assistant.fillEmpty', { page: word }) : t('assistant.drawerEmpty')}
+					</p>
 					<div class="presets col">
 						{#each convo.page?.presets ?? [] as p (p)}
 							<button class="preset" onclick={() => ask(p)} disabled={convo.switching}>{p}</button>
 						{/each}
 					</div>
 				{/if}
-				{#each convo.messages as m (m.seq)}
+				{#if shown.length < convo.messages.length}
+					<button class="btn-ghost btn-sm earlier" onclick={() => onexpand?.()}
+						>{I.up}
+						{t('assistant.earlier', { count: convo.messages.length - shown.length })}</button
+					>
+				{/if}
+				{#each shown as m (m.seq)}
 					<div class="msg" class:mine={m.role === 'person'}>
 						<span class="who muted small"
 							>{m.role === 'person' ? t('assistant.you') : t('assistant.it')}</span
@@ -193,42 +288,52 @@
 						{#if m.request}
 							{@render requestCard(m.request, m)}
 						{/if}
+						{#if target && m.fill !== undefined}
+							{@render fillCard(m, target)}
+						{/if}
 						{#if m.error}<p class="error">{m.error}</p>{/if}
+						{#if m.seq === lastPlain}
+							<button
+								class="btn-ghost btn-sm carry"
+								onclick={() => carry(m)}
+								title={t('assistant.carryTip')}>{I.sparkle} {t('assistant.carry')}</button
+							>
+						{/if}
 					</div>
 				{/each}
 				{#if convo.busy}
 					<div class="msg">
 						<span class="who muted small">{t('assistant.it')}</span>
-						{#if convo.live}<p class="text">{convo.live}</p>{/if}
-						{#if convo.liveRequest}{@render requestCard(convo.liveRequest, null)}{/if}
-						<span class="muted small">{convo.tool || convo.note || t('assistant.thinking')}</span>
+						<Brewing
+							size="sm"
+							label={convo.note ||
+								(target ? t('assistant.brewing', { page: word }) : t('assistant.thinking'))}
+						/>
 					</div>
 				{/if}
 			</div>
 
-			<div class="comp inset">
-				<textarea
-					class="bare"
-					bind:value={draft}
-					rows="2"
-					placeholder={t('assistant.placeholder')}
-					aria-label={t('assistant.placeholder')}
-					onkeydown={onKey}
-					oninput={() => convo.typing(draft)}
-					disabled={convo.busy || convo.switching}></textarea>
-				<div class="foot row">
-					{#if convo.error}<span class="error" title={convo.error}>{convo.error}</span>{/if}
+			<PromptBox
+				bind:value={draft}
+				label={target ? t('assistant.fillPlaceholder', { page: word }) : t('assistant.placeholder')}
+				accent={!!target}
+				disabled={convo.busy || convo.switching}
+				error={convo.error}
+				onsubmit={() => void ask()}
+				oninput={(v) => convo.typing(v)}
+			>
+				{#snippet actions()}
 					{#if convo.busy}
-						<button class="btn-sm" onclick={() => convo.cancel()}>{t('assistant.stop')}</button>
+						<button class="btn-md" onclick={() => convo.cancel()}>{t('assistant.stop')}</button>
 					{:else}
 						<button
-							class="btn-primary btn-sm"
+							class="btn-primary btn-md"
 							onclick={() => ask()}
 							disabled={!draft.trim() || convo.switching}>{t('assistant.send')}</button
 						>
 					{/if}
-				</div>
-			</div>
+				{/snippet}
+			</PromptBox>
 		{/if}
 	</div>
 </section>
@@ -275,13 +380,6 @@
 	.preset {
 		text-align: left;
 	}
-	.comp textarea {
-		width: 100%;
-		resize: vertical;
-	}
-	.foot {
-		justify-content: flex-end;
-	}
 	.repos {
 		flex-wrap: wrap;
 		gap: 6px;
@@ -290,6 +388,27 @@
 	.request {
 		gap: 6px;
 		padding: 8px 10px;
+	}
+	/* A fill: what it did to the page, in the page's mode's colour. */
+	.fill {
+		gap: 6px;
+		padding: 8px 10px;
+		margin-top: 4px;
+		border-color: var(--accent-line);
+		background: var(--accent-bg);
+	}
+	.fill .row {
+		gap: 8px;
+		align-items: center;
+		flex-wrap: wrap;
+	}
+	.again,
+	.carry,
+	.earlier {
+		align-self: flex-start;
+	}
+	.carry {
+		margin-top: 4px;
 	}
 	.acts {
 		margin: 0;

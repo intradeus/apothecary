@@ -12,6 +12,7 @@
 	import type { AskMessage } from '$lib/domain';
 	import { t } from '$lib/i18n/index.svelte';
 	import AttachFiles from '$lib/artifacts/AttachFiles.svelte';
+	import PromptBox from '$lib/ui/PromptBox.svelte';
 	import AnnotationChip from './AnnotationChip.svelte';
 	import { annotationText, type Annotation } from './annotation';
 	import type { RunStore } from './store.svelte';
@@ -40,7 +41,6 @@
 	/** The question's files are going up: the box and its files are locked,
 	 *  so what is asked is what was on screen at Enter. */
 	let uploading = $state(false);
-	let ta = $state<HTMLTextAreaElement | null>(null);
 	let files = $state<File[]>([]);
 	let picker = $state<ReturnType<typeof AttachFiles> | null>(null);
 	/** Annotations from the Files viewer, waiting for the next question. */
@@ -93,13 +93,6 @@
 		}
 	}
 
-	function onKey(e: KeyboardEvent) {
-		if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
-			e.preventDefault();
-			void send();
-		}
-	}
-
 	// A pasted screenshot (or copied files) joins the question; pasted text
 	// is left to the browser.
 	function onPaste(e: ClipboardEvent) {
@@ -108,41 +101,34 @@
 		e.preventDefault();
 		picker?.add(pasted);
 	}
-
-	// Grow with the text, up to a third of the window.
-	$effect(() => {
-		void draft;
-		if (!ta) return;
-		ta.style.height = 'auto';
-		ta.style.height = `${Math.min(ta.scrollHeight, 220)}px`;
-	});
 </script>
 
-<div class="comp inset">
-	{#if chips.length}
-		<div class="chips" role="group" aria-label={t('run.annotate.chips')}>
-			{#each chips as chip, i (chip.id)}
-				<AnnotationChip
-					bind:annotation={chips[i]}
-					disabled={uploading}
-					onremove={() => (chips = chips.filter((c) => c.id !== chip.id))}
-				/>
-			{/each}
-		</div>
-	{/if}
-	<textarea
-		class="bare"
-		bind:this={ta}
+<div class="ask-box">
+	<PromptBox
 		bind:value={draft}
-		rows="1"
+		label={t('runview.ask.title')}
 		placeholder={t('runview.ask.placeholder')}
-		onkeydown={onKey}
-		onpaste={onPaste}
+		sendKey={t('runview.ask.keySend')}
 		disabled={busy}
 		readonly={uploading}
-		aria-label={t('runview.ask.title')}></textarea>
-	<div class="foot">
-		<span class="files">
+		{error}
+		onsubmit={send}
+		onpaste={onPaste}
+	>
+		{#snippet top()}
+			{#if chips.length}
+				<div class="chips" role="group" aria-label={t('run.annotate.chips')}>
+					{#each chips as chip, i (chip.id)}
+						<AnnotationChip
+							bind:annotation={chips[i]}
+							disabled={uploading}
+							onremove={() => (chips = chips.filter((c) => c.id !== chip.id))}
+						/>
+					{/each}
+				</div>
+			{/if}
+		{/snippet}
+		{#snippet extras()}
 			<AttachFiles
 				bind:this={picker}
 				bind:files
@@ -150,76 +136,29 @@
 				disabled={uploading}
 				label={t('runview.ask.attach')}
 			/>
-		</span>
-		<span class="keys"
-			><span><span class="k">↵</span> {t('runview.ask.keySend')}</span>
-			<span><span class="k">⇧↵</span> {t('runview.ask.keyNewline')}</span></span
-		>
-		{#if error}<span class="error" title={error}>{error}</span>{/if}
-		<span class="spacer"></span>
-		<button
-			class="btn-primary btn-md"
-			onclick={send}
-			aria-busy={sending}
-			disabled={sending || busy || (!draft.trim() && !files.length && !chips.length)}
-			>{t(busy ? 'runview.ask.answering' : 'runview.ask.send')}</button
-		>
-	</div>
+		{/snippet}
+		{#snippet actions()}
+			<button
+				class="btn-primary btn-md"
+				onclick={send}
+				aria-busy={sending}
+				disabled={sending || busy || (!draft.trim() && !files.length && !chips.length)}
+				>{t(busy ? 'runview.ask.answering' : 'runview.ask.send')}</button
+			>
+		{/snippet}
+	</PromptBox>
 </div>
 
 <style>
-	.comp {
+	.ask-box {
 		flex: none;
-		margin: 0 calc(12px + var(--fab-clear, 0px)) 12px 12px;
-		border-radius: var(--r-btn);
-		background: var(--code-bg);
 		display: flex;
 		flex-direction: column;
+		margin: 0 calc(12px + var(--fab-clear, 0px)) 12px 12px;
 	}
 	.chips {
 		display: flex;
 		flex-direction: column;
 		gap: 6px;
-		padding: 8px 14px 0;
-	}
-	textarea {
-		min-height: 44px;
-		padding: 11px 14px;
-		overflow-wrap: anywhere;
-		resize: none;
-	}
-	.comp:focus-within {
-		border-color: var(--brand-line);
-	}
-	.foot {
-		display: flex;
-		align-items: center;
-		gap: 14px;
-		padding: 6px 6px 6px 14px;
-		font-size: var(--fs-meta);
-		color: var(--text-faint);
-		min-width: 0;
-	}
-	.files {
-		flex: 0 1 auto;
-		min-width: 0;
-	}
-	.keys {
-		display: flex;
-		gap: 14px;
-		white-space: nowrap;
-		overflow: hidden;
-		min-width: 0;
-	}
-	.k {
-		font-family: var(--font-code);
-		color: var(--text-muted);
-	}
-	.error {
-		color: var(--danger-text);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		min-width: 0;
 	}
 </style>

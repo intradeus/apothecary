@@ -1744,7 +1744,7 @@ export const requestAssistantActs = <ThrowOnError extends boolean = false>(
 /**
  * Server-sent event stream of one's assistant
  *
- * Every session's answers as they are written (delta), messages as they land, a session's state, fills for the page, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.
+ * Every session's messages as they land (an answer once it is in), a session's state and what it is doing, fills for the page, requests, repository fetches. id is the frame's sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.
  */
 export const streamAssistant = <ThrowOnError extends boolean = false>(
 	options?: Options<StreamAssistantData, ThrowOnError, StreamAssistantResponse>

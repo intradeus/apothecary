@@ -7643,7 +7643,7 @@ paths:
       x-apothecary-action: assistant:fill
   /api/assistant/stream:
     get:
-      description: 'Every session''s answers as they are written (delta), messages as they land, a session''s state, fills for the page, repository fetches. id is the frame''s sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.'
+      description: 'Every session''s messages as they land (an answer once it is in), a session''s state and what it is doing, fills for the page, requests, repository fetches. id is the frame''s sequence: resume with after or Last-Event-ID; a gap event says frames past it are gone.'
       operationId: streamAssistant
       parameters:
         - description: resume after this frame sequence

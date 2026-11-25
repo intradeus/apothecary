@@ -2,7 +2,6 @@
 // fill modal on the flow, ticket, skill, run and dashboard pages.
 export default {
 	'assistant.title': 'Assistant',
-	'assistant.loading': 'Waking your assistant…',
 	'assistant.off': 'The assistant is off',
 	'assistant.noHarness':
 		'Add a Claude Code or opencode harness integration (Settings → Integrations): the assistant runs on your own.',
@@ -24,7 +23,6 @@ export default {
 	'assistant.it': 'Assistant',
 	'assistant.thinking': 'Thinking…',
 	'assistant.request': 'Asked of you',
-	'assistant.requestWaits': 'Confirm once the answer is in.',
 	'assistant.confirm': 'Do it',
 	'assistant.decline': 'Decline',
 	'assistant.confirmed': 'Done',
@@ -47,18 +45,27 @@ export default {
 	'assistant.applyAnyway': 'Fill it anyway',
 	'assistant.keepMine': 'Keep mine',
 	'assistant.failed': 'The assistant could not answer',
-	// The global assistant: the button on every page and its drawer.
+	'assistant.podFailed': 'The assistant’s last start failed: your next question starts it again.',
+	// The assistant: one button, one panel beside the page, two modes.
 	'assistant.button': 'Ask the assistant',
-	'assistant.buttonTip': 'Ask the assistant: it reads everything, and acts once you confirm',
+	'assistant.buttonTip': 'Ask the assistant (⌘J): it reads everything, and acts once you confirm',
+	'assistant.buttonPage': 'Ask the assistant (⌘J): it can fill this {page}',
 	'assistant.buttonOff': 'The assistant is off: open it to see why',
 	'assistant.newConversation': 'New conversation',
 	'assistant.settings': 'Assistant settings',
 	'assistant.close': 'Close the assistant',
+	'assistant.closeTip': 'Close the assistant (Esc)',
+	'assistant.mode.label': 'What the assistant answers about',
+	'assistant.mode.page': 'This {page}',
+	'assistant.mode.pageTip': 'About this {page}: it fills the page, and never acts (⌘J switches)',
+	'assistant.mode.pageScope':
+		'Fills this {page}: nothing is saved until you save it, and Undo puts it back. It never acts.',
+	'assistant.mode.general': 'Everywhere',
+	'assistant.mode.generalTip': 'About anything: it acts once you confirm (⌘J switches)',
+	'assistant.mode.generalScope':
+		'Reads everything, and acts once you confirm. It never changes the page.',
 	'assistant.drawerEmpty':
 		'Ask about anything here, or have me act: starting runs, filing tickets, saving flows. I ask you before I change anything.',
-	// The local assistant: a page's fill button and its modal.
-	'assistant.fillButton': 'Fill with the assistant',
-	'assistant.fillTitle': 'Fill with the assistant · {page}',
 	'assistant.page.flow': 'Flow',
 	'assistant.page.ticket': 'Ticket',
 	'assistant.page.skill': 'Skill',
@@ -66,9 +73,19 @@ export default {
 	'assistant.page.run': 'Run',
 	'assistant.page.general': 'Assistant',
 	'assistant.fillEmpty':
-		'Say what this page should hold, or how to change it. What the page holds now goes with your words; the fill lands in the page unsaved, with Undo.',
-	'assistant.fillPlaceholder': 'What should this page hold?',
+		'Say what this {page} should hold, or how to change it. What it holds now goes with your words; the fill lands unsaved, with Undo.',
+	'assistant.fillPlaceholder': 'What should this {page} hold?',
 	'assistant.brewing': 'Brewing your {page}…',
+	'assistant.filled': 'Filled this {page}',
+	'assistant.applyAgain': 'Apply this again',
+	'assistant.applyAgainTip': 'Fill the page with this answer again, over what it holds now',
+	'assistant.earlier_one': '{count} earlier message',
+	'assistant.earlier_other': '{count} earlier messages',
+	'assistant.expand': 'Show the whole conversation',
+	'assistant.restore': 'Back to the latest',
+	'assistant.carry': 'Ask in Everywhere',
+	'assistant.carryTip':
+		'This mode only fills the page: take your question to Everywhere, which can act once you confirm',
 	// The settings page (System → Assistant).
 	'assistant.settingsApply':
 		'Changes apply to new conversations: an open one keeps its harness and skills until you start a new one.',

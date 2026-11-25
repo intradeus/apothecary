@@ -581,8 +581,8 @@ export const assistant = {
 			await unwrap(gen.refreshAssistantRepos({ body: { workshop_id: workshop } })),
 			map.toAssistantRepo
 		),
-	/** Follow one's assistant from now: every session's answers as they
-	 *  are written, messages, state, fills, fetches. A reconnect resumes
+	/** Follow one's assistant from now: every session's messages (an
+	 *  answer once it is in), state, fills, fetches. A reconnect resumes
 	 *  from the last frame seen; a gap frame says some were lost (reload).
 	 *  onReady fires each time it connects, once the engine follows it:
 	 *  every frame from then on reaches onFrame, so a record read after it
@@ -614,15 +614,6 @@ export const assistant = {
 					message: map.toAssistantMessage(w.message as Wire.AssistantMessage)
 				});
 			});
-			on('delta', (w, seq) =>
-				onFrame({
-					kind: 'delta',
-					seq,
-					sessionId: str(w.session),
-					text: str(w.text),
-					tool: str(w.tool) || undefined
-				})
-			);
 			on('state', (w, seq) =>
 				onFrame({ kind: 'state', seq, sessionId: str(w.session), busy: !!w.busy })
 			);
