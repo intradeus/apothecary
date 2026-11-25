@@ -15,6 +15,7 @@ import {
 	fmtPct,
 	fmtRate,
 	fmtTime,
+	fromNow,
 	isTerminal,
 	plural,
 	portLabel,
@@ -254,6 +255,24 @@ describe('relative times', () => {
 
 	it('reads ago from the clock it is given', () => {
 		expect(ago(NOW, NOW + 3 * MIN)).toBe('3m ago');
+	});
+
+	it.each<[number, string]>([
+		[-MIN, 'in a moment'],
+		[0, 'in a moment'],
+		[59 * SEC, 'in a moment'],
+		[MIN, 'in 1m'],
+		[59 * MIN + 59 * SEC, 'in 59m'],
+		[HOUR, 'in 1h'],
+		[DAY - SEC, 'in 23h'],
+		[DAY, 'in 1d'],
+		[30 * DAY - SEC, 'in 29d']
+	])('reads something %ims ahead, never overstating it', (ahead, relative) => {
+		expect(fromNow(NOW + ahead)).toBe(relative);
+	});
+
+	it('reads what is ahead from the clock it is given', () => {
+		expect(fromNow(new Date(NOW + HOUR).toISOString(), NOW + 57 * MIN)).toBe('in 3m');
 	});
 
 	it.each<[string, string | number | Date]>([
