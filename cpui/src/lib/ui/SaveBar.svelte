@@ -66,15 +66,20 @@
 </div>
 
 <style>
+	/* Docked to the window's bottom edge (--foot-stick): flat underneath. */
 	.sb {
 		position: sticky;
-		bottom: 0;
+		bottom: var(--foot-stick);
+		border-bottom-left-radius: 0;
+		border-bottom-right-radius: 0;
+		border-bottom: 0;
 		z-index: var(--z-float);
 		display: flex;
 		align-items: center;
 		gap: 10px;
 		flex-wrap: wrap;
-		padding: 8px 10px 8px 14px;
+		/* Its trailing end keeps clear of the corner's buttons (FabCorner). */
+		padding: 8px calc(10px + var(--fab-clear-x)) 8px 14px;
 		border-radius: var(--r-group);
 	}
 	.saved {

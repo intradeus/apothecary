@@ -6,6 +6,7 @@ import { fleet } from '$lib/app/fleet.svelte';
 import type { KindDescriptor } from '$lib/domain';
 import { anIntegration, aWorkshop } from '$test/fixtures/app.svelte';
 import PortIntegrations from './PortIntegrations.svelte';
+import WithHeader from '$test/fixtures/WithHeader.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -43,7 +44,7 @@ beforeEach(() => {
 
 describe('PortIntegrations', () => {
 	it('lists only the integrations of its own kind, with who uses them', async () => {
-		render(PortIntegrations, { port: 'repository' });
+		render(WithHeader, { props: { page: PortIntegrations, props: { port: 'repository' } } });
 		expect(await screen.findByText('Work GitLab')).toBeInTheDocument();
 		expect(screen.queryByText('Claude')).not.toBeInTheDocument();
 		expect(screen.getByRole('heading', { name: 'Repositories' })).toBeInTheDocument();
@@ -51,7 +52,7 @@ describe('PortIntegrations', () => {
 	});
 
 	it('adds from a menu of the port’s kinds when it has several', async () => {
-		render(PortIntegrations, { port: 'repository' });
+		render(WithHeader, { props: { page: PortIntegrations, props: { port: 'repository' } } });
 		await userEvent.click(await screen.findByRole('button', { name: /Add repository/ }));
 		const menu = screen.getByRole('menu');
 		expect(
@@ -65,7 +66,7 @@ describe('PortIntegrations', () => {
 	});
 
 	it('adds with one button when the port has a single kind, and closes on Cancel', async () => {
-		render(PortIntegrations, { port: 'harness' });
+		render(WithHeader, { props: { page: PortIntegrations, props: { port: 'harness' } } });
 		await userEvent.click(await screen.findByRole('button', { name: /Add harness/ }));
 		expect(screen.getByText('New Claude Code')).toBeInTheDocument();
 
@@ -75,7 +76,9 @@ describe('PortIntegrations', () => {
 
 	it('says what a missing one means', async () => {
 		vi.mocked(api.integrations.list).mockResolvedValue([]);
-		const { unmount } = render(PortIntegrations, { port: 'repository' });
+		const { unmount } = render(WithHeader, {
+			props: { page: PortIntegrations, props: { port: 'repository' } }
+		});
 		expect(await screen.findByText('A workshop needs one repository to run.')).toBeInTheDocument();
 		unmount();
 
@@ -83,18 +86,18 @@ describe('PortIntegrations', () => {
 			...KINDS,
 			kind({ port: 'ticketsource', kind: 'jira', label: 'Jira' })
 		]);
-		render(PortIntegrations, { port: 'ticketsource' });
+		render(WithHeader, { props: { page: PortIntegrations, props: { port: 'ticketsource' } } });
 		expect(await screen.findByText(/tickets can always be written by hand/)).toBeInTheDocument();
 	});
 
 	it('shows an engine with no kinds for the port', async () => {
-		render(PortIntegrations, { port: 'ticketsource' });
+		render(WithHeader, { props: { page: PortIntegrations, props: { port: 'ticketsource' } } });
 		expect(await screen.findByText('No kinds registered')).toBeInTheDocument();
 	});
 
 	it('shows a failed load, and retries it', async () => {
 		vi.mocked(api.integrations.list).mockRejectedValueOnce(new Error('engine down'));
-		render(PortIntegrations, { port: 'repository' });
+		render(WithHeader, { props: { page: PortIntegrations, props: { port: 'repository' } } });
 		expect(await screen.findByText('engine down')).toBeInTheDocument();
 
 		await userEvent.click(screen.getByRole('button', { name: /Retry/ }));

@@ -8,6 +8,7 @@
 	// between the setup page (no account yet), the sign-in page, and the app;
 	// a 401 later drops back to sign-in in place, so a deep link survives.
 	import '../app.css';
+	import Glyph from '$lib/ui/Glyph.svelte';
 	import favicon from '../assets/mark/svg/apothecary-tile-primary.svg?url';
 	import faviconPng from '../assets/app-icons/favicon-32x32.png?url';
 	import { goto, afterNavigate } from '$app/navigation';
@@ -24,11 +25,11 @@
 	import Sheet from '$lib/ui/Sheet.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
-	import { I } from '$lib/design/icons';
 	import { bump, indicator } from '$lib/ui/motion';
 	import Sidebar from '$lib/shell/Sidebar.svelte';
 	import CommandPalette from '$lib/shell/CommandPalette.svelte';
 	import AssistantDock from '$lib/assistant/AssistantDock.svelte';
+	import FabCorner from '$lib/ui/FabCorner.svelte';
 	import LayoutButton from '$lib/desk/LayoutButton.svelte';
 	import SignIn from '$lib/shell/SignIn.svelte';
 	import Setup from '$lib/shell/Setup.svelte';
@@ -135,14 +136,13 @@
 			</main>
 		</div>
 
-		<LayoutButton />
-
 		<nav class="mtabs island" aria-label={t('page.layout.primary')} use:indicator>
 			{#each tabs as tab (tab.id)}
 				{@const on = tab.match(page.url.pathname)}
 				{@const n = tab.id === 'inbox' ? fleet.inboxCount : 0}
 				<a class:on href={tab.href()} aria-current={on ? 'page' : undefined}
-					><span class="ti">{tab.icon}</span>{tab.label}{#if tab.id === 'inbox'}<span
+					><span class="ti"><Glyph name={tab.icon} size="18px" /></span
+					>{tab.label}{#if tab.id === 'inbox'}<span
 							class="count hot sm"
 							class:gone={!n}
 							use:bump={n}>{n}</span
@@ -150,7 +150,7 @@
 				>
 			{/each}
 			<button onclick={() => (drawerOpen = true)}
-				><span class="ti">{I.more}</span>{t('page.layout.more')}</button
+				><span class="ti"><Glyph name="more" size="18px" /></span>{t('page.layout.more')}</button
 			>
 		</nav>
 		<Sheet bind:open={drawerOpen} side="left" label={t('page.layout.navigation')}>
@@ -162,8 +162,11 @@
 		</Sheet>
 
 		<CommandPalette bind:open={paletteOpen} />
-		<!-- Over the page, never in its room: the top right corner. -->
-		<AssistantDock />
+		<!-- The corner: a page's buttons above, the assistant in the corner. -->
+		<FabCorner>
+			<LayoutButton />
+			<AssistantDock />
+		</FabCorner>
 	</div>
 {/if}
 <ConfirmHost />

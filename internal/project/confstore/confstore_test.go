@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"apothecary/internal/flow/builtin"
 	"apothecary/internal/platform/secrets"
 )
 
@@ -362,5 +363,25 @@ func TestKindValidation(t *testing.T) {
 	}
 	if _, err := svc.CreateIntegration(ctx, Integration{Port: PortRepository, Kind: "gitlab", Name: "ok"}); err != nil {
 		t.Errorf("valid kind refused: %v", err)
+	}
+}
+
+// A run started on a built-in nobody saved is pinned to the built-in's hash:
+// its version reads as that built-in, as the engine resolves it, not as
+// missing.
+func TestABuiltinsVersionReadsAsTheBuiltin(t *testing.T) {
+	svc, _ := newSvc(t)
+	ctx := context.Background()
+	b := builtin.Flow("builder")
+	v, err := svc.FlowVersion(ctx, "prj", b.Hash)
+	if err != nil {
+		t.Fatalf("the built-in's version = %v", err)
+	}
+	want, _ := builtin.FlowYAML("builder")
+	if v.Name != "builder" || v.Hash != b.Hash || v.YAML != want || v.ProjectID != "prj" {
+		t.Errorf("version = %+v", v)
+	}
+	if _, err := svc.FlowVersion(ctx, "prj", "no-such-hash"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("an unknown hash = %v, want not found", err)
 	}
 }

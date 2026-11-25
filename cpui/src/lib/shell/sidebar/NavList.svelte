@@ -1,6 +1,7 @@
 <script lang="ts">
 	// The primary nav of the full sidebar, the bead sliding between its items.
 	import { t } from '$lib/i18n/index.svelte';
+	import Glyph from '$lib/ui/Glyph.svelte';
 	import { NAV, type NavItem } from '$lib/app/nav';
 	import { bump, indicator } from '$lib/ui/motion';
 
@@ -21,7 +22,7 @@
 			aria-current={n.match(path) ? 'page' : undefined}
 			onclick={onnavigate}
 		>
-			<span class="ic">{n.icon}</span>
+			<span class="ic"><Glyph name={n.icon} size="16px" /></span>
 			<span class="grow">{n.label}</span>
 			<span
 				class="count"

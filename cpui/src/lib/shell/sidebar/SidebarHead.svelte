@@ -4,7 +4,6 @@
 	import { prefs } from '$lib/app/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import Logo from '$lib/ui/Logo.svelte';
-	import { I } from '$lib/design/icons';
 	import ChromeButton from './ChromeButton.svelte';
 
 	let { drawer, onsearch }: { drawer: boolean; onsearch: () => void } = $props();
@@ -18,7 +17,7 @@
 	</div>
 	{#if !drawer}
 		<ChromeButton
-			icon={I.collapse}
+			icon="collapse"
 			size="sm"
 			title={t('shell.sidebar.collapseTitle')}
 			label={t('shell.sidebar.collapse')}

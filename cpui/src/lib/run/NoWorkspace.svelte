@@ -31,13 +31,18 @@
 </div>
 
 <style>
+	/* Centred by its margins, not justify-content: in a window shorter than
+	   it, a justify-centred box spills over the top too, where no scroll
+	   reaches (its button was cut in half in a short Vitals window). */
 	.nw {
 		flex: 1;
 		min-height: 0;
 		padding: 12px;
 		display: flex;
 		flex-direction: column;
-		justify-content: center;
 		overflow: auto;
+	}
+	.nw > :global(*) {
+		margin-block: auto;
 	}
 </style>

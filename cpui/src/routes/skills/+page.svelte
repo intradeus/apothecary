@@ -81,11 +81,12 @@
 	<HeaderAction>
 		<div class="row nowrap">
 			<button
+				class="btn-lg"
 				class:btn-sel={importing}
 				aria-pressed={importing}
 				onclick={() => (importing = !importing)}>{t('skills.import')}</button
 			>
-			<a class="btn" href={to.newSkillset()}>{I.add} {t('skills.newSet')}</a>
+			<a class="btn btn-lg" href={to.newSkillset()}>{I.add} {t('skills.newSet')}</a>
 			<a class="btn btn-primary btn-lg" href={to.newSkill()}>{I.add} {t('skills.new')}</a>
 		</div>
 	</HeaderAction>

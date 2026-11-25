@@ -30,7 +30,8 @@
 	const WIDTH: Record<RunCol, string> = {
 		title: 'minmax(0,1fr)',
 		id: '70px',
-		state: '150px',
+		// A chip and its "archived" marker, side by side.
+		state: '164px',
 		ws: '22px',
 		stage: 'minmax(110px,170px)',
 		workshop: 'minmax(90px,160px)',
@@ -69,10 +70,13 @@
 	// Without a title column the id is the row's link, so it stays on phones.
 	const wide = $derived(cols.includes('title') ? WIDE : WIDE.filter((c) => c !== 'id'));
 	const tpl = $derived(cols.map((c) => WIDTH[c]).join(' '));
+	// The state keeps its width when narrow: each row is its own grid, so an
+	// `auto` column sized itself per row, and a chip without its "archived"
+	// marker sat further right than the ones with it.
 	const tplSm = $derived(
 		cols
 			.filter((c) => !wide.includes(c))
-			.map((c) => (c === 'state' ? 'auto' : WIDTH[c]))
+			.map((c) => WIDTH[c])
 			.join(' ')
 	);
 </script>

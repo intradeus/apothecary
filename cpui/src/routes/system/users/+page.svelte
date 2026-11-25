@@ -198,7 +198,7 @@
 				<div class="r head urow">
 					<span></span><span>{t('page.users.name')}</span><span>{t('page.users.email')}</span><span
 						>{t('page.users.role')}</span
-					><span class="num">{t('page.users.lastSeen')}</span><span></span>
+					><span>{t('page.users.lastSeen')}</span><span></span>
 				</div>
 				{#each users as u (u.id)}
 					<div class="r urow" class:off={u.disabled}>
@@ -283,8 +283,11 @@
 {/if}
 
 <style>
+	/* Fixed widths, not auto: each row is its own grid, and auto columns sized
+	   to each row's content (the head's labels, a row's chip or buttons) left
+	   the head out of line with the rows. */
 	.urow {
-		grid-template-columns: 30px minmax(0, 1.1fr) minmax(0, 1.3fr) auto 90px auto;
+		grid-template-columns: 30px minmax(0, 1.1fr) minmax(0, 1.3fr) 120px 90px 230px;
 		align-items: center;
 	}
 	.urow.off {

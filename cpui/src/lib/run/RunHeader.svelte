@@ -161,8 +161,7 @@
 		z-index: var(--z-bar);
 		flex: none;
 		border-radius: var(--r-pane);
-		/* The trailing edge stays clear of the global assistant's button. */
-		padding: 8px var(--assistant-inset) 8px 16px;
+		padding: 8px 16px;
 		display: flex;
 		align-items: center;
 		gap: 8px;
@@ -196,7 +195,6 @@
 	@container runpage (max-width: 1000px) {
 		.rh {
 			flex-wrap: wrap;
-			padding-right: var(--assistant-inset);
 		}
 		.groups {
 			justify-content: flex-start;
@@ -205,7 +203,7 @@
 	}
 	@container runpage (max-width: 760px) {
 		.rh {
-			padding: 10px var(--assistant-inset) 10px 12px;
+			padding: 10px 12px;
 		}
 		.groups {
 			flex-basis: 100%;

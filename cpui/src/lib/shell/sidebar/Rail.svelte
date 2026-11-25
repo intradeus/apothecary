@@ -2,6 +2,7 @@
 	// The collapsed sidebar: the same destinations and workshops as icons, each
 	// list with its own bead, then capacity, language and the user card.
 	import { fleet } from '$lib/app/fleet.svelte';
+	import Glyph from '$lib/ui/Glyph.svelte';
 	import { prefs } from '$lib/app/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
 	import { NAV, type NavItem } from '$lib/app/nav';
@@ -9,7 +10,6 @@
 	import type { Project } from '$lib/domain';
 	import Logo from '$lib/ui/Logo.svelte';
 	import Vial from '$lib/ui/Vial.svelte';
-	import { I } from '$lib/design/icons';
 	import { bump, indicator } from '$lib/ui/motion';
 	import ChromeButton from './ChromeButton.svelte';
 	import LocaleSelect from './LocaleSelect.svelte';
@@ -36,14 +36,14 @@
 
 <Logo />
 <ChromeButton
-	icon={I.expand}
+	icon="expand"
 	size="exp"
 	title={t('shell.sidebar.expandTitle')}
 	label={t('shell.sidebar.expand')}
 	onclick={() => prefs.toggleCollapsed()}
 />
 <ChromeButton
-	icon={I.search}
+	icon="search"
 	title={t('shell.sidebar.searchTitle')}
 	label={t('shell.sidebar.search')}
 	onclick={onsearch}
@@ -58,7 +58,7 @@
 			title={n.label}
 			aria-label={n.label}
 			aria-current={n.match(path) ? 'page' : undefined}
-			>{n.icon}{#if n.id === 'inbox' || n.id === 'notices'}<span
+			><Glyph name={n.icon} size="18px" />{#if n.id === 'inbox' || n.id === 'notices'}<span
 					class="count hot sm rbadge"
 					class:gone={!c}
 					use:bump={c}>{c}</span
@@ -82,14 +82,19 @@
 	{/each}
 </div>
 <span class="grow"></span>
-<span
-	class="mono rcap"
-	title={t('ui.meter.title', {
-		label: t('shell.sidebar.runs'),
-		value: fleet.capacity.runs.used,
-		max: fleet.capacity.runs.max || '–'
-	})}>{fleet.capacity.runs.used}/{fleet.capacity.runs.max || '–'}</span
->
+<!-- Once the limits are in: before, "0/–" flashed while the first poll ran. -->
+{#if fleet.limits}
+	<span
+		class="mono rcap"
+		title={t('ui.meter.title', {
+			label: t('shell.sidebar.runs'),
+			value: fleet.capacity.runs.used,
+			max: fleet.capacity.runs.max || '–'
+		})}>{fleet.capacity.runs.used}/{fleet.capacity.runs.max || '–'}</span
+	>
+{:else}
+	<span class="rcap" aria-hidden="true"></span>
+{/if}
 <LocaleSelect rail />
 <UserCard rail bind:btn={userBtn} {onmenu} />
 

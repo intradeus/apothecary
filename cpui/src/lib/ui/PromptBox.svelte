@@ -101,14 +101,10 @@
 		display: flex;
 		flex-direction: column;
 	}
-	.comp:focus-within {
-		border-color: var(--brand-line);
-	}
+	/* The box is the field: focus is the caret in it, no ring and no
+	   border change (the global :focus-visible outline included). */
 	.comp.accent {
 		border-color: var(--accent-line);
-	}
-	.comp.accent:focus-within {
-		border-color: var(--accent);
 	}
 	.top {
 		display: flex;
@@ -116,12 +112,16 @@
 		gap: 6px;
 		padding: 8px 14px 0;
 	}
-	/* .bare: the box is the field. */
-	textarea {
+	/* .bare: the box is the field. Under .comp, so it outranks the global
+	   textarea.bare (which zeroes the sides). */
+	.comp textarea {
 		min-height: 44px;
 		padding: 11px 14px;
 		overflow-wrap: anywhere;
 		resize: none;
+	}
+	.comp textarea:focus-visible {
+		outline: none;
 	}
 	.foot {
 		display: flex;

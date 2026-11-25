@@ -9,8 +9,8 @@
 // dialog starts such a run itself (NothingRunForm).
 
 import { api } from '$lib/api';
+import type { GlyphName } from '$lib/design/glyphs';
 import { to } from '$lib/core/urls';
-import { I } from '$lib/design/icons';
 import type { OperatesOn } from '$lib/domain/flowdoc';
 import { t } from '$lib/i18n/index.svelte';
 
@@ -36,7 +36,8 @@ export interface WorkItemKind {
 	readonly label: string;
 	/** Singular, for the New run dialog's tab and picker. */
 	readonly one: string;
-	icon: string;
+	/** Its SVG icon ($lib/design/glyphs). */
+	icon: GlyphName;
 	/** The second key of its "G then …" chord. */
 	chord: string;
 	/** On the mobile tab bar. */
@@ -72,7 +73,7 @@ export const WORK_ITEMS: readonly WorkItemKind[] = [
 		get one() {
 			return t('page.runs.newModeTicket');
 		},
-		icon: I.tickets,
+		icon: 'tickets',
 		chord: 't',
 		mobile: true,
 		list: () => to.tickets(),
@@ -110,7 +111,7 @@ export const WORK_ITEMS: readonly WorkItemKind[] = [
 		get one() {
 			return t('page.runs.newModeMR');
 		},
-		icon: I.branch,
+		icon: 'mergeRequests',
 		chord: 'm',
 		mobile: false,
 		list: () => to.mergeRequests(),

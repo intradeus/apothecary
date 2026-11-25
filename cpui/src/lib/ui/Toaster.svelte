@@ -74,10 +74,11 @@
 </div>
 
 <style>
+	/* Beside the corner's buttons (FabCorner), never over them. */
 	.toaster {
 		position: fixed;
-		right: 16px;
-		bottom: 16px;
+		right: calc(var(--fab-inset) + var(--fab-size) + var(--fab-gap));
+		bottom: var(--fab-inset);
 		z-index: var(--z-palette);
 		display: flex;
 		flex-direction: column;
@@ -91,7 +92,7 @@
 		align-items: center;
 		gap: 10px;
 		min-width: 260px;
-		max-width: min(420px, calc(100vw - 32px));
+		max-width: min(420px, calc(100vw - 32px - var(--fab-size) - var(--fab-gap)));
 		padding: 7px 7px 7px 12px;
 		border-radius: var(--r-btn);
 		font-size: var(--fs-ui);
@@ -105,7 +106,7 @@
 	@media (max-width: 760px) {
 		.toaster {
 			left: 8px;
-			right: 8px;
+			right: calc(8px + var(--fab-size) + var(--fab-gap));
 			bottom: 76px;
 			align-items: stretch;
 		}

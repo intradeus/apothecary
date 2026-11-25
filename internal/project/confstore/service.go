@@ -694,6 +694,20 @@ func (s *Service) FlowVersions(ctx context.Context, projectID, name string) ([]F
 	return s.db.ListFlowVersions(ctx, projectID, name)
 }
 
+// FlowVersion is one version of a project's flow by content hash: a saved
+// one, else the built-in of that hash. A run started on a built-in nobody
+// saved is pinned to its hash, which was never written to the database (the
+// engine's source resolves it the same way: builtin.FlowSource).
 func (s *Service) FlowVersion(ctx context.Context, projectID, hash string) (FlowVersion, error) {
-	return s.db.GetFlowVersion(ctx, projectID, hash)
+	v, err := s.db.GetFlowVersion(ctx, projectID, hash)
+	if !errors.Is(err, ErrNotFound) {
+		return v, err
+	}
+	for _, name := range builtin.FlowNames() {
+		if f := builtin.Flow(name); f != nil && f.Hash == hash {
+			src, _ := builtin.FlowYAML(name)
+			return FlowVersion{ProjectID: projectID, Hash: hash, Name: name, YAML: src}, nil
+		}
+	}
+	return v, err
 }

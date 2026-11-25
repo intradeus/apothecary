@@ -151,8 +151,9 @@ export default {
 	'runview.pings.withdrawn': '{count} withdrawn',
 	'runview.pings.raised': 'Pings raised by this run',
 	'runview.pings.none_yet': 'none yet',
+	'runview.pings.emptyTitle': 'No pings yet',
 	'runview.pings.empty':
-		"No pings. Gates and the agent's own questions land here — and in the inbox — when the run needs you.",
+		"Gates and the agent's own questions land here, and in the inbox, when the run needs you.",
 	'runview.pings.unwanted': 'unwanted',
 	'runview.pings.wanted': 'wanted',
 	'runview.pings.st_withdrawn': 'withdrawn',
@@ -173,6 +174,8 @@ export default {
 	'runview.egress.col_seen': 'Seen',
 	'runview.egress.col_rule': 'Rule now',
 	'runview.egress.col_proto': 'Proto',
+	'runview.egress.col_hits': 'Hits',
+	'runview.egress.col_hits_title': 'How many connections went to this host',
 	'runview.egress.col_out_in': 'Out/in',
 	'runview.egress.col_last': 'Last',
 	'runview.egress.seen_title':

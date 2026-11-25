@@ -9,16 +9,18 @@
 	import type { MergeRequestRow } from '$lib/domain';
 
 	let { row }: { row: MergeRequestRow } = $props();
+	// Each separator is written {' · '}: Svelte trims the whitespace a block
+	// starts with, which glued the dot to the author ("intradeus· draft").
 </script>
 
 <span class="small faint meta"
-	>{row.mr.author}{#if row.runs > 0}
-		· <span class="pill sm tint-brand" title={t('workshop.mrs.processedTitle')}
+	>{row.mr.author}{#if row.runs > 0}{' · '}<span
+			class="pill sm tint-brand"
+			title={t('workshop.mrs.processedTitle')}
 			>{t('workshop.mrs.processed', { count: row.runs })}</span
-		>{/if}{#if row.mr.draft}
-		· <span class="pill sm tint-muted">{t('workshop.mrs.draft')}</span>{/if}{#if row.mr.fork}
-		· <span class="pill sm tint-muted">{t('workshop.mrs.fork')}</span>{/if}{#if row.stackedOn}
-		· <a
+		>{/if}{#if row.mr.draft}{' · '}<span class="pill sm tint-muted">{t('workshop.mrs.draft')}</span
+		>{/if}{#if row.mr.fork}{' · '}<span class="pill sm tint-muted">{t('workshop.mrs.fork')}</span
+		>{/if}{#if row.stackedOn}{' · '}<a
 			class="pill sm tint-warning"
 			href={row.stackedOn.url}
 			target="_blank"

@@ -4,6 +4,7 @@
 	// on the left, the section on the right. Integrations opens a second
 	// level under it: a page per kind (repositories, ticket sources, harnesses).
 	import type { Snippet } from 'svelte';
+	import type { GlyphName } from '$lib/design/glyphs';
 	import { page } from '$app/state';
 	import { INTEGRATION_PORTS, to, type SystemSection } from '$lib/core/urls';
 	import { session } from '$lib/app/session.svelte';
@@ -11,7 +12,6 @@
 	import { provideHeaderSlot } from '$lib/ui/headerSlot.svelte';
 	import SideNav from '$lib/ui/SideNav.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { I } from '$lib/design/icons';
 
 	let { children }: { children: Snippet } = $props();
 
@@ -20,12 +20,12 @@
 	type Section = {
 		id: SystemSection;
 		label: string;
-		icon: string;
+		icon: GlyphName;
 		title: string;
 		accent: string;
 		sub: string;
 	};
-	const section = (id: SystemSection, icon: string): Section => ({
+	const section = (id: SystemSection, icon: GlyphName): Section => ({
 		id,
 		icon,
 		label: t(`page.system.${id}.label`),
@@ -35,13 +35,15 @@
 	});
 
 	const SECTIONS: Section[] = $derived([
-		section('providers', I.providers),
-		section('integrations', I.integrations),
-		section('channels', I.channels),
-		section('account', I.members),
-		section('assistant', I.sparkle),
-		...(session.admin ? [section('users', I.members), section('observability', I.info)] : []),
-		section('provisioner', I.provisioner)
+		section('providers', 'providers'),
+		section('integrations', 'integrations'),
+		section('channels', 'channels'),
+		section('account', 'account'),
+		section('assistant', 'assistant'),
+		...(session.admin
+			? [section('users', 'users'), section('observability', 'observability')]
+			: []),
+		section('provisioner', 'provisioner')
 	]);
 
 	// A section's pages may nest (a skill under Skills): the section is the

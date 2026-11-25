@@ -44,9 +44,11 @@ a.link:hover {
 	color: var(--brand-light);
 }
 
+/* No focus ring, anywhere (the owner's call): a control the keyboard
+ * reaches shows it by its own means, the fill a hover gives (buttons, rows,
+ * menu items, components.css); a field by its caret. */
 :focus-visible {
-	outline: 2px solid var(--brand);
-	outline-offset: 2px;
+	outline: none;
 }
 
 h1,

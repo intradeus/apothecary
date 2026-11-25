@@ -36,12 +36,14 @@
 		run: '150px',
 		updated: '74px'
 	};
-	const WIDE: TicketCol[] = ['key', 'branch'];
+	/** Left out on a phone: the title needs the room. Every fixed column
+	 *  kept beside it there took it all, leaving the title none. */
+	const WIDE: TicketCol[] = ['key', 'branch', 'type', 'run'];
 	const tpl = $derived(cols.map((c) => WIDTH[c]).join(' '));
 	const tplSm = $derived(
 		cols
 			.filter((c) => !WIDE.includes(c))
-			.map((c) => (c === 'run' ? 'auto' : WIDTH[c]))
+			.map((c) => (c === 'title' ? 'minmax(0, 1fr)' : c === 'status' ? 'auto' : WIDTH[c]))
 			.join(' ')
 	);
 	const label = (c: TicketCol) =>
@@ -74,11 +76,11 @@
 				{:else if c === 'status'}
 					<span class="st"><TicketStatusChip status={tk.status} done={tk.done} /></span>
 				{:else if c === 'type'}
-					<span><ChangeTypeTag type={tk.changeType} sourceType={tk.type} /></span>
+					<span class="hide-sm"><ChangeTypeTag type={tk.changeType} sourceType={tk.type} /></span>
 				{:else if c === 'branch'}
 					<span class="mono muted truncate hide-sm" title={tk.baseBranch}>{tk.baseBranch}</span>
 				{:else if c === 'run'}
-					<span class="st">
+					<span class="st hide-sm">
 						{#if tk.activeRunId}
 							{@const run = fleet.runById.get(tk.activeRunId)}
 							<a

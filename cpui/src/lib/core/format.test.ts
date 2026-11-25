@@ -3,6 +3,7 @@ import type { RunState } from '$lib/domain';
 import {
 	age,
 	ago,
+	hasTime,
 	counterRates,
 	fmtAbs,
 	fmtBytes,
@@ -143,6 +144,10 @@ describe('sizes and money', () => {
 	it.each<[unknown, string]>([
 		[0, '$0.000'],
 		[1.23456, '$1.235'],
+		[9.9994, '$9.999'],
+		[785.607, '$785.61'],
+		[1204.5, '$1,204.50'],
+		[NaN, ''],
 		['1.2', ''],
 		[null, ''],
 		[undefined, '']
@@ -151,7 +156,8 @@ describe('sizes and money', () => {
 	});
 
 	it.each<[number, string]>([
-		[0, '0.0%'],
+		[0, '0%'],
+		[0.04, '0.0%'],
 		[4.21, '4.2%'],
 		[9.9, '9.9%'],
 		[10, '10%'],
@@ -202,6 +208,19 @@ describe('spans', () => {
 		[3 * DAY + 4 * HOUR, '3d 4h']
 	])('reads an elapsed %ims', (ms, out) => {
 		expect(fmtDuration(ms)).toBe(out);
+	});
+});
+
+describe('a time set', () => {
+	it.each<[string | number | null | undefined, boolean]>([
+		['2026-11-24T10:00:00Z', true],
+		['0001-01-01T00:00:00Z', false],
+		['', false],
+		[null, false],
+		[undefined, false],
+		[0, false]
+	])('tells %j apart', (ts, set) => {
+		expect(hasTime(ts)).toBe(set);
 	});
 });
 

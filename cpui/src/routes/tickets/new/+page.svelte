@@ -66,32 +66,41 @@
 			})}
 		</Callout>
 	{:else}
-		<div class="field ws">
-			<label for="t-project">{t('page.newTicket.workshop')}</label>
-			<Select id="t-project" {options} value={project.id} onchange={setProject} />
+		<!-- One block, centred as the page's content is: the workshop field
+		     starts where the form or the note under it starts. -->
+		<div class="nt">
+			<div class="field ws">
+				<label for="t-project">{t('page.newTicket.workshop')}</label>
+				<Select id="t-project" {options} value={project.id} onchange={setProject} />
+			</div>
+			{#if isInternal(source)}
+				{#key project.id}
+					<TicketForm
+						{project}
+						onsaved={(tk) => goto(to.workshopTicket(project.id, tk.key))}
+						oncancel={() => goto(to.tickets({ project: project.id }))}
+					/>
+				{/key}
+			{:else}
+				<Callout hue="accent" glyph={I.info}>
+					{t('page.newTicket.remote', { name: source?.name ?? '' })}
+					{#if source?.home}
+						<a href={source.home} target="_blank" rel="noreferrer"
+							>{t('tickets.openIn', { name: source.name })} {I.external}</a
+						>
+					{/if}
+				</Callout>
+			{/if}
 		</div>
-		{#if isInternal(source)}
-			{#key project.id}
-				<TicketForm
-					{project}
-					onsaved={(tk) => goto(to.workshopTicket(project.id, tk.key))}
-					oncancel={() => goto(to.tickets({ project: project.id }))}
-				/>
-			{/key}
-		{:else}
-			<Callout hue="accent" glyph={I.info}>
-				{t('page.newTicket.remote', { name: source?.name ?? '' })}
-				{#if source?.home}
-					<a href={source.home} target="_blank" rel="noreferrer"
-						>{t('tickets.openIn', { name: source.name })} {I.external}</a
-					>
-				{/if}
-			</Callout>
-		{/if}
 	{/if}
 </div>
 
 <style>
+	.nt {
+		display: flex;
+		flex-direction: column;
+		gap: var(--shell-gap);
+	}
 	.ws {
 		max-width: 320px;
 	}

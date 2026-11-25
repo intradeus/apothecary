@@ -54,7 +54,7 @@
 	--z-float: 20; /* desk ghosts, the mobile tab bar */
 	--z-bar: 22; /* the run's top bar: its island floats over the desk */
 	--z-full: 24; /* a fullscreen window, over the sidebar and the top bar */
-	--z-fab: 26; /* the Layout button, over every window */
+	--z-fab: 26; /* the corner's buttons (FabCorner), over every window */
 	--z-pop: 30; /* popovers, the review composer */
 	--z-modal: 50; /* modal scrims */
 	--z-drawer: 55; /* the mobile drawer */
@@ -65,11 +65,15 @@
 	--sidebar-w: 232px;
 	--rail-w: 64px;
 	--shell-gap: 12px; /* the margin around the sidebar and the desk */
-	--assistant-btn: 40px; /* the assistant button, floating at the top right */
-	/* the button's room inside the top right corner of the window under it */
-	--assistant-pad: 10px;
-	/* what a header's trailing edge keeps clear of the assistant button */
-	--assistant-inset: calc(var(--assistant-btn) + var(--assistant-pad) + var(--shell-gap));
+	/* the corner: the buttons over every page at the bottom right (FabCorner) */
+	--fab-size: 40px;
+	--fab-inset: calc(var(--shell-gap) + 10px); /* from the viewport's edges */
+	--fab-gap: 8px;
+	/* what a bar at a page's foot keeps clear of the corner's buttons */
+	--fab-clear-x: calc(var(--fab-size) + 12px);
+	/* A sticky foot (SaveBar) sticks to the window's bottom edge, not inside
+	   its padding, where the content scrolling past would show below it. */
+	--foot-stick: calc(-1 * var(--shell-gap));
 	--content-max: 1600px; /* a page's content, centred in its window */
 	--settings-max: 900px; /* a page that is one settings form */
 	--section-min: 640px; /* the narrowest a section sits beside another */

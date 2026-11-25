@@ -17,6 +17,7 @@
 	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Skeleton from '$lib/ui/Skeleton.svelte';
+	import HeaderAction from '$lib/ui/HeaderAction.svelte';
 	import ActionMenu from '$lib/ui/ActionMenu.svelte';
 	import SectionHeader from '$lib/ui/SectionHeader.svelte';
 	import { materialize, ms, spring } from '$lib/ui/motion';
@@ -92,23 +93,21 @@
 			detail={error}
 			onretry={refresh}
 		/>{/if}
+	<!-- The page's main action sits in its header, as on every System page. -->
+	<HeaderAction>
+		{#if kinds.length === 1}
+			<button class="btn-primary btn-lg" onclick={() => (adding = kinds[0].kind)}
+				>{I.add} {t('page.integrations.add', { kind: one })}</button
+			>
+		{:else}
+			<ActionMenu
+				label={t('page.integrations.add', { kind: one })}
+				groups={[{ items: kinds.map((d) => ({ label: d.label, run: () => (adding = d.kind) })) }]}
+			/>
+		{/if}
+	</HeaderAction>
 	<section class="col">
-		<SectionHeader {title} count={integrations.length}>
-			{#snippet actions()}
-				{#if kinds.length === 1}
-					<button class="btn-primary" onclick={() => (adding = kinds[0].kind)}
-						>{I.add} {t('page.integrations.add', { kind: one })}</button
-					>
-				{:else}
-					<ActionMenu
-						label={t('page.integrations.add', { kind: one })}
-						groups={[
-							{ items: kinds.map((d) => ({ label: d.label, run: () => (adding = d.kind) })) }
-						]}
-					/>
-				{/if}
-			{/snippet}
-		</SectionHeader>
+		<SectionHeader {title} count={integrations.length} />
 
 		{#if addingKind}
 			<AddCard title={t('page.integrations.new', { label: addingKind.label })} kind={one}>

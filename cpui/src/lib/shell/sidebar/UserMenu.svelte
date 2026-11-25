@@ -1,13 +1,13 @@
 <script lang="ts">
 	// The user card's menu: the account page, the admin's users page, sign-out.
 	import { goto } from '$app/navigation';
+	import Glyph from '$lib/ui/Glyph.svelte';
 	import { session } from '$lib/app/session.svelte';
 	import { errorMessage } from '$lib/core/errors';
 	import { t } from '$lib/i18n/index.svelte';
 	import { to } from '$lib/core/urls';
 	import Popover from '$lib/ui/Popover.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
-	import { I } from '$lib/design/icons';
 
 	let {
 		anchor,
@@ -42,16 +42,22 @@
 	legend="@{user?.handle}"
 >
 	<button class="menu-item" onclick={() => go(to.account())}>
-		<span class="ic">{I.members}</span><span>{t('shell.sidebar.account')}</span>
+		<span class="ic"><Glyph name="account" size="16px" /></span><span
+			>{t('shell.sidebar.account')}</span
+		>
 	</button>
 	{#if session.admin}
 		<button class="menu-item" onclick={() => go(to.users())}>
-			<span class="ic">{I.members}</span><span>{t('shell.sidebar.users')}</span>
+			<span class="ic"><Glyph name="users" size="16px" /></span><span
+				>{t('shell.sidebar.users')}</span
+			>
 		</button>
 	{/if}
 	<div class="menu-div"></div>
 	<button class="menu-item" onclick={signOut}>
-		<span class="ic">{I.back}</span><span>{t('shell.sidebar.signOut')}</span>
+		<span class="ic"><Glyph name="signOut" size="16px" /></span><span
+			>{t('shell.sidebar.signOut')}</span
+		>
 	</button>
 </Popover>
 

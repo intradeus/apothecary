@@ -61,7 +61,6 @@ export default {
 	'shell.palette.provisioner': 'Provisioner',
 	'shell.palette.newTicket': 'New ticket',
 	'shell.palette.newWorkshop': 'New workshop',
-	'shell.palette.useTheme': 'Use the {theme} theme',
 	'shell.palette.aria': 'Command palette',
 	'shell.palette.placeholder': 'Search runs, tickets, merge requests, workshops, actions…',
 	'shell.palette.search': 'Search',

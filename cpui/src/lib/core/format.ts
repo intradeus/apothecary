@@ -127,8 +127,12 @@ export function fmtBytes(n?: number): string {
 }
 
 /** Cost as $0.000 (three decimals). Non-numbers render empty. */
+/** "$0.042", "$1.718" (a tenth of a cent counts on one turn), and "$785.61",
+ *  "$1,204.50" from $10 on, where the third decimal is only noise. */
 export function fmtCost(v: unknown): string {
-	return typeof v === 'number' ? `$${v.toFixed(3)}` : '';
+	if (typeof v !== 'number' || !Number.isFinite(v)) return '';
+	if (Math.abs(v) < 10) return `$${v.toFixed(3)}`;
+	return `$${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 /** "4:12", "1:02:09" — a live stage clock. */
@@ -158,6 +162,12 @@ export function fmtDuration(ms: number): string {
 
 /** Relative time: "just now", "3m ago", "2h ago", "4d ago". Pass `now` from a
  *  ticking clock to keep it live. */
+/** A time was set: not missing, not Go's zero time (0001-01-01), which the
+ *  engine sends for one it never recorded (a built-in flow never saved). */
+export function hasTime(ts: string | number | Date | null | undefined): boolean {
+	return ts !== null && ts !== undefined && ts !== '' && new Date(ts).getTime() > 0;
+}
+
 export function ago(ts: string | number | Date, now = Date.now()): string {
 	const s = Math.max(0, (now - new Date(ts).getTime()) / 1000);
 	if (s < 10) return t('fmt.justNow');
@@ -186,8 +196,9 @@ export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n ==
 export const fmtRate = (bytesPerSec: number): string =>
 	`${fmtBytes(Math.round(bytesPerSec)) || '0 B'}/s`;
 
-/** A percentage with one decimal under 10 ("4.2%", "37%"). */
-export const fmtPct = (v: number): string => `${v >= 10 ? Math.round(v) : v.toFixed(1)}%`;
+/** A percentage with one decimal under 10 ("4.2%", "37%"); none is "0%". */
+export const fmtPct = (v: number): string =>
+	`${v === 0 ? 0 : v >= 10 ? Math.round(v) : v.toFixed(1)}%`;
 
 /** Per-second rates from a cumulative counter sampled at `times` (ms). The
  *  first point has no rate (null); a negative delta is a counter reset

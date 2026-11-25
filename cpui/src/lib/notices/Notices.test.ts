@@ -49,19 +49,27 @@ beforeEach(() => {
 describe('Notices', () => {
 	it('claims nothing until the fleet has landed', () => {
 		render(Notices);
-		expect(screen.queryByText('Nothing needs your attention.')).not.toBeInTheDocument();
+		expect(screen.queryByText('Nothing needs your attention')).not.toBeInTheDocument();
 	});
 
 	it('says so when nothing needs attention', () => {
 		loaded([]);
 		render(Notices);
-		expect(screen.getByText('Nothing needs your attention.')).toBeInTheDocument();
+		expect(screen.getByText('Nothing needs your attention')).toBeInTheDocument();
 		expect(screen.queryByRole('button', { name: 'Dismiss all' })).not.toBeInTheDocument();
+		// A header like every page's, and somewhere to go from here.
+		expect(screen.getByRole('link', { name: 'Desk' })).toHaveAttribute('href', '/');
+		expect(screen.getByText('nothing to fix')).toBeInTheDocument();
+		expect(screen.getByRole('link', { name: 'Open System' })).toHaveAttribute(
+			'href',
+			'/system/integrations'
+		);
 	});
 
 	it('shows each notice with its body and repeat count', () => {
 		loaded([notice({ count: 3 }), notice({ id: 'n2', title: 'Sign in again: work' })]);
 		render(Notices);
+		expect(screen.getByText('2 open')).toBeInTheDocument();
 		expect(screen.getByText('Your slack channel is failing')).toBeInTheDocument();
 		expect(screen.getByText('Sign in again: work')).toBeInTheDocument();
 		expect(screen.getAllByText(/refused/)).toHaveLength(2);
@@ -75,7 +83,7 @@ describe('Notices', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
 		expect(api.notices.dismiss).toHaveBeenCalledWith('n1');
 		await waitFor(() =>
-			expect(screen.getByText('Nothing needs your attention.')).toBeInTheDocument()
+			expect(screen.getByText('Nothing needs your attention')).toBeInTheDocument()
 		);
 	});
 
@@ -94,7 +102,7 @@ describe('Notices', () => {
 		await userEvent.click(screen.getByRole('button', { name: 'Dismiss all' }));
 		expect(api.notices.dismissAll).toHaveBeenCalled();
 		await waitFor(() =>
-			expect(screen.getByText('Nothing needs your attention.')).toBeInTheDocument()
+			expect(screen.getByText('Nothing needs your attention')).toBeInTheDocument()
 		);
 	});
 

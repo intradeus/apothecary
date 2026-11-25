@@ -273,18 +273,12 @@
 		overflow-wrap: anywhere;
 		resize: none;
 	}
-	.comp:focus-within {
-		border-color: var(--brand-line);
-	}
 	/* Held: the agent is in your hands — the attention colour, as a
 	 * waiting ping's card. */
 	.comp.held {
 		border-color: var(--attention-line);
 		background: var(--attention-bg);
 		box-shadow: 0 0 var(--glow-lg) var(--attention-glow);
-	}
-	.comp.held:focus-within {
-		border-color: var(--attention);
 	}
 	.hold {
 		display: flex;

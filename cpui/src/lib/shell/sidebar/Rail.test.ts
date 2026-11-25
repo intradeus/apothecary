@@ -93,8 +93,21 @@ describe('Rail', () => {
 			userBtn: null,
 			onmenu: vi.fn()
 		});
-		expect(screen.getByText('1/–')).toBeInTheDocument();
+		// Not loaded yet: nothing, rather than a cap that reads as none.
+		expect(screen.queryByText(/^1\//)).toBeNull();
 		unmount();
+
+		fleet.limits = { maxConcurrentRuns: 0, maxEnvironments: 0 } as Limits;
+		const second = render(Rail, {
+			workshops: [],
+			path: '/',
+			count: () => 0,
+			onsearch: vi.fn(),
+			userBtn: null,
+			onmenu: vi.fn()
+		});
+		expect(screen.getByText('1/–')).toBeInTheDocument();
+		second.unmount();
 
 		fleet.limits = { maxConcurrentRuns: 3, maxEnvironments: 0 } as Limits;
 		setup();

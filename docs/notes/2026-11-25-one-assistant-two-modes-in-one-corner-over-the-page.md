@@ -15,31 +15,48 @@ filled, so a fill landed out of sight and the modal closed on it.
 
 ## What now
 
-- **One corner, over the page, never in its room.** Everything unfolds
-  from the top right, where the button is (`AssistantDock`):
-  - closed, the button; a **pill** (the button with words) while an answer
-    is written ("Brewing your ticket…") and for 8 s after a fill lands
-    ("Filled: title, goal"). A dot on the button says the page can be
-    filled;
-  - open, a **card** as tall as what it shows (at most 70% of the screen):
-    the mode switch, the latest exchange (from the person's last
-    question on, "N earlier messages" above it), the box to ask in. No
-    model picker or repositories row in the card;
-  - **expanded** (⤢), a drawer the screen's height with the whole
-    conversation, the model and the repositories. Opening again is the
-    card.
-  It floats over the page with no scrim, at the popovers' level (a modal the
+- **One corner, over the page, never in its room.** The shell's buttons
+  float at the bottom right of every page in one place, `FabCorner`, each a
+  squircle (the `.fab` class, the run page's Layout button's look): the
+  assistant in the corner itself, on every page; above it what a page adds
+  (a run's Layout button). Stacked upwards, so the corner stays one button
+  wide: a run's window in the corner still steps aside by one button
+  (`--fab-clear`), a `SaveBar` keeps its trailing end clear
+  (`--fab-clear-x`), and toasts rise beside the corner, not over it. The
+  page headers no longer reserve room for a button at their top right.
+
+  The assistant unfolds from its button:
+  - closed, the button (the corner's sky); a **pill** (the button with
+    words) while an answer is written ("Brewing your ticket…") and for 8 s
+    after a fill lands ("Filled: title, goal");
+  - open, a **card** beside the button, to the left of the corner's column
+    (so its buttons stay in reach), as tall as what it shows (at most 70%
+    of the screen): the mode switch, the latest exchange (from the person's
+    last question on, "N earlier messages" above it), the box to ask in. No
+    model picker or repositories row in the card. The button stays where it
+    is and folds the card again;
+  - **expanded** (⤢), a drawer the screen's height beside the corner with
+    the whole conversation, the model and the repositories. Opening again
+    is the card.
+  It floats over the page with no scrim, in the corner's layer (a modal the
   page opens covers it). A click in the page folds it back to the button,
   so a fill is always in view; what was typed, the scroll and the mode stay
   (the panel stays mounted, hidden). A click in it, or in a dropdown, menu
   or dialog it opened, does not. Esc and × fold it too; on a narrow screen
   it is the screen above the tab bar.
+- **The page can be filled: the button says so in colour, not with a dot.**
+  While a page offers itself the squircle wears the page mode's accent
+  (violet) instead of the corner's sky, and arriving on such a page the
+  star twinkles and a sheen crosses the tile, once (none with reduced
+  motion). A dot on the button hid the star.
 
   *Rejected:* docking it beside the page (the page narrowed for it): the
   owner's page space matters more than seeing page and panel side by side.
   The old full-height overlay drawer: it covered a whole side for as long
-  as it was open. The card's trade-off: while open, it covers the right end
-  of a page header (its actions); a click on the page frees it.
+  as it was open. The top right corner: the card covered page headers'
+  actions, and the run page already had its Layout button at the bottom
+  right. A looping animation for "can fill": it would pull the eye for as
+  long as the page is open.
 - **Two modes the person picks, told apart by what they may do.**
   - *This ticket / this flow / …* (`page`): about the page on screen. It
     fills the page, unsaved and undoable, and never acts. It wears the
@@ -85,7 +102,9 @@ toggle, carrying a question), `AssistantDock.test.ts` (the general
 conversation as before; the page mode opened lazily and kept apart, a fill
 with Undo and Apply again from the panel, carrying a question, the page
 going, ⌘J and Esc; folding on a click in the page with the draft kept,
-the pill, the card's latest exchange and the expanded conversation), `FillMark.test.ts`, `fillGuard.svelte.test.ts`
+the pill, the card's latest exchange and the expanded conversation, the
+accent while a page can be filled, the button toggling the card),
+`cpui/src/lib/ui/FabCorner.test.ts`, `FillMark.test.ts`, `fillGuard.svelte.test.ts`
 (`fillHook`), `src/routes/skills/[skillId]/assistant.test.ts` (the skill
 page beside the real dock). The pages' tests offer through
 `src/test/fixtures/AssistantStub.svelte`.

@@ -116,8 +116,10 @@
 							>{fleet.projectName(pid)}</a
 						>
 					{/if}
-					<span class="mono small truncate" title="{row.mr.source} → {row.mr.target}"
-						>{row.mr.source} → {row.mr.target}</span
+					<!-- The source gives way: the target is what a reviewer reads. -->
+					<span class="mono small br" title="{row.mr.source} → {row.mr.target}"
+						><span class="truncate">{row.mr.source}</span><span class="tgt">→ {row.mr.target}</span
+						></span
 					>
 					<span class="small last">
 						{#if row.run}
@@ -136,6 +138,14 @@
 {/if}
 
 <style>
+	.br {
+		display: flex;
+		gap: 5px;
+		min-width: 0;
+	}
+	.tgt {
+		flex: none;
+	}
 	.r {
 		grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr) minmax(0, 1.2fr);
 	}

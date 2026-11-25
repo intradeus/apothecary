@@ -7,6 +7,7 @@
 	import { fleet } from '$lib/app/fleet.svelte';
 	import { errorMessage } from '$lib/core/errors';
 	import { ago } from '$lib/core/format';
+	import { to } from '$lib/core/urls';
 	import { t } from '$lib/i18n/index.svelte';
 	import type { Notice } from '$lib/domain';
 	import Banner from '$lib/ui/Banner.svelte';
@@ -30,7 +31,18 @@
 	const aside = (n: Notice) => ago(n.lastSeenAt) + (n.count > 1 ? ` · ×${n.count}` : '');
 </script>
 
-<PageHeader title={t('page.notices.title')}>
+<PageHeader
+	crumbs={[{ label: t('nav.desk'), href: to.desk() }, { label: t('page.notices.title') }]}
+	title={t('page.notices.title')}
+	accent={t('notices.accent')}
+>
+	{#snippet meta()}
+		<span
+			>{fleet.notices.length
+				? t('notices.count', { count: fleet.notices.length })
+				: t('notices.none')}</span
+		>
+	{/snippet}
 	{#snippet actions()}
 		{#if fleet.notices.length}
 			<button class="btn-sm" onclick={() => act(() => api.notices.dismissAll())}
@@ -47,7 +59,9 @@
 	{#if fleet.updatedAt === null}
 		<Skeleton pane lines={4} />
 	{:else if !fleet.notices.length}
-		<EmptyState title={t('notices.empty')} />
+		<EmptyState title={t('notices.empty')} text={t('notices.emptyText')}>
+			<a class="btn" href={to.system()}>{t('notices.toSystem')}</a>
+		</EmptyState>
 	{:else}
 		<div class="list">
 			{#each fleet.notices as n (n.id)}

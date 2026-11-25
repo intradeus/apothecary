@@ -46,8 +46,7 @@
 		-webkit-tap-highlight-color: transparent;
 	}
 	.tg:focus-visible {
-		outline: 2px solid var(--brand);
-		outline-offset: 2px;
+		background: var(--fill-3);
 		border-radius: var(--r-tag);
 	}
 	.tg:disabled {

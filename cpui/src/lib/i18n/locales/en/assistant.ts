@@ -87,6 +87,8 @@ export default {
 	'assistant.carryTip':
 		'This mode only fills the page: take your question to Everywhere, which can act once you confirm',
 	// The settings page (System → Assistant).
+	'assistant.settingsTitle': 'What it runs on',
+	'assistant.settingsSub': 'what a new conversation starts with',
 	'assistant.settingsApply':
 		'Changes apply to new conversations: an open one keeps its harness and skills until you start a new one.',
 	'assistant.harness': 'Harness'

@@ -17,6 +17,7 @@
 	import { I } from '$lib/design/icons';
 	import { bump, indicator, ms, spring } from '$lib/ui/motion';
 	import { keepInView } from '$lib/ui/inview';
+	import { scrollEdges } from '$lib/ui/scrollEdges';
 	import { token } from '$lib/design/tokens';
 	import { VIEW_LABEL, type Leaf, type ViewId } from './tree';
 	import type { ViewMeta } from './Desk.svelte';
@@ -107,7 +108,7 @@
 	transition:windowMotion={appear}
 >
 	<div class="strip">
-		<div class="tabrow" role="tablist" use:indicator use:keepInView>
+		<div class="tabrow" role="tablist" use:indicator use:keepInView use:scrollEdges>
 			{#each leaf.tabs as v (v)}
 				{@const m = meta(v)}
 				<div
@@ -222,9 +223,13 @@
 		padding: 0 5px 0 6px;
 		border-bottom: 1px solid var(--glass-line);
 	}
-	/* More tabs than room: the row scrolls sideways, without a bar. */
+	/* More tabs than room: the row scrolls sideways, without a bar. It is the
+	   strip's full height, tabs centred: a row only as tall as its tabs clips
+	   the selected tab's bead (its shadow) at the bottom, overflow-y being
+	   hidden. */
 	.tabrow {
 		flex: 1 1 auto;
+		align-self: stretch;
 		min-width: 0;
 		display: flex;
 		align-items: center;
@@ -236,6 +241,23 @@
 	}
 	.tabrow::-webkit-scrollbar {
 		display: none;
+	}
+	/* More tabs past an end: that end fades, so a tab cut at the edge reads as
+	   "more this way", not as a broken label. */
+	.tabrow[data-more-end] {
+		mask-image: linear-gradient(to right, var(--mask-opaque) calc(100% - 28px), transparent);
+	}
+	.tabrow[data-more-start] {
+		mask-image: linear-gradient(to right, transparent, var(--mask-opaque) 28px);
+	}
+	.tabrow[data-more-start][data-more-end] {
+		mask-image: linear-gradient(
+			to right,
+			transparent,
+			var(--mask-opaque) 28px,
+			var(--mask-opaque) calc(100% - 28px),
+			transparent
+		);
 	}
 	/* A tab is clicked far more than it is dragged: the pointer says so, and
 	   the grab shows only while one is being moved. */

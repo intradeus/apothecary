@@ -156,54 +156,56 @@
 </script>
 
 <Modal bind:open title={t('page.runs.new')}>
-	<Tabs
-		label={t('page.runs.newMode')}
-		bind:value={kind}
-		items={[
-			...WORK_ITEMS.map((w) => ({ value: w.kind, label: w.one })),
-			{ value: 'nothing' as const, label: t('page.runs.newModeNothing') }
-		]}
-	/>
-	{#if (!item || item.perWorkshop) && !projectId}
-		<div class="field">
-			<label for="new-run-workshop">{t('page.runs.newPickWorkshop')}</label>
-			<Select id="new-run-workshop" options={projectOptions} bind:value={workshop} />
-		</div>
-	{/if}
-	{#if !item}
-		<p class="intro">{t('page.runs.newIntroNothing')}</p>
-		{#if scope}
-			<!-- Afresh for each workshop and each opening (the tail is drawn then). -->
-			{#key `${scope} ${tail}`}
-				<NothingRunForm
-					projectId={scope}
-					bind:flow
-					bind:title
-					bind:branch
-					bind:onBranch
-					bind:newBranch
-					bind:blocked
-					bind:params
-					bind:skillsets
-					namePlaceholder={unnamed}
-					{tail}
-				/>
-			{/key}
+	<div class="nr">
+		<Tabs
+			label={t('page.runs.newMode')}
+			bind:value={kind}
+			items={[
+				...WORK_ITEMS.map((w) => ({ value: w.kind, label: w.one })),
+				{ value: 'nothing' as const, label: t('page.runs.newModeNothing') }
+			]}
+		/>
+		{#if (!item || item.perWorkshop) && !projectId}
+			<div class="field">
+				<label for="new-run-workshop">{t('page.runs.newPickWorkshop')}</label>
+				<Select id="new-run-workshop" options={projectOptions} bind:value={workshop} />
+			</div>
 		{/if}
-		{#if startError}<ErrorCard cause={t('page.runs.nothingStartFail')} detail={startError} />{/if}
-	{:else if error}
-		<ErrorCard cause={item.loadError} detail={error} onretry={load} />
-	{:else if options === null}
-		<Loading />
-	{:else if options.length === 0}
-		<p class="intro">{item.none}</p>
-	{:else}
-		<p class="intro">{item.intro}</p>
-		<div class="field">
-			<label for="new-run-item">{item.one}</label>
-			<Select id="new-run-item" options={selectOptions} bind:value={picked} />
-		</div>
-	{/if}
+		{#if !item}
+			<p class="intro">{t('page.runs.newIntroNothing')}</p>
+			{#if scope}
+				<!-- Afresh for each workshop and each opening (the tail is drawn then). -->
+				{#key `${scope} ${tail}`}
+					<NothingRunForm
+						projectId={scope}
+						bind:flow
+						bind:title
+						bind:branch
+						bind:onBranch
+						bind:newBranch
+						bind:blocked
+						bind:params
+						bind:skillsets
+						namePlaceholder={unnamed}
+						{tail}
+					/>
+				{/key}
+			{/if}
+			{#if startError}<ErrorCard cause={t('page.runs.nothingStartFail')} detail={startError} />{/if}
+		{:else if error}
+			<ErrorCard cause={item.loadError} detail={error} onretry={load} />
+		{:else if options === null}
+			<Loading />
+		{:else if options.length === 0}
+			<p class="intro">{item.none}</p>
+		{:else}
+			<p class="intro">{item.intro}</p>
+			<div class="field">
+				<label for="new-run-item">{item.one}</label>
+				<Select id="new-run-item" options={selectOptions} bind:value={picked} />
+			</div>
+		{/if}
+	</div>
 	{#snippet footer()}
 		<button type="button" class="btn-ghost" onclick={() => (open = false)}
 			>{t('common.cancel')}</button
@@ -226,6 +228,13 @@
 </Modal>
 
 <style>
+	/* The tabs, the fields and the help between them, spaced: the modal's
+	   body leaves a dialog its own layout. */
+	.nr {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
 	.intro {
 		margin: 0;
 		color: var(--text-muted);

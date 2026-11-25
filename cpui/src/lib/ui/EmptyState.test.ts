@@ -24,4 +24,14 @@ describe('EmptyState', () => {
 		render(EmptyState, { title: 'Quiet', [form]: true });
 		expect(screen.getByText('Quiet').parentElement).toHaveClass(form);
 	});
+
+	it('takes its line as rich text, in place of the plain one', () => {
+		render(EmptyState, {
+			title: 'Nothing on the burner',
+			text: 'plain',
+			detail: html('<span>Name it in <a href="/w/p1">the workshop</a>.</span>')
+		});
+		expect(screen.getByRole('link', { name: 'the workshop' })).toHaveAttribute('href', '/w/p1');
+		expect(screen.queryByText('plain')).toBeNull();
+	});
 });

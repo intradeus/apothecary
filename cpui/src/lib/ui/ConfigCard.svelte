@@ -64,7 +64,10 @@
 			<div class="who">
 				<div class="nmrow">
 					<span class="nm truncate">{title}</span>
-					{#if kind}<span class="pill sm flat sq tint-muted">{kind}</span>{/if}
+					<!-- Not when the name already says it ("GitLab", kind GitLab). -->
+					{#if kind && kind.toLowerCase() !== title.toLowerCase()}<span
+							class="pill sm flat sq tint-muted">{kind}</span
+						>{/if}
 				</div>
 				{#if sub}
 					<div class="sub truncate">
@@ -78,7 +81,7 @@
 		{#if summary.length}
 			<dl class="kv code">
 				{#each summary as s (s.k)}
-					<dt class="truncate" title={s.k}>{s.k}</dt>
+					<dt>{s.k}</dt>
 					<dd
 						class="truncate"
 						class:secret={s.secret}
@@ -166,10 +169,15 @@
 		justify-content: flex-end;
 		min-width: 0;
 	}
-	/* A long field label must not starve its value: labels shrink first. */
+	/* A long field label must not starve its value: labels shrink first, and
+	   wrap rather than lose their end ("Personal access token (classic with
+	   repo scope; …"). */
 	dl.kv {
 		--k: minmax(0, max-content);
 		grid-template-columns: var(--k) minmax(40%, 1fr);
+	}
+	dl.kv dt {
+		overflow-wrap: anywhere;
 	}
 	dd.secret {
 		color: var(--text-faint);

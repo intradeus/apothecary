@@ -60,7 +60,7 @@
 	 * wrapper is what sticks; the bar's own offset can't act inside it). */
 	.bar {
 		position: sticky;
-		bottom: 0;
+		bottom: var(--foot-stick);
 		margin-top: auto;
 	}
 </style>

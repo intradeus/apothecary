@@ -1512,5 +1512,12 @@ export default {
 	'doc.closeHint': 'close',
 	'notices.open': 'Open',
 	'notices.dismissAll': 'Dismiss all',
-	'notices.empty': 'Nothing needs your attention.'
+	'notices.empty': 'Nothing needs your attention',
+	'notices.emptyText':
+		'Setup problems land here, a login to sign in again or a channel that stopped answering, and stay until you dismiss them.',
+	'notices.toSystem': 'Open System',
+	'notices.accent': 'to set right',
+	'notices.count_one': '{count} open',
+	'notices.count_other': '{count} open',
+	'notices.none': 'nothing to fix'
 } as const;

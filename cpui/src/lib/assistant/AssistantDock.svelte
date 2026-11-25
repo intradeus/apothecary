@@ -1,10 +1,12 @@
 <script lang="ts">
-	// The assistant: one corner of the screen, the top right, floating over
-	// the page and never taking its room. It unfolds from the same spot:
+	// The assistant: its squircle in the corner at the bottom right
+	// (FabCorner), on every page; what it opens floats over the page and never
+	// takes its room. It unfolds from the same spot:
 	//
-	//   - closed, the button; a pill while it has something to say (an answer
-	//     being written, a fill that just landed);
-	//   - open, a card as tall as what it shows: the mode, the latest
+	//   - closed, the button, in the page mode's accent while the page on
+	//     screen can be filled; a pill while it has something to say (an
+	//     answer being written, a fill that just landed);
+	//   - open, a card beside it as tall as what it shows: the mode, the latest
 	//     exchange, the box to ask in;
 	//   - expanded, a drawer with the whole conversation.
 	//
@@ -212,28 +214,32 @@
 	}
 </script>
 
-{#if !assistant.open}
-	<button
-		type="button"
-		class="ga glass"
-		class:off
-		class:pill={!!pill}
-		bind:this={button}
-		aria-label={t('assistant.button')}
-		title={off
-			? t('assistant.buttonOff')
-			: assistant.page
-				? t('assistant.buttonPage', { page: pageWord })
-				: t('assistant.buttonTip')}
-		aria-describedby={off ? 'ga-off' : pill ? 'ga-says' : undefined}
-		onclick={() => assistant.show()}
-	>
-		<svg viewBox="0 0 24 24" aria-hidden="true"><path d={SPARKLE_PATH} /></svg>
-		{#if pill}<span class="says" id="ga-says">{pill}</span>{/if}
-		{#if assistant.page && !off && !pill}<span class="can-fill" aria-hidden="true"></span>{/if}
-	</button>
-	{#if off}<span id="ga-off" hidden>{t('assistant.buttonOff')}</span>{/if}
-{/if}
+<button
+	type="button"
+	class="fab ga"
+	class:off
+	class:paged={!!assistant.page && !off}
+	class:pill={!!pill && !assistant.open}
+	bind:this={button}
+	aria-label={t('assistant.button')}
+	aria-expanded={assistant.open}
+	title={off
+		? t('assistant.buttonOff')
+		: assistant.page
+			? t('assistant.buttonPage', { page: pageWord })
+			: t('assistant.buttonTip')}
+	aria-describedby={off ? 'ga-off' : pill && !assistant.open ? 'ga-says' : undefined}
+	onclick={() => (assistant.open ? close() : assistant.show())}
+>
+	<!-- Keyed by the page: arriving on a page it can fill plays the
+	     twinkle and the sheen once. -->
+	{#key key}
+		<svg class="star" viewBox="0 0 24 24" aria-hidden="true"><path d={SPARKLE_PATH} /></svg>
+		{#if assistant.page && !off}<span class="sheen" aria-hidden="true"></span>{/if}
+	{/key}
+	{#if pill && !assistant.open}<span class="says" id="ga-says">{pill}</span>{/if}
+</button>
+{#if off}<span id="ga-off" hidden>{t('assistant.buttonOff')}</span>{/if}
 
 {#if opened}
 	<aside
@@ -323,54 +329,74 @@
 {/if}
 
 <style>
+	/* The squircle of the corner (.fab), its glyph the star. It never moves:
+	   open, it stays as the toggle beside the card. */
 	.ga {
-		position: fixed;
-		/* Inside the corner of the window under it, never on its edge. */
-		top: calc(var(--shell-gap) + var(--assistant-pad));
-		right: calc(var(--shell-gap) + var(--assistant-pad));
-		z-index: var(--z-bar);
-		width: var(--assistant-btn);
-		height: var(--assistant-btn);
-		padding: 0;
-		display: grid;
-		place-items: center;
-		border-radius: var(--r-pane);
-		transition: box-shadow var(--dur-fade) var(--ease-out);
+		overflow: hidden;
+		transition:
+			background var(--dur-fade) var(--ease-out),
+			border-color var(--dur-fade) var(--ease-out),
+			color var(--dur-fade) var(--ease-out);
 	}
-	.ga:hover,
-	.ga:focus-visible {
-		box-shadow: 0 0 var(--glow-sm) var(--accent-glow);
-	}
-	.ga svg {
+	.ga .star {
 		width: 20px;
 		height: 20px;
-		fill: var(--accent);
+		fill: currentColor;
 	}
-	/* The page on screen offers itself: the assistant can fill it. */
-	.can-fill {
+	.ga.off {
+		color: var(--text-faint);
+	}
+	/* The page on screen can be filled: the squircle wears the page mode's
+	   accent, and arriving there the star twinkles and a sheen crosses it,
+	   once. Everywhere is the corner's own sky. */
+	.ga.paged {
+		background: linear-gradient(var(--accent-bg), var(--accent-bg)), var(--island-bg);
+		border-color: var(--accent-line);
+		color: var(--accent);
+	}
+	.ga.paged:hover,
+	.ga.paged[aria-expanded='true'] {
+		box-shadow:
+			var(--specular),
+			var(--shadow-float),
+			0 0 var(--glow-md) var(--accent-glow);
+	}
+	.ga.paged .star {
+		animation: twinkle calc(var(--dur-spring) * 2) var(--ease-out) 1;
+	}
+	.sheen {
 		position: absolute;
-		top: 7px;
-		right: 7px;
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--accent);
-		box-shadow: 0 0 var(--glow-sm) var(--accent-glow);
+		inset: 0;
+		border-radius: inherit;
+		pointer-events: none;
+		background: linear-gradient(
+			115deg,
+			transparent 30%,
+			color-mix(in oklch, var(--accent) 45%, transparent) 50%,
+			transparent 70%
+		);
+		transform: translateX(-120%);
+		animation: sheen calc(var(--dur-spring) * 2.4) var(--ease-out) var(--dur-fade) 1 forwards;
 	}
-	.ga.off svg {
-		fill: var(--text-faint);
+	@keyframes twinkle {
+		35% {
+			transform: scale(1.25) rotate(18deg);
+		}
 	}
-	.ga.off:hover,
-	.ga.off:focus-visible {
-		box-shadow: none;
+	@keyframes sheen {
+		to {
+			transform: translateX(120%);
+		}
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.ga {
 			transition: none;
 		}
-		.ga:hover,
-		.ga:focus-visible {
-			box-shadow: none;
+		.ga.paged .star {
+			animation: none;
+		}
+		.sheen {
+			display: none;
 		}
 	}
 
@@ -378,11 +404,10 @@
 	   the corner for a while. */
 	.ga.pill {
 		width: auto;
-		max-width: min(320px, calc(100vw - 2 * var(--shell-gap) - 2 * var(--assistant-pad)));
+		max-width: min(320px, calc(100vw - 2 * var(--fab-inset)));
 		grid-auto-flow: column;
 		gap: 8px;
 		padding: 0 14px 0 10px;
-		box-shadow: 0 0 var(--glow-sm) var(--accent-glow);
 	}
 	.says {
 		font-size: var(--fs-meta);
@@ -393,20 +418,20 @@
 		min-width: 0;
 	}
 
-	/* Over the page, never in its room: it unfolds from the button's corner,
-	   as tall as what it shows; expanded, a drawer the screen's height. */
+	/* Over the page, never in its room: it unfolds leftwards from the
+	   button, beside the corner's column (whose buttons stay in reach), as
+	   tall as what it shows; expanded, a drawer the screen's height. */
 	.dock {
 		position: fixed;
-		z-index: var(--z-pop);
-		top: calc(var(--shell-gap) + var(--assistant-pad));
-		right: calc(var(--shell-gap) + var(--assistant-pad));
-		width: min(420px, calc(100vw - 2 * var(--shell-gap)));
+		right: calc(var(--fab-inset) + var(--fab-size) + var(--fab-gap));
+		bottom: var(--fab-inset);
+		width: min(420px, calc(100vw - 2 * var(--shell-gap) - var(--fab-size) - var(--fab-gap)));
 		max-height: min(70vh, 640px);
 		padding: 12px;
 		gap: 8px;
 		border-radius: var(--r-pane);
 		border-top: 2px solid transparent;
-		transform-origin: top right;
+		transform-origin: bottom right;
 		animation: unfold var(--dur-fade) var(--ease-out);
 	}
 	.dock[hidden] {
@@ -414,15 +439,14 @@
 	}
 	.dock.expanded {
 		top: var(--shell-gap);
-		right: var(--shell-gap);
 		bottom: var(--shell-gap);
-		width: min(460px, calc(100vw - 2 * var(--shell-gap)));
+		width: min(460px, calc(100vw - 2 * var(--shell-gap) - var(--fab-size) - var(--fab-gap)));
 		max-height: none;
 	}
 	@keyframes unfold {
 		from {
 			opacity: 0;
-			transform: scale(0.96) translateY(-4px);
+			transform: scale(0.96) translateX(4px);
 		}
 	}
 	@media (prefers-reduced-motion: reduce) {

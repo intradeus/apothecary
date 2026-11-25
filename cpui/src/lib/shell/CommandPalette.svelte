@@ -14,7 +14,6 @@
 	import { session } from '$lib/app/session.svelte';
 	import { prefs } from '$lib/app/prefs.svelte';
 	import { t } from '$lib/i18n/index.svelte';
-	import { THEMES } from '$lib/design/themes';
 	import { to } from '$lib/core/urls';
 	import { shortId, stateLabel, stateTab } from '$lib/core/format';
 	import type { TicketRow } from '$lib/domain';
@@ -23,9 +22,10 @@
 	import { assistant } from '$lib/assistant/assistant.svelte';
 	import { NAV } from '$lib/app/nav';
 	import { trap } from '$lib/ui/trap';
-	import { I } from '$lib/design/icons';
 	import { indicator, materialize, scrim } from '$lib/ui/motion';
 	import Vial from '$lib/ui/Vial.svelte';
+	import Glyph from '$lib/ui/Glyph.svelte';
+	import type { GlyphName } from '$lib/design/glyphs';
 
 	/** How many tickets a search shows, and how long typing pauses before one. */
 	const TICKETS_SHOWN = 20;
@@ -48,7 +48,8 @@
 		group: Group;
 		label: string;
 		sub?: string;
-		glyph: string;
+		/** Its SVG icon ($lib/design/glyphs); none for a workshop row. */
+		glyph?: GlyphName;
 		/** A workshop row shows its vial instead of a glyph. */
 		vial?: string;
 		run: () => void;
@@ -141,31 +142,31 @@
 			{
 				group: 'go' as const,
 				label: t('shell.palette.integrations'),
-				glyph: I.integrations,
+				glyph: 'integrations' as GlyphName,
 				run: go(to.system('integrations'))
 			},
 			{
 				group: 'go' as const,
 				label: t('shell.palette.channels'),
-				glyph: I.channels,
+				glyph: 'channels' as GlyphName,
 				run: go(to.system('channels'))
 			},
 			{
 				group: 'go' as const,
 				label: t('shell.palette.provisioner'),
-				glyph: I.provisioner,
+				glyph: 'provisioner' as GlyphName,
 				run: go(to.system('provisioner'))
 			},
 			{
 				group: 'do' as const,
 				label: t('shell.palette.newRun'),
-				glyph: I.add,
+				glyph: 'add' as GlyphName,
 				run: act(() => (newRun = true))
 			},
 			{
 				group: 'do' as const,
 				label: t('assistant.button'),
-				glyph: I.sparkle,
+				glyph: 'assistant' as GlyphName,
 				run: act(() => assistant.show())
 			},
 			...(writesHere
@@ -173,7 +174,7 @@
 						{
 							group: 'do' as const,
 							label: t('shell.palette.newTicket'),
-							glyph: I.add,
+							glyph: 'add' as GlyphName,
 							run: go(to.newTicket({ project: ticketsFrom }))
 						}
 					]
@@ -185,21 +186,15 @@
 						{
 							group: 'do' as const,
 							label: t('shell.palette.newWorkshop'),
-							glyph: I.add,
+							glyph: 'add' as GlyphName,
 							run: go(to.newWorkshop())
 						}
 					]),
-			...THEMES.filter((th) => th.id !== prefs.theme).map((th) => ({
-				group: 'do' as const,
-				label: t('shell.palette.useTheme', { theme: th.label.toLowerCase() }),
-				glyph: th.scheme === 'light' ? I.themeLight : I.themeDark,
-				run: act(() => prefs.setTheme(th.id))
-			})),
 			{
 				group: 'do' as const,
 				label: prefs.collapsed ? t('shell.sidebar.expand') : t('shell.sidebar.collapse'),
 				sub: '⌘\\',
-				glyph: prefs.collapsed ? I.expand : I.collapse,
+				glyph: (prefs.collapsed ? 'expand' : 'collapse') as GlyphName,
 				run: act(() => prefs.toggleCollapsed())
 			}
 		];
@@ -208,7 +203,6 @@
 				group: 'workshops' as const,
 				label: p.name,
 				sub: p.repo.url,
-				glyph: '',
 				vial: p.id,
 				run: go(to.workshop(p.id))
 			});
@@ -227,7 +221,7 @@
 				group: 'runs' as const,
 				label: r.title,
 				sub: `${shortId(r.id)} · ${stateLabel[r.state]}`,
-				glyph: I.runs,
+				glyph: 'runs' as GlyphName,
 				run: go(to.run(r.id))
 			});
 		for (const tk of tickets.rows)
@@ -235,7 +229,7 @@
 				group: 'tickets' as const,
 				label: tk.title,
 				sub: `${tk.key} · ${fleet.projectName(tickets.projectId)}`,
-				glyph: I.tickets,
+				glyph: 'tickets' as GlyphName,
 				run: go(to.workshopTicket(tickets.projectId, tk.key))
 			});
 		for (const mr of mrs.slice(0, 80))
@@ -243,7 +237,7 @@
 				group: 'mrs' as const,
 				label: `!${mr.iid} ${mr.title}`,
 				sub: `${mr.author} · ${fleet.projectName(mr.projectId)}`,
-				glyph: I.branch,
+				glyph: 'mergeRequests' as GlyphName,
 				run: go(to.mergeRequest(mr.projectId, mr.iid))
 			});
 		return out;
@@ -273,6 +267,16 @@
 	$effect(() => {
 		if (sel > shown.length - 1) sel = Math.max(0, shown.length - 1);
 	});
+
+	// The mouse picks a row only when it moves: the list scrolling under a
+	// still pointer (the arrow keys reaching the bottom) fires mouseenter on
+	// whatever row arrives under it, and the selection jumped up to it.
+	let pointer = { x: -1, y: -1 };
+	function hover(e: PointerEvent, i: number) {
+		if (e.screenX === pointer.x && e.screenY === pointer.y) return;
+		pointer = { x: e.screenX, y: e.screenY };
+		sel = i;
+	}
 
 	function key(e: KeyboardEvent) {
 		if (e.key === 'ArrowDown') {
@@ -310,7 +314,7 @@
 			use:trap={{ onescape: () => (open = false), initial: () => input }}
 		>
 			<div class="qrow">
-				<span class="palette-glass" aria-hidden="true">{I.search}</span>
+				<span class="palette-glass" aria-hidden="true"><Glyph name="search" /></span>
 				<input
 					class="bare q"
 					bind:this={input}
@@ -332,11 +336,14 @@
 						class:on={i === sel}
 						role="option"
 						aria-selected={i === sel}
-						onmouseenter={() => (sel = i)}
+						onpointermove={(e) => hover(e, i)}
 						onclick={it.run}
 					>
 						<span class="g"
-							>{#if it.vial}<Vial projectId={it.vial} />{:else}{it.glyph}{/if}</span
+							>{#if it.vial}<Vial projectId={it.vial} />{:else if it.glyph}<Glyph
+									name={it.glyph}
+									size="16px"
+								/>{/if}</span
 						>
 						<span class="truncate grow">{it.label}</span>
 						{#if it.sub}<span class="sub truncate">{it.sub}</span>{/if}

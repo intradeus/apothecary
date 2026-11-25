@@ -16,6 +16,7 @@
 	import { ago, fmtAbs } from '$lib/core/format';
 	import ErrorCard from '$lib/ui/ErrorCard.svelte';
 	import Loading from '$lib/ui/Loading.svelte';
+	import EmptyState from '$lib/ui/EmptyState.svelte';
 	import LogOutput from '$lib/ui/LogOutput.svelte';
 	import { toast } from '$lib/ui/toast.svelte';
 	import { confirmDialog } from '$lib/ui/confirm.svelte';
@@ -277,9 +278,10 @@
 			<Loading text={t('runview.connecting')} />
 		{/if}
 	{:else if list.length === 0}
-		<div class="empty">
-			<div class="et">{t('runview.services.none_title')}</div>
-			<div class="help">{@render linked('runview.services.none_text')}</div>
+		<div class="none">
+			<EmptyState compact title={t('runview.services.none_title')}>
+				{#snippet detail()}{@render linked('runview.services.none_text')}{/snippet}
+			</EmptyState>
 		</div>
 	{:else}
 		{#if !data.workspace}
@@ -469,19 +471,19 @@
 		font-size: var(--fs-label);
 		color: var(--text-muted);
 	}
-	.empty {
-		padding: 18px 16px;
+	/* The shared empty state, centred in the room left like the other
+	   panes' (by its margins: a short window scrolls to it). */
+	.none {
+		flex: 1;
+		min-height: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
-		max-width: 520px;
+		padding: 12px;
+		overflow: auto;
 	}
-	.et {
-		font-family: var(--font-display);
-		font-weight: 600;
-		font-size: var(--fs-section);
+	.none > :global(*) {
+		margin-block: auto;
 	}
-	.empty .help,
 	.foot {
 		color: var(--text-muted);
 		font-size: var(--fs-label);

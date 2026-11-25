@@ -7,12 +7,15 @@
 	let {
 		title,
 		text,
+		detail,
 		children,
 		compact = false,
 		inline = false
 	}: {
 		title: string;
 		text?: string;
+		/** The line as rich text (links), in place of `text`. */
+		detail?: Snippet;
 		children?: Snippet;
 		compact?: boolean;
 		inline?: boolean;
@@ -21,7 +24,7 @@
 
 <div class="es" class:compact class:inline>
 	<div class="t">{title}</div>
-	{#if text}<div class="x">{text}</div>{/if}
+	{#if detail}<div class="x">{@render detail()}</div>{:else if text}<div class="x">{text}</div>{/if}
 	{#if children}<div class="a">{@render children()}</div>{/if}
 </div>
 
