@@ -2,6 +2,13 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.4.1 (2026-11-25)
+
+### Fixes
+
+- **ui**: plenty of small UI fixes, padding, icons, positionning etc.
+- **ui**: plenty of small UI fixes, padding, icons, positionning etc.
+
 ## v5.4.0 (2026-11-25)
 
 ### Features
