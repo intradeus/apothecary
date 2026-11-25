@@ -14,6 +14,7 @@ import { ticketFill, type TicketFields } from '$lib/domain';
 import { assistant, type PageAssist } from './assistant.svelte';
 import AssistantDock from './AssistantDock.svelte';
 import { FillGuard } from './fillGuard.svelte';
+import ShellWithDock from '$test/fixtures/ShellWithDock.svelte';
 
 vi.mock('$lib/api', () => ({
 	api: {
@@ -348,23 +349,26 @@ describe('AssistantDock', () => {
 	describe('with a page on screen', () => {
 		let form: TicketFields;
 		let withdraw = () => {};
-		const offer = (over: Partial<PageAssist> = {}) => {
+		const aPage = (over: Partial<PageAssist> = {}): PageAssist => {
 			form = { title: '', goal: 'notes', changeType: 'feat', typeId: '' };
-			const guard = new FillGuard<TicketFields>(
-				() => ({ ...form }),
-				(v) => (form = { ...v }),
-				ticketFill
-			);
-			withdraw = assistant.offer({
+			return {
 				kind: 'ticket',
 				subject: 'T-1',
 				workshop: 'p1',
 				name: 'T-1',
-				guard,
+				guard: new FillGuard<TicketFields>(
+					() => ({ ...form }),
+					(v) => (form = { ...v }),
+					ticketFill
+				),
 				pageState: () => ({ ...form }),
 				...over
-			});
-			return guard;
+			};
+		};
+		const offer = (over: Partial<PageAssist> = {}) => {
+			const target = aPage(over);
+			withdraw = assistant.offer(target);
+			return target.guard as FillGuard<TicketFields>;
 		};
 		const ticketSession = { ...session('t1'), kind: 'ticket' as const, subject: 'T-1' };
 
@@ -509,6 +513,37 @@ describe('AssistantDock', () => {
 			// An answer on its way has no page to land on.
 			await waitFor(() => expect(api.assistant.cancel).toHaveBeenCalledWith('t1'));
 			expect(screen.queryByRole('radio', { name: /This ticket/ })).not.toBeInTheDocument();
+			expect(await screen.findByText('Hello there.')).toBeVisible();
+		});
+
+		it('lets the page go under its open panel when a navigation takes it', async () => {
+			const { rerender } = render(ShellWithDock, { props: { target: aPage() } });
+			await userEvent.click(button());
+			expect(
+				await screen.findByRole('textbox', { name: 'What should this ticket hold?' })
+			).toBeVisible();
+			// The route's page goes in the shell's own update, the panel still
+			// showing its conversation.
+			await rerender({ target: null });
+			expect(screen.queryByRole('radio', { name: /This ticket/ })).not.toBeInTheDocument();
+			expect(await screen.findByText('Hello there.')).toBeVisible();
+			// The next page that offers itself gets a conversation of its own.
+			await rerender({ target: aPage({ subject: 'T-2', name: 'T-2' }) });
+			await waitFor(() => expect(tab(/This ticket · T-2/)).toBeInTheDocument());
+			await userEvent.click(tab(/This ticket · T-2/));
+			await waitFor(() =>
+				expect(api.assistant.open).toHaveBeenCalledWith('ticket', 'T-2', 'p1', { fresh: undefined })
+			);
+		});
+
+		it('lets the page go once a click on a link has folded the panel', async () => {
+			const { rerender } = render(ShellWithDock, { props: { target: aPage() } });
+			await userEvent.click(button());
+			await screen.findByRole('textbox', { name: 'What should this ticket hold?' });
+			assistant.close();
+			await rerender({ target: null });
+			await waitFor(() => expect(button()).not.toHaveClass('paged'));
+			await userEvent.click(button());
 			expect(await screen.findByText('Hello there.')).toBeVisible();
 		});
 

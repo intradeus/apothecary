@@ -32,7 +32,7 @@
 	import { t } from '$lib/i18n/index.svelte';
 	import Segmented, { type SegOption } from '$lib/ui/Segmented.svelte';
 	import AssistantPanel from './AssistantPanel.svelte';
-	import { assistant, pageKey, type AssistantMode } from './assistant.svelte';
+	import { assistant, pageKey, type AssistantMode, type PageAssist } from './assistant.svelte';
 	import { Conversation } from './conversation.svelte';
 	import { fillHook } from './fillGuard.svelte';
 
@@ -45,8 +45,16 @@
 	});
 
 	/** The page's conversation: opened the first time its mode shows, kept
-	 *  while the page stays (the panel closed or not), ended when it goes. */
-	let paged = $state<{ key: string; convo: Conversation; end: () => void } | null>(null);
+	 *  while the page stays (the panel closed or not), ended when it goes.
+	 *  It holds the page it opened on: its panel shows on `paged` alone, so
+	 *  the page going (a navigation withdraws its offer before the effect
+	 *  below ends the conversation) never leaves the panel half there. */
+	let paged = $state<{
+		key: string;
+		target: PageAssist;
+		convo: Conversation;
+		end: () => void;
+	} | null>(null);
 	const key = $derived(assistant.page ? pageKey(assistant.page) : '');
 	const wanted = $derived(assistant.open && assistant.mode === 'page');
 	$effect(() => {
@@ -71,6 +79,7 @@
 			void convo.load();
 			paged = {
 				key: k,
+				target,
 				convo,
 				end: () => {
 					// The page is gone: an answer still on its way has nowhere to land.
@@ -300,7 +309,12 @@
 				? t('assistant.mode.pageScope', { page: pageWord })
 				: t('assistant.mode.generalScope')}
 		</p>
-		{#if paged && assistant.page}
+		<!-- On `paged` alone, never on the page's offer too: the offer goes
+		     first, and a panel that outlived its guard would read a
+		     conversation that is no longer there. The page as it offers itself
+		     now (its name changes under the same conversation), else the one
+		     the conversation opened on. -->
+		{#if paged}
 			<div
 				class="mode col"
 				class:mode-on={assistant.mode === 'page'}
@@ -308,7 +322,7 @@
 			>
 				<AssistantPanel
 					convo={paged.convo}
-					target={assistant.page}
+					target={assistant.page ?? paged.target}
 					compact={!assistant.expanded}
 					onexpand={() => (assistant.expanded = true)}
 				/>
