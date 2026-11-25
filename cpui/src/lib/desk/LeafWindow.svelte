@@ -244,13 +244,13 @@
 	}
 	/* More tabs past an end: that end fades, so a tab cut at the edge reads as
 	   "more this way", not as a broken label. */
-	.tabrow[data-more-end] {
+	.tabrow:global([data-more-end]) {
 		mask-image: linear-gradient(to right, var(--mask-opaque) calc(100% - 28px), transparent);
 	}
-	.tabrow[data-more-start] {
+	.tabrow:global([data-more-start]) {
 		mask-image: linear-gradient(to right, transparent, var(--mask-opaque) 28px);
 	}
-	.tabrow[data-more-start][data-more-end] {
+	.tabrow:global([data-more-start][data-more-end]) {
 		mask-image: linear-gradient(
 			to right,
 			transparent,

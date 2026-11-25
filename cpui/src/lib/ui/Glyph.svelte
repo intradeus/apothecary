@@ -21,8 +21,7 @@
 	focusable="false"
 	data-glyph={name}
 >
-	<!-- eslint-disable-next-line svelte/no-at-html-tags -- the shapes are our own constants -->
-	{@html GLYPHS[name]}
+	{#each GLYPHS[name] as [tag, attrs], i (i)}<svelte:element this={tag} {...attrs} />{/each}
 </svg>
 
 <style>

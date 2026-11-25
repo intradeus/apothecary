@@ -484,10 +484,6 @@
 	.none > :global(*) {
 		margin-block: auto;
 	}
-	.foot {
-		color: var(--text-muted);
-		font-size: var(--fs-label);
-	}
 	.nows {
 		margin: 0 8px 8px;
 		flex: none;
@@ -553,6 +549,8 @@
 	}
 	.foot {
 		padding: 10px 12px;
+		color: var(--text-muted);
+		font-size: var(--fs-label);
 	}
 	.foot a {
 		font-weight: 500;
