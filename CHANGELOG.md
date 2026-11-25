@@ -2,6 +2,13 @@
 
 Generated on each release by commitizen (`deploy/release.sh cut`, rules in `.cz.toml`). Do not edit released sections.
 
+## v5.4.2 (2026-11-25)
+
+### Fixes
+
+- **ui**: hide expired personal tokens
+- **ui**: assistant hook staying opened too long
+
 ## v5.4.1 (2026-11-25)
 
 ### Fixes
