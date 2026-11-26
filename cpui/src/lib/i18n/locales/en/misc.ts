@@ -499,13 +499,19 @@ export default {
 	'form.project.idleHelp':
 		'A sandbox nobody uses (no agent working, no program running in a terminal, no terminal, editor, port or SSH connection) is stopped after this long, its checkout and containers kept. A program left running in a terminal keeps it up until it ends or its session is closed. The next use starts it again in seconds; processes it ran start again from the hooks.',
 	'form.project.runtimeHelp':
-		'What isolates this workshop’s sandboxes from the machine they run on, among the runtimes an admin approved on the provisioner. Applies to the next run’s sandbox, or a rebuild — never to one already running. A rebuild cannot apply it to a sandbox whose disks go with its pod (emptydir storage, kata without a VM storage class), or between kata and another runtime: there it waits for the next run.',
+		'What isolates this workshop’s sandboxes from the machine they run on, among the runtimes an admin approved on the provisioner. Pick the lightest one that runs what the workshop needs. Applies to the next run’s sandbox, or a rebuild — never to one already running. A rebuild cannot apply it to a sandbox whose disks go with its pod (emptydir storage, kata without a VM storage class), or between kata and another runtime: there it waits for the next run.',
 	'form.project.rtDefault': 'The default ({name})',
 	'form.project.rtNested': 'docker inside',
 	'form.project.rtKube': 'Kubernetes inside',
-	'form.project.rtUserns': 'user namespaces inside',
+	'form.project.rtUserns': 'user-namespaced pods inside',
 	'form.project.rtContained': 'contained from its node',
 	'form.project.rtNodeRoot': 'root on its node',
+	'form.project.rtAboutSysbox':
+		'Pick this if you need docker, compose, or a Kubernetes cluster (k3d, kind) inside the sandbox. It shares its node’s kernel: the lightest on memory and the quickest to start.',
+	'form.project.rtAboutKata':
+		'Pick this only if you also need user-namespaced pods (hostUsers: false) on a cluster inside the sandbox, or kernel-level work. Runs everything sysbox does, in a small VM with its own kernel: heavier on memory, slower to start.',
+	'form.project.rtAboutPrivileged':
+		'Pick this only for trusted, internal use: there is no isolation, root inside is root on its node.',
 	'form.project.rtWithdrawn': 'no longer approved',
 	'form.project.rt_notApproved':
 		'{name} is not approved on this instance: pick one that is, or the save will be refused.',

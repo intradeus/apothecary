@@ -51,13 +51,34 @@ describe('SandboxRuntimeField', () => {
 		render(SandboxRuntimeField, props);
 		const def = await screen.findByRole('radio', { name: /The default \(sysbox\)/ });
 		expect(def).toBeChecked();
-		expect(
-			screen.getByText(/docker inside · Kubernetes inside · contained from its node/)
-		).toBeInTheDocument();
-		expect(screen.getByText(/user namespaces inside · root on its node/)).toBeInTheDocument();
+		expect(screen.getByText(/Pick this if you need docker, compose/)).toBeInTheDocument();
+		expect(screen.getByText(/Pick this only for trusted, internal use/)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('radio', { name: /privileged/ }));
 		expect(props.runtime).toBe('privileged');
 		expect(screen.queryByText(/save will be refused/)).not.toBeInTheDocument();
+	});
+
+	it('says when to pick each known runtime, and what an unknown one can run', async () => {
+		const kata: SandboxRuntime = {
+			name: 'kata',
+			capabilities: { ...sysbox.capabilities, userNamespaces: true }
+		};
+		const other: SandboxRuntime = { name: 'gvisor', capabilities: plain.capabilities };
+		vi.mocked(api.system.runtimeOffer).mockResolvedValue(
+			offer({ approved: [sysbox, kata, privileged, other] })
+		);
+		render(SandboxRuntimeField, { runtime: '', docker: false });
+		expect(
+			await screen.findByText(/Pick this if you need docker.*the lightest on memory/)
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(/Pick this only if you also need user-namespaced pods.*small VM/)
+		).toBeInTheDocument();
+		expect(screen.getByText(/no isolation, root inside is root on its node/)).toBeInTheDocument();
+		// No capability lists for the ones the form knows.
+		expect(screen.queryByText(/docker inside/)).not.toBeInTheDocument();
+		// A runtime the form does not know keeps its capabilities.
+		expect(screen.getByText('— contained from its node')).toBeInTheDocument();
 	});
 
 	it('shows nothing when there is no choice', async () => {
