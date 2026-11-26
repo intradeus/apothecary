@@ -11,7 +11,7 @@
 		type RuntimeOffer
 	} from '$lib/domain';
 	import RadioGroup, { type ChoiceOption } from '$lib/ui/RadioGroup.svelte';
-	import { t } from '$lib/i18n/index.svelte';
+	import { t, type MessageKey } from '$lib/i18n/index.svelte';
 	import FormSub from './FormSub.svelte';
 
 	let {
@@ -43,6 +43,16 @@
 			.filter(Boolean)
 			.join(' · ');
 
+	// What each known runtime is for, after what it can run: the capabilities
+	// say what fits, this says which to prefer (the lightest that fits).
+	const about: Record<string, MessageKey> = {
+		sysbox: 'form.project.rtAboutSysbox',
+		kata: 'form.project.rtAboutKata',
+		privileged: 'form.project.rtAboutPrivileged'
+	};
+	const describe = (r: { name: string; capabilities: RuntimeCapabilities }) =>
+		[can(r.capabilities), about[r.name] && t(about[r.name])].filter(Boolean).join('. ');
+
 	const options = $derived.by<ChoiceOption<string>[]>(() => {
 		if (!offer) return [];
 		const o = offer;
@@ -51,11 +61,11 @@
 			{
 				value: '',
 				label: t('form.project.rtDefault', { name: o.default }),
-				detail: def ? can(def.capabilities) : undefined
+				detail: def ? describe(def) : undefined
 			},
 			...o.approved
 				.filter((r) => r.name !== o.default)
-				.map((r) => ({ value: r.name, label: r.name, detail: can(r.capabilities) }))
+				.map((r) => ({ value: r.name, label: r.name, detail: describe(r) }))
 		];
 		// A pick no longer approved stays visible, so the form shows what is saved.
 		if (runtime && !o.approved.some((r) => r.name === runtime)) {

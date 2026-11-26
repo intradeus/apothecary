@@ -54,10 +54,31 @@ describe('SandboxRuntimeField', () => {
 		expect(
 			screen.getByText(/docker inside · Kubernetes inside · contained from its node/)
 		).toBeInTheDocument();
-		expect(screen.getByText(/user namespaces inside · root on its node/)).toBeInTheDocument();
+		expect(screen.getByText(/user-namespaced pods inside · root on its node/)).toBeInTheDocument();
 		await userEvent.click(screen.getByRole('radio', { name: /privileged/ }));
 		expect(props.runtime).toBe('privileged');
 		expect(screen.queryByText(/save will be refused/)).not.toBeInTheDocument();
+	});
+
+	it('says what each known runtime is for, after what it can run', async () => {
+		const kata: SandboxRuntime = {
+			name: 'kata',
+			capabilities: { ...sysbox.capabilities, userNamespaces: true }
+		};
+		const other: SandboxRuntime = { name: 'gvisor', capabilities: plain.capabilities };
+		vi.mocked(api.system.runtimeOffer).mockResolvedValue(
+			offer({ approved: [sysbox, kata, privileged, other] })
+		);
+		render(SandboxRuntimeField, { runtime: '', docker: false });
+		expect(
+			await screen.findByText(/contained from its node\. Shares its node’s kernel/)
+		).toBeInTheDocument();
+		expect(
+			screen.getByText(/user-namespaced pods inside · contained from its node\. A small VM/)
+		).toBeInTheDocument();
+		expect(screen.getByText(/root on its node\. No isolation/)).toBeInTheDocument();
+		// A runtime the form does not know keeps its capabilities alone.
+		expect(screen.getByText('— contained from its node')).toBeInTheDocument();
 	});
 
 	it('shows nothing when there is no choice', async () => {
