@@ -507,11 +507,11 @@ export default {
 	'form.project.rtContained': 'contained from its node',
 	'form.project.rtNodeRoot': 'root on its node',
 	'form.project.rtAboutSysbox':
-		'Shares its node’s kernel: the lightest on memory and the quickest to start. For docker and compose, and for k3d or kind clusters whose pods need no user namespace of their own.',
+		'Pick this if you need docker, compose, or a Kubernetes cluster (k3d, kind) inside the sandbox. It shares its node’s kernel: the lightest on memory and the quickest to start.',
 	'form.project.rtAboutKata':
-		'A small VM with a kernel of its own: its memory is held for the VM, and it starts slower. Only for a nested cluster that runs user-namespaced pods (hostUsers: false), or for kernel-level work.',
+		'Pick this only if you also need user-namespaced pods (hostUsers: false) on a cluster inside the sandbox, or kernel-level work. Runs everything sysbox does, in a small VM with its own kernel: heavier on memory, slower to start.',
 	'form.project.rtAboutPrivileged':
-		'No isolation: root inside is root on its node. For trusted, internal use only.',
+		'Pick this only for trusted, internal use: there is no isolation, root inside is root on its node.',
 	'form.project.rtWithdrawn': 'no longer approved',
 	'form.project.rt_notApproved':
 		'{name} is not approved on this instance: pick one that is, or the save will be refused.',

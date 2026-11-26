@@ -43,15 +43,17 @@
 			.filter(Boolean)
 			.join(' · ');
 
-	// What each known runtime is for, after what it can run: the capabilities
-	// say what fits, this says which to prefer (the lightest that fits).
-	const about: Record<string, MessageKey> = {
+	// A known runtime says when to pick it, so a person chooses by what the
+	// workshop needs; one the form does not know lists what it can run.
+	const about: Partial<Record<string, MessageKey>> = {
 		sysbox: 'form.project.rtAboutSysbox',
 		kata: 'form.project.rtAboutKata',
 		privileged: 'form.project.rtAboutPrivileged'
 	};
-	const describe = (r: { name: string; capabilities: RuntimeCapabilities }) =>
-		[can(r.capabilities), about[r.name] && t(about[r.name])].filter(Boolean).join('. ');
+	const describe = (r: { name: string; capabilities: RuntimeCapabilities }) => {
+		const key = about[r.name];
+		return key ? t(key) : can(r.capabilities);
+	};
 
 	const options = $derived.by<ChoiceOption<string>[]>(() => {
 		if (!offer) return [];
