@@ -31,12 +31,16 @@ true` itself), the same pod makes and removes a child cgroup.
   arise.
 - The kubelet's data is a volume of its own, on the host's filesystem,
   which takes idmapped mounts.
-- The kubelet's image GC is off (`imageGCHighThresholdPercent: 100`). On a
-  docker host whose disk was 93% full, past the kubelet's 85% threshold,
-  the node deleted the suite's imported images between the import and the
-  run, and the sandbox pod sat in `ImagePullBackOff`: an imported image
-  cannot be pulled again. The other rigs have the same exposure and keep
-  their defaults.
+- The kubelet never deletes an image to free disk: image GC is off
+  (`imageGCHighThresholdPercent: 100`), and so are the disk eviction
+  thresholds (`imagefs.available` and `nodefs.available` at `0%`; memory's
+  stays at the default 100Mi). On a docker host whose disk was 93 to 95%
+  full, past the kubelet's 85% GC threshold and its 15% `imagefs.available`
+  eviction threshold, the node deleted the suite's imported images, before
+  the run or during it, and the sandbox pod sat in `ImagePullBackOff`: an
+  imported image cannot be pulled again. GC off alone was not enough, since
+  disk pressure reclaims images on its own. The other rigs have the same
+  exposure and keep their defaults.
 - The smoke pod is shaped as the provisioner's sandbox and checks what the
   runtime rests on: a child cgroup made and removed, and more than 65536
   ids in its `uid_map`.

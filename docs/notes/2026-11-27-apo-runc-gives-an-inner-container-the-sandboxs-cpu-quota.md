@@ -48,6 +48,8 @@ runtime that reads its own `cpu.max` see it.
 Tests: `workspace/aporunc/runc_test.go` (`TestRewriteCPU`: the quota added
 beside the other resources, a quota of its own kept, unreadable specs
 refused; `TestSandboxCPU`: the walk up the cgroup tree; `TestRun`: the
-quota written on create). The live suite's `liveUsernsNesting`: an inner
-container's `cpu.max` is the sandbox's, and one started with `--cpus 1`
+quota written on create). The live suite's `liveUsernsNesting`, on the
+userns rig, with the userns sandbox now sized at 2 CPUs (it had no limit,
+so there was nothing to hand down): the sandbox's `cpu.max` is `200000
+100000`, an inner container's is the same, and one started with `--cpus 1`
 keeps `100000 100000`.

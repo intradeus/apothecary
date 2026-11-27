@@ -81,6 +81,15 @@ apiVersion: kubelet.config.k8s.io/v1beta1
 kind: KubeletConfiguration
 userNamespaces:
   idsPerPod: $IDS_PER_POD
+# The suite's images are imported, never pulled: a kubelet that frees disk
+# by deleting them leaves the sandbox in ImagePullBackOff. Image GC and the
+# disk eviction thresholds are off, the memory one kept at its default.
+imageGCHighThresholdPercent: 100
+imageGCLowThresholdPercent: 99
+evictionHard:
+  imagefs.available: "0%"
+  nodefs.available: "0%"
+  memory.available: 100Mi
 EOF
 }
 

@@ -240,9 +240,14 @@ func TestLiveSandboxLifecycle(t *testing.T) {
 		EgressDomains:      builtin.EgressDefaults(),
 		EgressAllowedPorts: []int{9418},
 	}
-	if vm {
+	switch {
+	case vm:
 		// The pod's limits size the VM.
 		spec.Size = envport.SandboxSize{MilliCPU: 4000, MemoryMiB: 8192}
+	case runtime == envport.RuntimeUserns:
+		// A CPU limit for apo-runc to hand the inner containers
+		// (liveUsernsNesting).
+		spec.Size = envport.SandboxSize{MilliCPU: 2000}
 	}
 	start := time.Now()
 	env, err := a.Provision(ctx, spec)
@@ -629,6 +634,7 @@ func liveUsernsNesting(ctx context.Context, t *testing.T, h *k8sHost, name strin
 docker run --rm --privileged busybox:1.37 sh -c 'ip link add d0 type dummy && grep " /sys " /proc/self/mounts' | grep -q ' ro,'
 echo "privileged container ran"
 want=$(cat /sys/fs/cgroup/cpu.max)
+[ "$want" = "200000 100000" ] || { echo "the sandbox's cpu.max is $want, want its 2 CPUs"; exit 1; }
 got=$(docker run --rm busybox:1.37 cat /sys/fs/cgroup/cpu.max)
 [ "$got" = "$want" ] || { echo "an inner container's cpu.max is $got, the sandbox's $want"; exit 1; }
 own=$(docker run --rm --cpus 1 busybox:1.37 cat /sys/fs/cgroup/cpu.max)
