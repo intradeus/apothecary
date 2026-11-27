@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 
+	"apothecary/internal/adapters/kube"
 	"apothecary/internal/ports/envport"
 )
 
@@ -36,6 +37,14 @@ type sandboxRuntime struct {
 	//     completes before dockerd (APO_DEV_PRELUDE);
 	//   - a size, required: the pod's limits size the VM.
 	vm bool
+	// usernsNesting is a runtime that nests a docker daemon in the pod's own
+	// user namespace with plain runc (the userns runtime): the sandbox
+	// container's security context that takes (usernsSecurity), and the
+	// image's switch (APO_USERNS_NESTING), which checks the cluster gave the
+	// pod its user namespace and a writable cgroup and runs the daemon's
+	// containers through apo-runc. Only with ownUserNamespace, never
+	// privileged.
+	usernsNesting bool
 }
 
 // sandboxRuntimes is the table, one row per runtime the adapter can build.
@@ -55,6 +64,11 @@ var sandboxRuntimes = map[envport.Runtime]sandboxRuntime{
 	// privileged_without_host_devices keeps the node's devices out), no
 	// hostUsers (the guest kernel is the pod's own).
 	envport.RuntimeKata: {name: envport.RuntimeKata, class: "kata", privileged: true, vm: true},
+	// userns: plain runc in the pod's own user namespace (hostUsers: false),
+	// under a handler that makes the pod's cgroup writable (containerd's
+	// cgroup_writable). Nothing but that handler is installed on the node.
+	// README, "Cluster requirements".
+	envport.RuntimeUserns: {name: envport.RuntimeUserns, class: "runc-userns", ownUserNamespace: true, usernsNesting: true},
 }
 
 // lookupRuntime is the row for name; "" is privileged, the zero
@@ -68,6 +82,63 @@ func lookupRuntime(name envport.Runtime) (sandboxRuntime, error) {
 		return sandboxRuntime{}, fmt.Errorf("kubernetes: the adapter cannot build a %q sandbox", name)
 	}
 	return rt, nil
+}
+
+// sandboxSecurity is the sandbox container's security context under rt (the
+// runtime probe's too); nil leaves the cluster's default.
+func (rt sandboxRuntime) sandboxSecurity() *kube.SecurityContext {
+	switch {
+	case rt.privileged:
+		return &kube.SecurityContext{Privileged: kube.Ptr(true)}
+	case rt.usernsNesting:
+		return usernsSecurity()
+	}
+	return nil
+}
+
+// usernsSecurity is what a docker daemon, and a Kubernetes node on it, need
+// of an unprivileged container in a user namespace of the pod's own. Every
+// capability is the namespace's, never the node's: the pod's root owns
+// nothing of the node.
+//   - procMount Unmasked: the kernel lets a nested container mount a fresh
+//     /proc (and a sysfs) only where one is fully visible, and the runtime's
+//     masked paths cover parts of it;
+//   - SYS_ADMIN for mounts and namespaces (overlay layers, each nested
+//     container's own), NET_ADMIN for docker's bridges and iptables, MKNOD
+//     for nested containers' devices, SYS_RESOURCE for the limits dockerd and
+//     a kubelet raise, SYS_PTRACE for runc and a kubelet reading other
+//     processes' /proc;
+//   - seccomp and AppArmor Unconfined: their runtime defaults refuse mount,
+//     unshare and the rest of what nesting is made of. This is the
+//     runtime's trade-off: the whole kernel API is reachable from the
+//     sandbox, its isolation the user namespace alone.
+func usernsSecurity() *kube.SecurityContext {
+	return &kube.SecurityContext{
+		ProcMount:       "Unmasked",
+		Capabilities:    &kube.Capabilities{Add: []string{"SYS_ADMIN", "NET_ADMIN", "MKNOD", "SYS_RESOURCE", "SYS_PTRACE"}},
+		SeccompProfile:  &kube.SeccompProfile{Type: "Unconfined"},
+		AppArmorProfile: &kube.AppArmorProfile{Type: "Unconfined"},
+	}
+}
+
+// NestedUserNamespaceAdds is what a cluster whose nodes give user-namespaced
+// pods more than 65536 ids (KubeConfig.NestedUserNamespaces) adds to the
+// runtimes the adapter builds: user namespaces inside the sandbox, for every
+// runtime that nests in the pod's own user namespace with plain runc. Not
+// sysbox, which maps its own 65536 whatever the kubelet gives
+// (docs/notes/2026-11-26-sysbox-cannot-run-nested-user-namespaced-pods-even-with-a-wider-id-range.md).
+// nil when off.
+func NestedUserNamespaceAdds(on bool) map[envport.Runtime]envport.RuntimeCapabilities {
+	if !on {
+		return nil
+	}
+	out := map[envport.Runtime]envport.RuntimeCapabilities{}
+	for name, rt := range sandboxRuntimes {
+		if rt.usernsNesting {
+			out[name] = envport.RuntimeCapabilities{UserNamespaces: true}
+		}
+	}
+	return out
 }
 
 // caps is what the runtime gives the sandbox (the port's table).

@@ -512,6 +512,10 @@ export default {
 		'Pick this only if you also need user-namespaced pods (hostUsers: false) on a cluster inside the sandbox, or kernel-level work. Runs everything sysbox does, in a small VM with its own kernel: heavier on memory, slower to start.',
 	'form.project.rtAboutPrivileged':
 		'Pick this only for trusted, internal use: there is no isolation, root inside is root on its node.',
+	'form.project.rtAboutUserns':
+		'Pick this if you need docker, compose, or a Kubernetes cluster inside the sandbox and sysbox is not offered. It shares its node’s kernel like sysbox, without sysbox’s filtering of what the kernel is asked: for your own projects, not code you do not trust.',
+	'form.project.rtAboutUsernsWide':
+		'Pick this if you also need user-namespaced pods (hostUsers: false) on a cluster inside the sandbox, without kata’s VM. It shares its node’s kernel with nothing filtering what the kernel is asked: for your own projects, not code you do not trust.',
 	'form.project.rtWithdrawn': 'no longer approved',
 	'form.project.rt_notApproved':
 		'{name} is not approved on this instance: pick one that is, or the save will be refused.',

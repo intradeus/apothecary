@@ -1,0 +1,17 @@
+# userns by default, sysbox approved beside it, on a cluster whose nodes
+# have the runc-userns containerd handler (plain runc, cgroup_writable =
+# true; containerd 2.1+, kernel 6.3+, Kubernetes 1.36+). The chart makes
+# the runc-userns RuntimeClass. Whether a userns sandbox may run
+# user-namespaced pods on a cluster inside it is the provisioner's
+# nested_user_namespaces (System → Provisioner), on only once every node has
+# the kubelet's userNamespaces.idsPerPod (docs/kubernetes.md, The userns
+# runtime).
+masterKey: ci-placeholder
+postgres:
+  password: ci-placeholder
+
+workspaces:
+  runtime: userns
+  runtimes: [userns, sysbox]
+  usernsRuntimeClass:
+    create: true

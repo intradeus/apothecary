@@ -77,6 +77,12 @@ type KubeConfig struct {
 	// Runtimes are the other runtimes an env may ask for (EnvSpec.Runtime):
 	// the ones the integration approves. The default is always built.
 	Runtimes []envport.Runtime
+	// NestedUserNamespaces says this cluster's nodes give a user-namespaced
+	// pod more than 65536 ids (the kubelet's userNamespaces.idsPerPod), so a
+	// userns sandbox can hand user namespaces of their own to what it nests
+	// (NestedUserNamespaceAdds). The integration's word for its nodes: a
+	// provision says when a sandbox's node gave it 65536 ids or fewer.
+	NestedUserNamespaces bool
 	// Firewall routes every sandbox through its project's egress gateway.
 	Firewall     bool
 	ProtectCIDRs []string
@@ -249,7 +255,7 @@ func (h *k8sHost) isVMPod(pod kube.Pod) bool {
 }
 
 func (*k8sHost) containedHint() string {
-	return "the Kubernetes provisioner integration's runtime set to sysbox (sysbox-runc on the nodes, its runtime class)"
+	return "the Kubernetes provisioner integration's runtime set to a contained one: sysbox, userns or kata (its handler on the nodes, its runtime class)"
 }
 
 // --- prepare -----------------------------------------------------------------
@@ -450,7 +456,38 @@ func (h *k8sHost) ensurePod(ctx context.Context, name string, spec envport.EnvSp
 		}
 		return envport.SandboxSize{}, err
 	}
+	h.checkNestedIDs(ctx, name, rt, plog)
 	return podLimits(live), nil
+}
+
+// checkNestedIDs says, in the provisioning log, when the integration says
+// its nodes give a userns sandbox more than 65536 ids and this sandbox's
+// node did not: where only some nodes have the kubelet's setting, it is the
+// only sign before a nested user-namespaced pod fails to start.
+func (h *k8sHost) checkNestedIDs(ctx context.Context, name string, rt sandboxRuntime, plog func(string, ...any)) {
+	if !rt.usernsNesting || !h.cfg.NestedUserNamespaces {
+		return
+	}
+	out, _, code, err := h.runInner(ctx, name, "cat", []string{"/proc/self/uid_map"}, nil, nil)
+	if err != nil || code != 0 {
+		return
+	}
+	if n := mappedIDs(string(out)); n > 0 && n <= 65536 {
+		plog("→ warning: this sandbox's node gave it %d user ids, and the provisioner says its nodes give more than 65536 (nested user namespaces): a user-namespaced pod on a cluster inside it will not start. Every node that runs userns sandboxes needs the kubelet's userNamespaces.idsPerPod (docs/kubernetes.md)\n", n)
+	}
+}
+
+// mappedIDs is how many ids a uid_map maps (the sum of its lengths).
+func mappedIDs(uidMap string) int {
+	n := 0
+	for _, line := range strings.Split(uidMap, "\n") {
+		if f := strings.Fields(line); len(f) == 3 {
+			if l, err := strconv.Atoi(f[2]); err == nil {
+				n += l
+			}
+		}
+	}
+	return n
 }
 
 // podProgressEvery paces the "still waiting" lines of waitPodReady.
@@ -639,12 +676,6 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		// init containers and the relay keep the run volume at the folder.
 		sandboxMounts = []kube.VolumeMount{{Name: "run", MountPath: vmSeedDir}}
 	}
-	privileged := func() *kube.SecurityContext {
-		if !rt.privileged {
-			return nil
-		}
-		return &kube.SecurityContext{Privileged: kube.Ptr(true)}
-	}
 	sandbox := kube.Container{
 		Name: sandboxContainer, Image: h.cfg.SandboxImage, ImagePullPolicy: h.cfg.PullPolicy,
 		// apo-dockerd wraps the dind entrypoint: dockerd on the default socket,
@@ -653,13 +684,16 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		// MTU.
 		Command:         []string{"apo-dockerd"},
 		Env:             []kube.EnvVar{{Name: "DOCKER_TLS_CERTDIR", Value: ""}},
-		SecurityContext: privileged(),
+		SecurityContext: rt.sandboxSecurity(),
 		ReadinessProbe: &kube.Probe{Exec: &kube.ExecAction{Command: []string{"docker", "version"}},
 			PeriodSeconds: 3, TimeoutSeconds: 5, FailureThreshold: 100},
 		VolumeMounts: append(sandboxMounts, kube.VolumeMount{Name: "apo", MountPath: "/run/apo"}),
 	}
 	if rt.vm {
 		sandbox.Env = append(sandbox.Env, kube.EnvVar{Name: "APO_DEV_PRELUDE", Value: "1"})
+	}
+	if rt.usernsNesting {
+		sandbox.Env = append(sandbox.Env, kube.EnvVar{Name: "APO_USERNS_NESTING", Value: "1"})
 	}
 	if vmClaim {
 		sandbox.VolumeDevices = []kube.VolumeDevice{{Name: "data", DevicePath: vmDataDevice}}
@@ -699,8 +733,8 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		}}
 	pod.Spec.RuntimeClassName = h.classFor(rt)
 	if rt.ownUserNamespace {
-		// The pod's own Kubernetes user namespace (the runtime's comment says
-		// why sysbox needs it).
+		// The pod's own Kubernetes user namespace (the runtimes' comments say
+		// why sysbox and userns need it).
 		pod.Spec.HostUsers = kube.Ptr(false)
 	}
 	if vmClaim {
@@ -735,6 +769,14 @@ func (h *k8sHost) podManifest(ctx context.Context, name string, spec envport.Env
 		wgSec := kube.SecurityContext{Privileged: kube.Ptr(true)}
 		if !rt.privileged {
 			wgSec = kube.SecurityContext{Capabilities: &kube.Capabilities{Add: []string{"NET_ADMIN"}}}
+		}
+		if rt.usernsNesting {
+			// The tunnel sets its interface's sysctls (rp_filter, IPv6 off),
+			// which the pod's root owns in a user namespace of its own; plain
+			// runc mounts /proc/sys read-only (sysbox serves it writable),
+			// and the runtime's default AppArmor profile denies the writes.
+			wgSec.ProcMount = "Unmasked"
+			wgSec.AppArmorProfile = &kube.AppArmorProfile{Type: "Unconfined"}
 		}
 		wg := kube.Container{Name: "wg", Image: h.cfg.SandboxImage, ImagePullPolicy: h.cfg.PullPolicy,
 			RestartPolicy: "Always", // set up the tunnel, then watch it

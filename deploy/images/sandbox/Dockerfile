@@ -4,14 +4,21 @@
 # and the docker CLI (with its compose and buildx plugins, which docker:dind
 # ships) — against that daemon. WireGuard and iproute2 bring up the run's
 # tunnel to its project's egress gateway (apo-wg-up); wireguard-go is that
-# tunnel on a kernel without the WireGuard module (a Kata guest's). Build
-# context: this dir.
+# tunnel on a kernel without the WireGuard module (a Kata guest's).
+# apo-runc is the runc its docker daemon runs containers with under the
+# userns runtime (apo-dockerd, APO_USERNS_NESTING). Build context: this dir,
+# and workspace/aporunc as the named context aporunc (deploy/images.sh).
 #
 # wireguard-go is built from its module at a pinned version: `go install`
 # checks the module against the Go checksum database, the pin's checksum.
 FROM golang:1.26-alpine AS wireguard-go
 ARG WIREGUARD_GO_VERSION=v0.0.0-20261024220952-b3bc704ef0ee
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath -ldflags="-s -w" golang.zx2c4.com/wireguard@${WIREGUARD_GO_VERSION}
+
+FROM golang:1.26-alpine AS apo-runc
+COPY --from=aporunc . /src/
+RUN cd /src && go mod init apo-runc >/dev/null \
+    && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/apo-runc .
 
 FROM docker:29-dind
 ARG DEVCONTAINER_CLI_VERSION=0.86.0
@@ -20,5 +27,6 @@ RUN apk add --no-cache bash git nodejs npm wireguard-tools-wg iproute2 curl core
     && npm install -g @devcontainers/cli@${DEVCONTAINER_CLI_VERSION} \
     && npm cache clean --force
 COPY --from=wireguard-go /out/wireguard /usr/local/bin/wireguard-go
+COPY --from=apo-runc /out/apo-runc /usr/local/bin/apo-runc
 COPY apo-dockerd apo-wg-up /usr/local/bin/
 CMD ["apo-dockerd"]

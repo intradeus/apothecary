@@ -109,6 +109,13 @@ func TestRuntimeOffer(t *testing.T) {
 		!strings.Contains(body, `{"name":"privileged","capabilities":{"nested_containers":true,"nested_kubernetes":true,"user_namespaces":true,"contained":false}}`) {
 		t.Errorf("offered: %d %s", code, body)
 	}
+	// What the provisioner's cluster adds to a runtime is in its offer.
+	offers.choice = envport.RuntimeChoice{Default: envport.RuntimeUserns, Approved: []envport.Runtime{envport.RuntimeUserns},
+		Adds: map[envport.Runtime]envport.RuntimeCapabilities{envport.RuntimeUserns: {UserNamespaces: true}}}
+	if code, body := get(); code != http.StatusOK ||
+		!strings.Contains(body, `{"name":"userns","capabilities":{"nested_containers":true,"nested_kubernetes":true,"user_namespaces":true,"contained":true}}`) {
+		t.Errorf("widened userns: %d %s", code, body)
+	}
 	offers.ok = false
 	if code, body := get(); code != http.StatusOK || !strings.Contains(body, `"offered":false`) {
 		t.Errorf("no choice: %d %s", code, body)

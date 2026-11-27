@@ -63,7 +63,13 @@ change is to the images, the sandbox or the Kubernetes provisioner.
 In a sysbox workspace, `TestLiveK8sAssistantPod` skips and says why: under
 sysbox a k3d cluster on the workspace's docker cannot run a user-namespaced
 pod (`docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md`).
-That skip is expected, not a failure to work around. A kata workspace has
+That skip is expected, not a failure to work around. So is the same skip
+in a userns workspace whose provisioner leaves `nested_user_namespaces`
+off; with it on, the nodes' kubelets give the sandbox ids enough for the
+k3d cluster's user-namespaced pods, and `task k8s:cluster` builds its nodes
+from `deploy/userns/nested-node.Dockerfile`
+(`docs/notes/2026-11-27-a-nested-k3s-node-in-a-userns-sandbox-is-one-definition.md`).
+Its images are then held in memory, against the sandbox's limit. A kata workspace has
 a kernel of its own and runs user-namespaced pods, and the k8s suites in
 full: the stock guest kernel has no WireGuard, so the k3d cluster's
 gateways and sandboxes run `wireguard-go`

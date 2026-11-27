@@ -69,7 +69,8 @@ func TestLiveK8sAssistantPod(t *testing.T) {
 	c := &kube.Client{Kubeconfig: kc, Namespace: ns}
 	if ok, why := userNamespaces(ctx, t, c, prefix+"/egress-gw:local", pull); !ok {
 		livetest.Skip(t, "this cluster cannot make a pod's user namespace, and the assistant pod has one (hostUsers: false): %s. "+
-			"A k3d cluster on a docker daemon that is itself in a user namespace (a sysbox workspace) cannot: "+
+			"A k3d cluster on a docker daemon that is itself in a user namespace cannot (a sysbox workspace; a userns one "+
+			"unless its provisioner's nested_user_namespaces is on, docs/kubernetes.md): "+
 			"see docs/notes/2026-11-20-live-suites-skip-loudly-and-never-in-ci.md. CI's sandbox-test (k3d) runs this test", why)
 	}
 

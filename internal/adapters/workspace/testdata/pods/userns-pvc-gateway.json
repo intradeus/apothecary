@@ -1,0 +1,267 @@
+{
+  "apiVersion": "v1",
+  "kind": "Pod",
+  "metadata": {
+    "name": "apo-x",
+    "labels": {
+      "apothecary.io/managed": "true",
+      "apothecary.io/project": "p1",
+      "apothecary.io/run": "apo-x",
+      "apothecary.io/sandbox": "true"
+    },
+    "annotations": {
+      "apothecary.io/project-name": "My App",
+      "apothecary.io/shape": "d6bbec925cc048af"
+    }
+  },
+  "spec": {
+    "restartPolicy": "Always",
+    "terminationGracePeriodSeconds": 30,
+    "runtimeClassName": "runc-userns",
+    "hostUsers": false,
+    "automountServiceAccountToken": false,
+    "enableServiceLinks": false,
+    "dnsPolicy": "None",
+    "dnsConfig": {
+      "nameservers": [
+        "10.90.0.1"
+      ],
+      "searches": [
+        "ws.svc.cluster.local",
+        "svc.cluster.local",
+        "cluster.local"
+      ],
+      "options": [
+        {
+          "name": "ndots",
+          "value": "2"
+        }
+      ]
+    },
+    "hostname": "apo-x",
+    "initContainers": [
+      {
+        "name": "shim-seed",
+        "image": "shim:1",
+        "args": [
+          "seed",
+          "/var/lib/apothecary/runs/apo-x/shim"
+        ],
+        "volumeMounts": [
+          {
+            "name": "data",
+            "mountPath": "/var/lib/apothecary/runs/apo-x",
+            "subPath": "run"
+          }
+        ]
+      },
+      {
+        "name": "tools-seed",
+        "image": "tools:1",
+        "args": [
+          "/var/lib/apothecary/runs/apo-x/tools"
+        ],
+        "volumeMounts": [
+          {
+            "name": "data",
+            "mountPath": "/var/lib/apothecary/runs/apo-x",
+            "subPath": "run"
+          }
+        ]
+      },
+      {
+        "name": "wg",
+        "image": "sbx:1",
+        "command": [
+          "apo-wg-up"
+        ],
+        "env": [
+          {
+            "name": "GW_ENDPOINT",
+            "value": "10.43.9.9:51820"
+          },
+          {
+            "name": "GW_SVC_IP",
+            "value": "10.43.9.9"
+          },
+          {
+            "name": "ENGINE_IP",
+            "value": "10.43.0.20"
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "wg-secret",
+            "mountPath": "/secrets/wg",
+            "readOnly": true
+          },
+          {
+            "name": "apo",
+            "mountPath": "/run/apo"
+          }
+        ],
+        "securityContext": {
+          "capabilities": {
+            "add": [
+              "NET_ADMIN"
+            ]
+          },
+          "procMount": "Unmasked",
+          "appArmorProfile": {
+            "type": "Unconfined"
+          }
+        },
+        "startupProbe": {
+          "exec": {
+            "command": [
+              "test",
+              "-f",
+              "/run/apo/wg-ready"
+            ]
+          },
+          "periodSeconds": 1,
+          "failureThreshold": 60
+        },
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
+      },
+      {
+        "name": "relay",
+        "image": "shim:1",
+        "args": [
+          "relay",
+          "--serve",
+          "0.0.0.0:7070",
+          "--dir",
+          "/var/lib/apothecary/runs/apo-x/shim",
+          "--token-file",
+          "/secrets/run/relay-token"
+        ],
+        "ports": [
+          {
+            "name": "relay",
+            "containerPort": 7070
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "data",
+            "mountPath": "/var/lib/apothecary/runs/apo-x",
+            "subPath": "run"
+          },
+          {
+            "name": "run-secret",
+            "mountPath": "/secrets/run",
+            "readOnly": true
+          }
+        ],
+        "restartPolicy": "Always",
+        "resources": {
+          "requests": {
+            "cpu": "10m",
+            "memory": "32Mi"
+          }
+        }
+      }
+    ],
+    "containers": [
+      {
+        "name": "sandbox",
+        "image": "sbx:1",
+        "command": [
+          "apo-dockerd"
+        ],
+        "env": [
+          {
+            "name": "DOCKER_TLS_CERTDIR"
+          },
+          {
+            "name": "APO_USERNS_NESTING",
+            "value": "1"
+          },
+          {
+            "name": "APO_GATEWAY_IP",
+            "value": "10.90.0.1"
+          }
+        ],
+        "volumeMounts": [
+          {
+            "name": "data",
+            "mountPath": "/var/lib/docker",
+            "subPath": "docker"
+          },
+          {
+            "name": "data",
+            "mountPath": "/var/lib/apothecary/runs/apo-x",
+            "subPath": "run"
+          },
+          {
+            "name": "apo",
+            "mountPath": "/run/apo"
+          }
+        ],
+        "securityContext": {
+          "capabilities": {
+            "add": [
+              "SYS_ADMIN",
+              "NET_ADMIN",
+              "MKNOD",
+              "SYS_RESOURCE",
+              "SYS_PTRACE"
+            ]
+          },
+          "seccompProfile": {
+            "type": "Unconfined"
+          },
+          "procMount": "Unmasked",
+          "appArmorProfile": {
+            "type": "Unconfined"
+          }
+        },
+        "readinessProbe": {
+          "exec": {
+            "command": [
+              "docker",
+              "version"
+            ]
+          },
+          "periodSeconds": 3,
+          "timeoutSeconds": 5,
+          "failureThreshold": 100
+        }
+      }
+    ],
+    "volumes": [
+      {
+        "name": "apo",
+        "emptyDir": {}
+      },
+      {
+        "name": "run-secret",
+        "secret": {
+          "secretName": "apo-run-apo-x",
+          "defaultMode": 256
+        }
+      },
+      {
+        "name": "data",
+        "persistentVolumeClaim": {
+          "claimName": "apo-x-data"
+        }
+      },
+      {
+        "name": "wg-secret",
+        "secret": {
+          "secretName": "apo-wg-apo-x",
+          "defaultMode": 256
+        }
+      }
+    ]
+  },
+  "status": {}
+}

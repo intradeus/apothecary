@@ -77,7 +77,7 @@ wanted shim && SHIM_HASH=$(hash shim-hash)
 # Same for the tools bundle: the hash of its build directory, as the engine
 # computes it (a seeded bundle that differs is warned about, not refused).
 wanted tools && TOOLS_HASH=$(hash tools-hash)
-build sandbox deploy/images/sandbox
+build sandbox --build-context aporunc=workspace/aporunc deploy/images/sandbox
 build shim -f workspace/images/shim/Dockerfile --build-arg "SHIM_HASH=${SHIM_HASH:-}" workspace
 build tools -f workspace/images/tools/Dockerfile --build-arg "TOOLS_HASH=${TOOLS_HASH:-}" workspace/images/tools
 build egress-gw -f workspace/images/gateway/Dockerfile workspace

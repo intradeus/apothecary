@@ -19,12 +19,11 @@ const k8sLabelRuntimeProbe = "apothecary.io/runtime-probe"
 const runtimeProbeTimeout = 2 * time.Minute
 
 // probePod is a pod under rt that runs `shim version` once: the sandbox's
-// runtime class, user namespace and privilege, nothing else of it.
+// runtime class, user namespace and security context, nothing else of it
+// (a cluster that refuses procMount: Unmasked fails here, not in a run).
 func (h *k8sHost) probePod(name string, rt sandboxRuntime) kube.Pod {
-	c := kube.Container{Name: "probe", Image: h.cfg.ShimImage, ImagePullPolicy: h.cfg.PullPolicy, Args: []string{"version"}}
-	if rt.privileged {
-		c.SecurityContext = &kube.SecurityContext{Privileged: kube.Ptr(true)}
-	}
+	c := kube.Container{Name: "probe", Image: h.cfg.ShimImage, ImagePullPolicy: h.cfg.PullPolicy, Args: []string{"version"},
+		SecurityContext: rt.sandboxSecurity()}
 	pod := kube.Pod{TypeMeta: kube.PodType(),
 		Metadata: kube.ObjectMeta{Name: name, Labels: map[string]string{k8sLabelRuntimeProbe: string(rt.name)}},
 		Spec: kube.PodSpec{

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -568,5 +569,147 @@ func TestOutOfClusterDialsAVMPodByExec(t *testing.T) {
 	h.cfg.Kube.R = &kubeFake{secrets: map[string]string{}}
 	if _, err := h.viaExec(ctx, "w"); err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("no pod: %v", err)
+	}
+}
+
+// A runtime that nests in the pod's own user namespace with plain runc asks
+// the kubelet for that namespace and is never privileged: its security
+// context is the namespace's capabilities, not the node's.
+func TestUsernsNestingRowsAreUnprivilegedAndOwnTheirNamespace(t *testing.T) {
+	n := 0
+	for name, rt := range sandboxRuntimes {
+		if !rt.usernsNesting {
+			continue
+		}
+		n++
+		if !rt.ownUserNamespace || rt.privileged || rt.vm {
+			t.Errorf("%s: %+v", name, rt)
+		}
+		if sc := rt.sandboxSecurity(); sc == nil || sc.Privileged != nil || sc.ProcMount != "Unmasked" {
+			t.Errorf("%s: security %+v", name, sc)
+		}
+	}
+	if n == 0 {
+		t.Error("no row nests in a user namespace (userns)")
+	}
+}
+
+// The userns sandbox: its class (or the integration's override), its own
+// user namespace either way, the nesting security context and switch on the
+// sandbox container alone; the tunnel keeps NET_ADMIN alone, with a
+// /proc/sys it can write, and the seeds and the relay nothing.
+func TestUsernsSandboxShape(t *testing.T) {
+	ctx := context.Background()
+	att := egressgw.Attachment{GatewayIP: "10.90.0.1", Subnet: "10.90.0.5/32", WGEndpoint: "10.43.9.9:51820", WGSecret: "apo-wg-apo-x"}
+	for _, override := range []string{"", "runc-userns-v2"} {
+		k := &kubeFake{secrets: map[string]string{}}
+		h := New(Config{RunsDir: testRunsDir, Kube: goldenKubeConfig(k, func(c *KubeConfig) {
+			c.Runtime = envport.RuntimeSysbox
+			c.Runtimes = []envport.Runtime{envport.RuntimeUserns}
+			if override != "" {
+				c.RuntimeClasses = map[envport.Runtime]string{envport.RuntimeUserns: override}
+			}
+		})}).host.(*k8sHost)
+		pod, err := h.podManifest(ctx, "w", envport.EnvSpec{Runtime: envport.RuntimeUserns}, att)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if want := orDefault(override, "runc-userns"); pod.Spec.RuntimeClassName != want || pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
+			t.Errorf("override %q: class %q, hostUsers %v", override, pod.Spec.RuntimeClassName, pod.Spec.HostUsers)
+		}
+		for _, c := range append(pod.Spec.InitContainers, pod.Spec.Containers...) {
+			sc := c.SecurityContext
+			nesting := slices.ContainsFunc(c.Env, func(e kube.EnvVar) bool { return e.Name == "APO_USERNS_NESTING" && e.Value == "1" })
+			switch c.Name {
+			case sandboxContainer:
+				if sc == nil || sc.ProcMount != "Unmasked" || sc.SeccompProfile.Type != "Unconfined" || sc.AppArmorProfile.Type != "Unconfined" ||
+					!slices.Equal(sc.Capabilities.Add, []string{"SYS_ADMIN", "NET_ADMIN", "MKNOD", "SYS_RESOURCE", "SYS_PTRACE"}) || !nesting {
+					t.Errorf("sandbox: %+v, switch %v", sc, nesting)
+				}
+			case "wg":
+				// NET_ADMIN alone, and a /proc/sys it can write: no SYS_ADMIN,
+				// seccomp left as it is.
+				if sc == nil || sc.Privileged != nil || sc.ProcMount != "Unmasked" || sc.AppArmorProfile == nil || sc.SeccompProfile != nil ||
+					!slices.Equal(sc.Capabilities.Add, []string{"NET_ADMIN"}) {
+					t.Errorf("wg: %+v", sc)
+				}
+			default:
+				if sc != nil || nesting {
+					t.Errorf("%s: %+v, switch %v", c.Name, sc, nesting)
+				}
+			}
+		}
+		if !h.contained(envport.RuntimeUserns) {
+			t.Error("a userns sandbox is contained")
+		}
+	}
+}
+
+// The integration's flag widens the runtimes that nest with plain runc, and
+// only those: sysbox maps its own 65536 whatever the node gives.
+func TestNestedUserNamespaceAdds(t *testing.T) {
+	if got := NestedUserNamespaceAdds(false); got != nil {
+		t.Errorf("off = %v", got)
+	}
+	got := NestedUserNamespaceAdds(true)
+	if len(got) != 1 || !got[envport.RuntimeUserns].UserNamespaces {
+		t.Errorf("on = %v", got)
+	}
+}
+
+// With the flag on, a provision says when the sandbox's node gave it 65536
+// ids or fewer; with more, or the flag off, or another runtime, nothing.
+func TestNestedIDsWarning(t *testing.T) {
+	ctx := context.Background()
+	for _, c := range []struct {
+		name   string
+		rt     envport.Runtime
+		flag   bool
+		uidMap string
+		warns  bool
+	}{
+		{"a narrow node", envport.RuntimeUserns, true, "         0  658505728      65536\n", true},
+		{"a wide node", envport.RuntimeUserns, true, "         0  658505728    4194304\n", false},
+		{"the flag off", envport.RuntimeUserns, false, "0 658505728 65536\n", false},
+		{"sysbox", envport.RuntimeSysbox, true, "0 658505728 65536\n", false},
+		{"an unreadable map", envport.RuntimeUserns, true, "", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			k := &kubeFake{secrets: map[string]string{}, exec: func(argv []string, _ []byte) (string, string, int) {
+				if slices.Contains(argv, "/proc/self/uid_map") {
+					if c.uidMap == "" {
+						return "", "no such file", 1
+					}
+					return c.uidMap, "", 0
+				}
+				return "", "", 0
+			}}
+			_, h := k8sWith(t, k, false)
+			h.cfg.NestedUserNamespaces = c.flag
+			rt, _ := lookupRuntime(c.rt)
+			var log strings.Builder
+			h.checkNestedIDs(ctx, "w", rt, func(f string, a ...any) { fmt.Fprintf(&log, f, a...) })
+			if got := strings.Contains(log.String(), "gave it 65536 user ids"); got != c.warns {
+				t.Errorf("warned %v: %q", got, log.String())
+			}
+		})
+	}
+	if n := mappedIDs("0 100 65536\n65536 1 2\nnot a line\n1 2 x\n"); n != 65538 {
+		t.Errorf("mappedIDs = %d", n)
+	}
+}
+
+// The Test button's pod under userns carries the sandbox's security context,
+// so a cluster that refuses procMount: Unmasked fails the integration's test.
+func TestUsernsProbePod(t *testing.T) {
+	k := &kubeFake{secrets: map[string]string{}}
+	h := New(Config{RunsDir: testRunsDir, Kube: goldenKubeConfig(k, func(c *KubeConfig) { c.Runtime = envport.RuntimeUserns })}).host.(*k8sHost)
+	rt, _ := lookupRuntime(envport.RuntimeUserns)
+	pod := h.probePod("p", rt)
+	if pod.Spec.RuntimeClassName != "runc-userns" || pod.Spec.HostUsers == nil || *pod.Spec.HostUsers {
+		t.Errorf("class %q, hostUsers %v", pod.Spec.RuntimeClassName, pod.Spec.HostUsers)
+	}
+	if sc := pod.Spec.Containers[0].SecurityContext; sc == nil || sc.ProcMount != "Unmasked" || sc.AppArmorProfile == nil {
+		t.Errorf("probe security = %+v", sc)
 	}
 }

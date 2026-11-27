@@ -118,7 +118,37 @@ kubectl_node() { docker exec -i "$NODE" kubectl "$@"; }
 # (storage_size's default): a sandbox, the cross-run check's second one.
 BLOCK_PVS=${BLOCK_PVS:-6}
 BLOCK_SIZE=20Gi
+
+# The node's /dev is the host's as it was when the container started: a loop
+# device the kernel makes after that has no node there, and losetup cannot
+# attach it (`losetup -f` names it "/dev/loopN (lost)"). The pool takes one
+# per volume, and the kubelet one more for each pod on a Block volume: it
+# holds the mapped volume open through a loop device of its own (`losetup -f
+# <map path>`; FailedMapVolume when that fails). So every `up` gives the node
+# a node for each loop device the kernel has and for the next LOOP_SPARE:
+# per pool volume, its own, its pod's, and that of a pod replacing that one.
+# The minor is the number: the loop module's max_part is 0 unless a host
+# sets it.
+LOOP_SPARE=$((3 * BLOCK_PVS))
+loop_nodes() {
+  docker exec "$NODE" sh -euc '
+    top=-1
+    for s in /sys/block/loop[0-9]*; do
+      [ -e "$s" ] || continue
+      n=${s#/sys/block/loop}
+      [ "$n" -le "$top" ] || top=$n
+    done
+    i=0
+    while [ "$i" -le $((top + '"$LOOP_SPARE"')) ]; do
+      [ -e "/dev/loop$i" ] || mknod "/dev/loop$i" b 7 "$i"
+      i=$((i + 1))
+    done
+    echo "$top"'
+}
+
 block_pool() {
+  local top
+  top=$(loop_nodes)
   kubectl_node apply -f - >/dev/null <<'EOF'
 apiVersion: storage.k8s.io/v1
 kind: StorageClass
@@ -133,18 +163,14 @@ EOF
     case "$phase" in Available | Bound | Pending) continue ;; esac
     [ -z "$phase" ] || kubectl_node delete pv "$pv" --wait=true >/dev/null
     # A fresh sparse file (truncate's G is GiB: 20Gi is 20G) on a loop
-    # device of its own (made when the node's /dev lacks it: a privileged
-    # container's /dev is the host's at start).
+    # device of its own (its node is one of loop_nodes').
     local dev
     dev=$(docker exec "$NODE" sh -euc '
       img=/var/lib/rancher/k3s/apo-block/'"$pv"'.img
       mkdir -p "${img%/*}"
       for d in $(losetup -j "$img" | cut -d: -f1); do losetup -d "$d"; done
       rm -f "$img"; truncate -s '"${BLOCK_SIZE%i}"' "$img"
-      d=$(losetup -f)
-      [ -e "$d" ] || mknod "$d" b 7 "${d#/dev/loop}"
-      losetup "$d" "$img"
-      echo "$d"')
+      losetup -f --show "$img"')
     kubectl_node apply -f - >/dev/null <<EOF
 apiVersion: v1
 kind: PersistentVolume
@@ -163,7 +189,9 @@ spec:
             - {key: kubernetes.io/hostname, operator: In, values: [$NODE]}
 EOF
   done
-  say "Block pool: $BLOCK_PVS volumes of $BLOCK_SIZE (storage class apo-block)"
+  # The kernel's highest loop device at this `up`, for a log read later: it
+  # says how many the host had before the pool.
+  say "Block pool: $BLOCK_PVS volumes of $BLOCK_SIZE (storage class apo-block); loop device nodes to loop$((top + LOOP_SPARE)), the kernel's highest was loop$top"
 }
 
 up() {
@@ -221,9 +249,14 @@ down() {
   local self
   self=$("$ROOT/deploy/self-container.sh" id)
   [ -z "$self" ] || docker network disconnect "$NET" "$self" 2>/dev/null || true
-  # Loop devices are the host's: detach the pool's before its files go.
+  # Loop devices are the host's: detach the pool's before its files go,
+  # and first the kubelet's own over each (a pod still on a volume): it
+  # would hold the pool's device, and its deleted file, until a reboot.
   docker exec "$NODE" sh -c 'for f in /var/lib/rancher/k3s/apo-block/*.img; do
-      for d in $(losetup -j "$f" | cut -d: -f1); do losetup -d "$d"; done
+      for d in $(losetup -j "$f" | cut -d: -f1); do
+        for k in $(losetup -j "$d" | cut -d: -f1); do losetup -d "$k"; done
+        losetup -d "$d"
+      done
     done' 2>/dev/null || true
   docker rm -f "$NODE" >/dev/null 2>&1 || true
   docker network rm "$NET" >/dev/null 2>&1 || true

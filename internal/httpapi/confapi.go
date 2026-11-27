@@ -553,7 +553,7 @@ func (s *Server) getRuntimeOffer(w http.ResponseWriter, r *http.Request) {
 	}
 	out.Offered, out.Default, out.NoSleep = true, c.Default, c.NoSleep
 	for _, rt := range c.Approved {
-		out.Approved = append(out.Approved, RuntimeInfo{Name: rt, Capabilities: rt.Capabilities(), NoSleep: c.NoSleepUnder[rt]})
+		out.Approved = append(out.Approved, RuntimeInfo{Name: rt, Capabilities: c.Capabilities(rt), NoSleep: c.NoSleepUnder[rt]})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

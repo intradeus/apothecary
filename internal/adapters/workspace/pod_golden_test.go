@@ -45,6 +45,7 @@ func TestSandboxPodGolden(t *testing.T) {
 		{"sized-kata-block-claim-gateway", func(c *KubeConfig) {
 			c.Runtime, c.VMStorageClass = envport.RuntimeKata, "block"
 		}, true},
+		{"userns-pvc-gateway", func(c *KubeConfig) { c.Runtime = envport.RuntimeUserns }, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			k := &kubeFake{secrets: map[string]string{}}

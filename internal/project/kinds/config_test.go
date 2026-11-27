@@ -597,6 +597,59 @@ func TestKubernetesRuntimeChoice(t *testing.T) {
 	}
 }
 
+// nested_user_namespaces is the integration's word that its nodes give
+// user-namespaced pods more than 65536 ids: off (the default) adds nothing,
+// on adds user namespaces to userns alone, anything else is refused.
+func TestKubernetesNestedUserNamespaces(t *testing.T) {
+	base := map[string]any{"runtime": "userns", "runtimes": "userns,sysbox,kata"}
+	with := func(v any) map[string]any {
+		out := map[string]any{"nested_user_namespaces": v}
+		for k, x := range base {
+			out[k] = x
+		}
+		return out
+	}
+	need := envport.RuntimeCapabilities{UserNamespaces: true}
+	for _, values := range []map[string]any{base, with("off"), with("OFF")} {
+		c, err := Kubernetes{}.RuntimeChoice(Config{Values: values})
+		if err != nil || c.Adds != nil {
+			t.Fatalf("%v: adds %v, %v", values, c.Adds, err)
+		}
+		if _, err := c.Choose("", need); err == nil || !strings.Contains(err.Error(), "choose kata") {
+			t.Errorf("%v: %v", values, err)
+		}
+	}
+	c, err := Kubernetes{}.RuntimeChoice(Config{Values: with("on")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.Capabilities(envport.RuntimeUserns).UserNamespaces || c.Capabilities(envport.RuntimeSysbox).UserNamespaces {
+		t.Errorf("on: adds %v", c.Adds)
+	}
+	if rt, err := c.Choose("", need); err != nil || rt != envport.RuntimeUserns {
+		t.Errorf("on: %s, %v", rt, err)
+	}
+	if _, err := (Kubernetes{}).RuntimeChoice(Config{Values: with("yes")}); err == nil || !strings.Contains(err.Error(), "nested_user_namespaces must be on or off") {
+		t.Errorf("yes: %v", err)
+	}
+	if !slices.ContainsFunc(Kubernetes{}.Descriptor().Fields, func(f Field) bool {
+		return f.Name == "nested_user_namespaces" && strings.Contains(f.Help, "Never change that setting")
+	}) {
+		t.Error("the field, with the hazard in its help")
+	}
+	// The flag reaches the adapter: New builds with it.
+	p, err := Kubernetes{Defaults: KubernetesDefaults{Namespace: "ns", EngineURL: "http://e:8080"}}.New(
+		Config{Values: with("on"), Secrets: map[string]string{"kubeconfig": testKubeconfig}}, ProvisionerDeps{RunsDir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Close()
+	if _, err := (Kubernetes{Defaults: KubernetesDefaults{Namespace: "ns", EngineURL: "http://e:8080"}}).New(
+		Config{Values: with("maybe"), Secrets: map[string]string{"kubeconfig": testKubeconfig}}, ProvisionerDeps{RunsDir: t.TempDir()}); err == nil {
+		t.Error("New took a bad flag")
+	}
+}
+
 // Approving kata leaves the integration's storage, and stop-on-idle, to its
 // other runtimes: sysbox sandboxes keep their claims and can sleep, kata
 // ones cannot (their disks are the VM's own).

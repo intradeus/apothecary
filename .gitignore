@@ -8,6 +8,8 @@ deploy/.k3d-master-key
 deploy/.kata-kubeconfig
 # the sysbox rig's kubeconfig (deploy/sysbox/rig.sh)
 deploy/.sysbox-kubeconfig
+# the userns rig's kubeconfig (deploy/userns/rig.sh)
+deploy/.userns-kubeconfig
 
 # --- Go --------------------------------------------------------------------
 # locally built binaries go to build/ (`task build`; the image builds its own).
@@ -20,6 +22,7 @@ deploy/.sysbox-kubeconfig
 /shim
 /workspace/gateway/gateway
 /workspace/shim/shim
+/workspace/aporunc/aporunc
 *.test
 cover.out
 coverage.*
