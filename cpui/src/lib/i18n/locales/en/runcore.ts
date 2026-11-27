@@ -209,7 +209,7 @@ export default {
 	'run.page.keptAfter': 'kept after the workspace',
 	'run.page.refresh5': 'refreshes every 5s',
 	'run.page.readOnly': 'read-only · first 1 MB',
-	'run.page.xterm': 'xterm · ends when hidden',
+	'run.page.xterm': 'xterm · blocks idle while running',
 	'run.page.rulesLive': 'rules apply live',
 	'run.page.servicesHint': 'up now',
 	'run.page.sampled': 'sampled every 10s',
