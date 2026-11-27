@@ -214,7 +214,7 @@ type K8s struct {
 
 // SandboxRuntimes are the runtime names APOTHECARY_K8S_RUNTIME accepts: the
 // port's (envport.Runtimes), which a test in cmd/apothecaryd holds equal.
-var SandboxRuntimes = []string{"kata", "privileged", "sysbox"}
+var SandboxRuntimes = []string{"kata", "privileged", "sysbox", "userns"}
 
 // legacyRuntime is the runtime the older pair names: privileged on (or
 // unset) is privileged; off needs a runtime class and is sysbox.

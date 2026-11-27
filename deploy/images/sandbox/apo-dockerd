@@ -11,8 +11,26 @@
 #   - on a VM's raw-block claim (APO_DATA_DEVICE), that disk formatted once
 #     and mounted: the run folder (APO_RUN_DIR) and docker's data on it, and
 #     the shim and tools the init containers seeded into the run volume
-#     (mounted at APO_SEED_DIR) bound over the folder's.
+#     (mounted at APO_SEED_DIR) bound over the folder's;
+#   - under the userns runtime (APO_USERNS_NESTING=1, plain runc in a user
+#     namespace of the pod's own), a refusal when the cluster did not give
+#     the pod that namespace and a writable cgroup, then apo-runc as the
+#     daemon's runtime (workspace/aporunc: a privileged container's /sys).
 set -eu
+if [ "${APO_USERNS_NESTING:-}" = 1 ]; then
+  # The identity map is the node's own users: a pod without hostUsers:
+  # false, whose root would be the node's.
+  if awk '$1 == 0 && $2 == 0 { found = 1 } END { exit !found }' /proc/self/uid_map; then
+    echo "apo-dockerd: the userns runtime needs a pod in a user namespace of its own (hostUsers: false), and this one is in the node's: the runtime class's handler ran it without one" >&2
+    exit 1
+  fi
+  # dind's own step moves every process to a child cgroup and enables the
+  # controllers for docker's containers: it needs the pod's cgroup writable.
+  if [ ! -w /sys/fs/cgroup/cgroup.subtree_control ]; then
+    echo "apo-dockerd: the userns runtime needs the pod's cgroup writable, and /sys/fs/cgroup is not: the runtime class's containerd handler needs cgroup_writable = true (containerd 2.1 or later; README, Cluster requirements)" >&2
+    exit 1
+  fi
+fi
 if [ "${APO_DEV_PRELUDE:-}" = 1 ]; then
   # Kata gives a privileged container a minimal /dev, and every container
   # nested in this daemon inherits it: k3s dies on a missing /dev/kmsg, a
@@ -62,6 +80,9 @@ if [ -n "${APO_DATA_DEVICE:-}" ]; then
   done
 fi
 set -- dockerd --host=unix:///var/run/docker.sock --default-address-pool base=100.64.0.0/10,size=24
+if [ "${APO_USERNS_NESTING:-}" = 1 ]; then
+  set -- "$@" --add-runtime apo-runc=/usr/local/bin/apo-runc --default-runtime apo-runc
+fi
 if [ -n "${APO_GATEWAY_IP:-}" ]; then
   set -- "$@" --dns "$APO_GATEWAY_IP" \
     --registry-mirror "http://$APO_GATEWAY_IP:5000" \

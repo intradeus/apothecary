@@ -1,0 +1,31 @@
+{{- with .Values.workspaces.usernsRuntimeClass }}
+{{- if .create }}
+{{- if and (eq (include "apothecary.sandboxRuntime" $) "userns") $.Values.workspaces.runtimeClassName (ne $.Values.workspaces.runtimeClassName .name) }}
+{{- fail (printf "workspaces.usernsRuntimeClass.name (%s) is not the class userns sandboxes name (workspaces.runtimeClassName: %s)" .name $.Values.workspaces.runtimeClassName) }}
+{{- end }}
+# Plain runc with the pod's cgroup writable: the node's containerd must have
+# this handler (cgroup_writable = true). Only for pods with hostUsers: false,
+# which the engine gives every userns sandbox: a host-users pod under it
+# could rewrite its own limits.
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata:
+  name: {{ .name }}
+  labels:
+    {{- include "apothecary.labels" $ | nindent 4 }}
+handler: {{ .handler }}
+{{- if or .nodeSelector .tolerations }}
+# The nodes with the handler: the scheduler places every pod naming this
+# class there.
+scheduling:
+  {{- with .nodeSelector }}
+  nodeSelector:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- with .tolerations }}
+  tolerations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

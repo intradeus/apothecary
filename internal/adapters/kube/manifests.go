@@ -144,6 +144,14 @@ type SecurityContext struct {
 	RunAsNonRoot             *bool           `json:"runAsNonRoot,omitempty"`
 	ReadOnlyRootFilesystem   *bool           `json:"readOnlyRootFilesystem,omitempty"`
 	SeccompProfile           *SeccompProfile `json:"seccompProfile,omitempty"`
+	// ProcMount "Unmasked" gives the container a /proc without the
+	// runtime's masked and read-only paths (only with hostUsers: false).
+	ProcMount       string           `json:"procMount,omitempty"`
+	AppArmorProfile *AppArmorProfile `json:"appArmorProfile,omitempty"`
+}
+
+type AppArmorProfile struct {
+	Type string `json:"type"`
 }
 
 type Capabilities struct {

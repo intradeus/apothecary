@@ -175,9 +175,13 @@ picks among them (Settings → Workspace).
 |---|---|---|---|---|
 | `sysbox` (default) | containers in a user namespace of the pod's own; root in the sandbox is an unprivileged uid on the node | sysbox ≥ 0.7, containerd ≥ 2.0.5, kernel ≥ 6.3 ([above](#cluster-requirements)) | `pvc` or `emptydir` | with `pvc` |
 | `kata` | a VM per sandbox (Kata Containers, Cloud Hypervisor); the sandbox is privileged inside its own guest kernel, never on the node | KVM (`/dev/kvm`), Kata ≥ 4.4 with a `kata` RuntimeClass | a raw-block claim from the provisioner's VM storage class, else disks of its own in its VM | with a VM storage class |
+| `userns` | plain runc in a user namespace of the pod's own; root in the sandbox is an unprivileged uid on the node, with no seccomp or AppArmor in the sandbox | containerd ≥ 2.1, kernel ≥ 6.3, Kubernetes ≥ 1.36, a `runc-userns` handler ([below](#the-userns-runtime)) | `pvc` or `emptydir` | with `pvc` |
 | `privileged` | none: sandbox root is root on its node | nothing | `pvc` or `emptydir` | with `pvc` |
 
-All three run docker inside, compose and k3d included.
+All four run docker inside, compose and k3d included. User-namespaced pods
+on a cluster inside the sandbox run under `kata` and `privileged`, and under
+`userns` where the nodes' kubelets give a pod more than 65536 ids ([nested
+user namespaces](#nested-user-namespaces)); never under `sysbox`.
 
 ### Installing Kata
 
@@ -265,6 +269,139 @@ size is the disk's.
 **On EKS**, see [the EKS requirements](#cluster-requirements): Kata needs
 KVM on the sandbox nodes.
 
+### The userns runtime
+
+Plain runc, in a Kubernetes user namespace of the pod's own (`hostUsers:
+false`), with the pod's cgroup writable: docker, compose and k3d nest on the
+node's kernel with nothing installed on the node but a containerd handler.
+The sandbox container gets `procMount: Unmasked`, the capabilities
+`SYS_ADMIN, NET_ADMIN, MKNOD, SYS_RESOURCE, SYS_PTRACE` (its user
+namespace's, never the node's), and seccomp and AppArmor `Unconfined`. The
+tunnel's `wg` container gets `NET_ADMIN` and a writable `/proc/sys`
+(`procMount: Unmasked`, AppArmor `Unconfined`) for its interface's sysctls.
+Its docker daemon runs containers through `apo-runc`
+(`workspace/aporunc`), which gives a privileged container a read-only sysfs
+of its own (the kernel refuses a writable one inside a user namespace), and
+a container with no CPU quota the sandbox's own, so that Go's `GOMAXPROCS`
+and Node's `os.availableParallelism()` in it count the sandbox's CPUs, not
+the node's.
+
+**The trade-off.** Isolation rests on the user namespace alone. With
+seccomp and AppArmor off for the sandbox container, the whole kernel API is
+reachable from it, so a kernel bug is a wider door than under sysbox's
+filtering, and much wider than Kata's VM. Use it for your own projects, not
+for code you do not trust.
+
+1. The handler, on every node that runs userns sandboxes (k3s: in
+   `/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.tmpl`, after
+   `{{ template "base" . }}`; containerd ≥ 2.1):
+
+   ```toml
+   [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.'runc-userns']
+     runtime_type = "io.containerd.runc.v2"
+     cgroup_writable = true
+     [plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.'runc-userns'.options]
+       SystemdCgroup = true
+   ```
+
+   The pod gets its cgroup through systemd's delegation, so the kubelet and
+   containerd must use the **systemd cgroup driver**. Under the cgroupfs
+   driver the cgroup is mounted read-write but stays the node root's, and
+   the sandbox refuses to start. **Never run a pod under this handler
+   without `hostUsers: false`**: a pod in the node's own users with a
+   writable cgroup could raise its own limits. The engine builds every
+   userns pod with `hostUsers: false`, and the sandbox refuses to start in
+   the node's users.
+2. The RuntimeClass (handler `runc-userns`), or let the chart make it:
+   `workspaces.usernsRuntimeClass.create=true`, with a `nodeSelector` when
+   only some nodes have the handler (`charts/apothecary/ci/userns-values.yaml`).
+3. The workspaces namespace at the Pod Security level `privileged`, the
+   chart's default: `Unmasked` and `Unconfined` are refused below it.
+4. The **`wireguard`** kernel module on those nodes: a sandbox in a user
+   namespace cannot make a TUN device, so there is no `wireguard-go`
+   fallback.
+5. Deploy with `workspaces.runtime=userns` (or `workspaces.runtimes`
+   including it). The provisioner's Test starts a pod shaped as a userns
+   sandbox.
+
+`deploy/userns/rig.sh` is a worked example: a throwaway k3s node under
+systemd in docker, with the handler and the kubelet setting below, what
+`task sandbox:test:userns` runs on.
+
+#### A project's own cluster in the sandbox
+
+A kubelet in a user namespace needs the `KubeletInUserNamespace` feature
+gate, or it stops at what the namespace refuses it:
+
+- k3d: `--k3s-arg '--kubelet-arg=feature-gates=KubeletInUserNamespace=true@server:*'`;
+- kind: a `KubeletConfiguration` patch with `featureGates:
+  {KubeletInUserNamespace: true}` on each node.
+
+A privileged pod on that cluster also needs the nested node's runc to be
+`apo-runc`, for the same sysfs reason as the sandbox's own containers. The
+sandbox has it at `/usr/local/bin/apo-runc`. For k3s, mount it into the node
+and set it as containerd's runc with a drop-in in
+`/var/lib/rancher/k3s/agent/etc/containerd/config-v3.toml.d/`:
+
+```toml
+version = 3
+[plugins.'io.containerd.cri.v1.runtime'.containerd.runtimes.runc.options]
+  BinaryName = "/bin/apo-runc"
+```
+
+`deploy/userns/nested-node.Dockerfile` is a k3s node image that does all
+of this inside a user namespace, and nothing elsewhere. `task k8s:cluster`
+uses it in a userns workspace.
+
+#### Nested user namespaces
+
+A user-namespaced pod on a cluster inside the sandbox needs ids of its own
+beyond the sandbox's 65536, which the node's kubelet gives only when told:
+
+1. On each node that runs userns sandboxes, the kubelet's setting (k3s: a
+   drop-in in `/var/lib/rancher/k3s/agent/etc/kubelet.conf.d/`):
+
+   ```yaml
+   apiVersion: kubelet.config.k8s.io/v1beta1
+   kind: KubeletConfiguration
+   userNamespaces:
+     idsPerPod: 4194304
+   ```
+
+   and a range that holds a multiple of it, above the node's own users, in
+   `/etc/subuid` and `/etc/subgid`: `kubelet:65536:268435456` (64 pods).
+2. On the provisioner, **Nested user namespaces** on (`nested_user_namespaces`),
+   only once every such node has the setting. A workshop that needs user
+   namespaces inside may then keep `userns` instead of `kata`. A provision
+   on a node without the setting says so in the workspace log.
+3. The nested node needs a `kubelet` range above the sandbox's first 65536
+   ids (a `kubelet` user and a `getsubids` that answers it), `max-pods` that
+   fits that range, and its kubelet's and containerd's state on tmpfs (an
+   idmapped mount needs a filesystem mounted inside the user namespace).
+   `deploy/userns/nested-node.Dockerfile` does it. **Its images are then
+   held in memory** and count against the sandbox's memory limit.
+
+**The hazard.** A kubelet refuses to start (`wrong user namespace length`)
+while any user-namespaced pod on its node runs with another mapping length
+than its `idsPerPod`, wider or narrower. A change of `idsPerPod`, either
+way, is therefore made with no such pod on the node:
+
+1. Find every user-namespaced pod on the node: sandboxes under `sysbox` and
+   `userns`, and assistant pods (`kubectl get pods -A
+   --field-selector spec.nodeName=<node> -o json`, those with
+   `"hostUsers": false`).
+2. Stop them: sleep the sandboxes or end their runs, and drain the node.
+3. Change the drop-in and the `/etc/subuid` and `/etc/subgid` ranges, then
+   restart the kubelet (k3s: the k3s service).
+4. If the kubelet is already crash-looping on that error, put the old value
+   back first, start it, then follow the order above.
+
+**On EKS**, documented and not yet tried: the handler goes in the node
+group's containerd configuration and the kubelet setting in its bootstrap
+(the launch template's user data); no special instance type is needed.
+Check that the node AMI's containerd is 2.1 or later, and that the kubelet
+uses the systemd cgroup driver, before relying on it.
+
 ### Sizing
 
 A sandbox's size (CPUs, memory) is its pod's limits: the workshop's own,
@@ -276,7 +413,7 @@ CPU is shared: sandboxes mostly wait on people and agents.
 Under **Kata**, the RuntimeClass overhead comes on top of each pod, and the
 VM is the limit: the guest gets exactly the memory and one vCPU more than
 the CPUs. A node with 64 GiB holds about seven 8 GiB Kata sandboxes once the
-overhead and the system's share are counted. Under sysbox and privileged an
+overhead and the system's share are counted. Under sysbox, userns and privileged an
 unsized sandbox may use what the node has, or, under a ceiling, up to the
 ceiling: it is limited there and requests only 100m and 1 GiB, so a large
 ceiling never makes it unschedulable. Under Kata an unsized sandbox is
@@ -314,6 +451,14 @@ too, not the guest's vCPU count, which Kata pads with one of its own. The
 hints are the limits of the pod the sandbox runs as, so like the size they
 change when the pod is made again (the next run, or a rebuild that replaces
 it), never on a live one.
+
+Under the userns runtime, the sandbox's inner containers (the workspace, a
+compose service, a k3d node and its pods) also get the sandbox's CPU limit
+as a quota of their own when they have none, from `apo-runc`. A runtime that
+reads its cgroup's `cpu.max` (Go's `GOMAXPROCS`, Node's
+`os.availableParallelism()`, the JVM) then sizes itself to the sandbox.
+`nproc`, `/proc/cpuinfo` and Node's `os.cpus()` still count the node's
+CPUs, under every runtime: for those, the hints.
 
 A workshop sets its own variables in Settings → Workspace → Environment
 variables (`workspace.env` in the project API): `JEST_MAX_WORKERS=2`, or

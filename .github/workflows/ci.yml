@@ -469,8 +469,9 @@ jobs:
       matrix:
         # k3d is two suites on one cluster: k8s, then privileged, each its
         # own step. A runtime that needs a node of its own has a rig: sysbox
-        # (its daemons in the node's container), kata (on the runner's KVM).
-        suite: [harness, k3d, sysbox, kata]
+        # (its daemons in the node's container), kata (on the runner's KVM),
+        # userns (k3s under systemd, its containerd's runc-userns handler).
+        suite: [harness, k3d, sysbox, kata, userns]
     runs-on: ubuntu-26.04
     timeout-minutes: 45
     steps:
@@ -515,7 +516,7 @@ jobs:
           CACHE: gha-read
       # The rig suites run workspace sandboxes only: no assistant.
       - name: Load the images (${{ matrix.suite }})
-        if: matrix.suite == 'kata' || matrix.suite == 'sysbox'
+        if: matrix.suite == 'kata' || matrix.suite == 'sysbox' || matrix.suite == 'userns'
         run: deploy/images.sh local
         env:
           IMAGES: sandbox shim tools egress-gw
@@ -594,6 +595,23 @@ jobs:
               'umount /var/lib/sysboxfs/**/,' | sudo tee -a /etc/apparmor.d/local/fusermount3 >/dev/null
             sudo apparmor_parser -r /etc/apparmor.d/fusermount3
           fi
+      # The userns suite's node is k3s under systemd in one privileged
+      # container, its containerd given the runc-userns handler and its
+      # kubelet a wide user-namespace range (deploy/userns/rig.sh): nothing
+      # installed on the runner. Its sandboxes have no wireguard-go fallback
+      # (a user namespace cannot make a TUN device), so the module must load;
+      # kubectl as the other rigs pin it.
+      - name: Userns prerequisites
+        if: matrix.suite == 'userns'
+        env:
+          KUBECTL_VERSION: v1.34.1 # .devcontainer/Dockerfile KUBECTL_VERSION
+          KUBECTL_SHA256: 7721f265e18709862655affba5343e85e1980639395d5754473dafaadcaa69e3
+        run: |
+          curl -fsSL -o "$RUNNER_TEMP/kubectl" "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          echo "$KUBECTL_SHA256  $RUNNER_TEMP/kubectl" | sha256sum -c -
+          sudo install -m 0755 "$RUNNER_TEMP/kubectl" /usr/local/bin/kubectl
+          kubectl version --client
+          sudo modprobe wireguard
       - name: Wait for the disk to be freed
         if: matrix.suite != 'harness'
         timeout-minutes: 5

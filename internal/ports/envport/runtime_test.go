@@ -7,7 +7,8 @@ import (
 )
 
 // The table is the plan's: privileged gives everything but containment,
-// sysbox everything but user namespaces inside, kata everything.
+// sysbox and userns everything but user namespaces inside (userns gets them
+// from a cluster that says so: RuntimeChoice.Adds), kata everything.
 func TestRuntimeCapabilities(t *testing.T) {
 	p := RuntimePrivileged.Capabilities()
 	if !p.NestedContainers || !p.NestedKubernetes || !p.UserNamespaces || p.Contained {
@@ -19,6 +20,9 @@ func TestRuntimeCapabilities(t *testing.T) {
 	}
 	if k := RuntimeKata.Capabilities(); k != (RuntimeCapabilities{NestedContainers: true, NestedKubernetes: true, UserNamespaces: true, Contained: true}) {
 		t.Errorf("kata = %+v", k)
+	}
+	if u := RuntimeUserns.Capabilities(); u != (RuntimeCapabilities{NestedContainers: true, NestedKubernetes: true, Contained: true}) {
+		t.Errorf("userns = %+v", u)
 	}
 	if (Runtime("nope").Capabilities() != RuntimeCapabilities{}) {
 		t.Error("an unknown runtime gives nothing")
@@ -33,10 +37,10 @@ func TestParseRuntime(t *testing.T) {
 		}
 	}
 	_, err := ParseRuntime("runc")
-	if err == nil || !strings.Contains(err.Error(), "kata, privileged, sysbox") {
+	if err == nil || !strings.Contains(err.Error(), "kata, privileged, sysbox, userns") {
 		t.Errorf("err = %v, want the known names", err)
 	}
-	if got := Runtimes(); !slices.Equal(got, []Runtime{RuntimeKata, RuntimePrivileged, RuntimeSysbox}) {
+	if got := Runtimes(); !slices.Equal(got, []Runtime{RuntimeKata, RuntimePrivileged, RuntimeSysbox, RuntimeUserns}) {
 		t.Errorf("Runtimes() = %v", got)
 	}
 }
@@ -52,14 +56,20 @@ func TestMissingAndSatisfying(t *testing.T) {
 	if got := (RuntimeCapabilities{}).Missing(RuntimeCapabilities{NestedContainers: true, NestedKubernetes: true}); len(got) != 2 {
 		t.Errorf("nothing lacks %v", got)
 	}
-	if got := Satisfying(need, Runtimes()); !slices.Equal(got, []Runtime{RuntimeKata}) {
+	bare := RuntimeChoice{}
+	if got := bare.Satisfying(need, Runtimes()); !slices.Equal(got, []Runtime{RuntimeKata}) {
 		t.Errorf("satisfying = %v, want kata alone", got)
 	}
-	if got := Satisfying(need, []Runtime{RuntimeSysbox, RuntimePrivileged}); len(got) != 0 {
+	if got := bare.Satisfying(need, []Runtime{RuntimeSysbox, RuntimePrivileged}); len(got) != 0 {
 		t.Errorf("satisfying = %v, want none", got)
 	}
-	if got := Satisfying(RuntimeCapabilities{NestedContainers: true}, []Runtime{RuntimeSysbox, RuntimePrivileged}); !slices.Equal(got, []Runtime{RuntimePrivileged, RuntimeSysbox}) {
+	if got := bare.Satisfying(RuntimeCapabilities{NestedContainers: true}, []Runtime{RuntimeSysbox, RuntimePrivileged}); !slices.Equal(got, []Runtime{RuntimePrivileged, RuntimeSysbox}) {
 		t.Errorf("satisfying = %v", got)
+	}
+	// A cluster that adds user namespaces to userns makes it an answer too.
+	wide := RuntimeChoice{Adds: map[Runtime]RuntimeCapabilities{RuntimeUserns: {UserNamespaces: true}}}
+	if got := wide.Satisfying(need, Runtimes()); !slices.Equal(got, []Runtime{RuntimeKata, RuntimeUserns}) {
+		t.Errorf("satisfying with userns widened = %v", got)
 	}
 }
 
@@ -109,6 +119,30 @@ func TestRuntimeChoiceChoose(t *testing.T) {
 	def := RuntimeChoice{Default: RuntimeSysbox, Approved: []Runtime{RuntimeSysbox}, Needs: RuntimeCapabilities{UserNamespaces: true}}
 	if _, err := def.Choose("", RuntimeCapabilities{}); err == nil {
 		t.Error("the definition's need was ignored")
+	}
+}
+
+// What a cluster adds to a runtime counts for that runtime alone: a workshop
+// that needs user namespaces is told kata where the cluster adds nothing, and
+// keeps userns where it adds them.
+func TestRuntimeChoiceAdds(t *testing.T) {
+	need := RuntimeCapabilities{UserNamespaces: true}
+	c := RuntimeChoice{Default: RuntimeUserns, Approved: []Runtime{RuntimeUserns, RuntimeKata, RuntimeSysbox}}
+	if _, err := c.Choose("", need); err == nil || !strings.Contains(err.Error(), "sandbox runtime userns cannot give this workshop user namespaces inside the sandbox: choose kata") {
+		t.Errorf("not widened: %v", err)
+	}
+	c.Adds = map[Runtime]RuntimeCapabilities{RuntimeUserns: {UserNamespaces: true}}
+	if rt, err := c.Choose("", need); err != nil || rt != RuntimeUserns {
+		t.Errorf("widened: %s, %v", rt, err)
+	}
+	if _, err := c.Choose(RuntimeSysbox, need); err == nil || !strings.Contains(err.Error(), "choose kata, userns") {
+		t.Errorf("sysbox: %v", err)
+	}
+	if got := c.Capabilities(RuntimeUserns); got != (RuntimeCapabilities{NestedContainers: true, NestedKubernetes: true, UserNamespaces: true, Contained: true}) {
+		t.Errorf("widened userns = %+v", got)
+	}
+	if got := c.Capabilities(RuntimeSysbox); got != RuntimeSysbox.Capabilities() {
+		t.Errorf("sysbox = %+v, want its row", got)
 	}
 }
 

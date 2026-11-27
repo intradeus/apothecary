@@ -161,10 +161,15 @@ know, so a typo can't silently fall back to privileged.
 `workspaces.runtime: privileged` is for a cluster of your own without sysbox
 (k3d, a dev box), never a shared one. `workspaces.runtime: kata` gives each
 sandbox a VM of its own (Kata Containers, on nodes with KVM): privileged
-inside its own kernel, never on the node. A Kubernetes integration may pick
-its own (its `runtime` field).
-[Sandbox runtimes](docs/kubernetes.md#sandbox-runtimes) compares the three
-and installs Kata.
+inside its own kernel, never on the node. `workspaces.runtime: userns` is
+plain runc in a user namespace of the pod's own, with nothing installed but
+a containerd handler: root in a sandbox is an unprivileged uid on the node,
+as under sysbox, but with no seccomp or AppArmor in the sandbox the whole
+kernel API is reachable from it. Use it for your own projects, not for
+untrusted code. A Kubernetes integration may pick its own (its `runtime`
+field).
+[Sandbox runtimes](docs/kubernetes.md#sandbox-runtimes) compares the four
+and installs Kata and userns.
 
 A workshop may run under another runtime than the default, one the
 deployment approves (`workspaces.runtimes`, the default among them: only
@@ -204,7 +209,14 @@ Any Kubernetes cluster, k3s included, with:
   sysbox and containerd must not restart under running sandboxes
   ([why](docs/kubernetes.md#cluster-requirements)). Or, for the `kata`
   runtime, **KVM** and Kata ≥ 4.4 with a `kata` RuntimeClass
-  ([install](docs/kubernetes.md#installing-kata)).
+  ([install](docs/kubernetes.md#installing-kata)). Or, for the `userns`
+  runtime, nothing to install but a containerd handler: containerd ≥ 2.1,
+  kernel ≥ 6.3, Kubernetes ≥ 1.36, and a `runc-userns` handler with
+  `cgroup_writable = true` ([install](docs/kubernetes.md#the-userns-runtime)).
+  That handler must never run a pod without `hostUsers: false`: a pod in the
+  node's own users with a writable cgroup could raise its own limits. The
+  engine only builds userns pods with `hostUsers: false`, and the sandbox
+  refuses to start otherwise.
 - **NetworkPolicy enforcement**, and the **`wireguard`** kernel module
   (without it, sandboxes and gateways fall back to the slower
   `wireguard-go`).

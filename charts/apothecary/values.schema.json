@@ -103,12 +103,12 @@
         "namespace": { "type": "string", "minLength": 1 },
         "createNamespace": { "type": "boolean" },
         "podSecurity": { "enum": ["privileged", "baseline", "restricted"] },
-        "runtime": { "enum": ["", "kata", "privileged", "sysbox"] },
+        "runtime": { "enum": ["", "kata", "privileged", "sysbox", "userns"] },
         "runtimeClassName": { "type": "string" },
         "runtimes": {
           "type": "array",
           "uniqueItems": true,
-          "items": { "enum": ["kata", "privileged", "sysbox"] }
+          "items": { "enum": ["kata", "privileged", "sysbox", "userns"] }
         },
         "privileged": { "type": "boolean" },
         "protectCIDRs": { "type": "string" },
@@ -121,6 +121,17 @@
             "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" },
             "handler": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
             "overhead": { "type": "object", "additionalProperties": { "type": ["string", "number"] } },
+            "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
+            "tolerations": { "type": "array", "items": { "type": "object" } }
+          }
+        },
+        "usernsRuntimeClass": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "create": { "type": "boolean" },
+            "name": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" },
+            "handler": { "type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
             "nodeSelector": { "type": "object", "additionalProperties": { "type": "string" } },
             "tolerations": { "type": "array", "items": { "type": "object" } }
           }

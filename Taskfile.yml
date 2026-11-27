@@ -79,14 +79,26 @@ tasks:
       - '{{.K3D_KUBECTL}} get --raw /readyz >/dev/null 2>&1'
     cmds:
       # The server node, not `k3d cluster get`: right after a delete, that
-      # can still report the cluster (seen with k3d 5.9.0).
-      - >-
-        k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 ||
-        k3d cluster create {{.K3D_CLUSTER}}
-        --registry-create k3d-registry.localhost:0.0.0.0:5111
-        -p "{{.K3D_HTTP_PORT}}:80@loadbalancer"
-        --kubeconfig-update-default=false --kubeconfig-switch-context=false
-        --wait
+      # can still report the cluster (seen with k3d 5.9.0). In a userns
+      # sandbox (its docker runs containers through apo-runc), the nodes are
+      # deploy/userns/nested-node.Dockerfile over kata.env's k3s, with the
+      # sandbox's apo-runc mounted in: the kubelet's KubeletInUserNamespace
+      # gate, a privileged pod's sysfs, and, with more than 65536 ids, what a
+      # user-namespaced pod needs (docs/kubernetes.md, The userns runtime).
+      # Anywhere else that image is stock k3s, and it is not used.
+      - cmd: |
+          k3d node get k3d-{{.K3D_CLUSTER}}-server-0 >/dev/null 2>&1 && exit 0
+          set --
+          if docker info 2>/dev/null | grep -q 'Default Runtime: apo-runc'; then
+            . deploy/kata/kata.env
+            docker build -q -t apo-nested-node:local --build-arg K3S_IMAGE="$K3S_IMAGE" - <deploy/userns/nested-node.Dockerfile >/dev/null
+            set -- --image apo-nested-node:local -v /usr/local/bin/apo-runc:/bin/apo-runc:ro@all
+          fi
+          k3d cluster create {{.K3D_CLUSTER}} \
+            --registry-create k3d-registry.localhost:0.0.0.0:5111 \
+            -p "{{.K3D_HTTP_PORT}}:80@loadbalancer" \
+            --kubeconfig-update-default=false --kubeconfig-switch-context=false \
+            --wait "$@"
       - k3d cluster start {{.K3D_CLUSTER}} --wait
       - k3d kubeconfig get {{.K3D_CLUSTER}} > {{.K3D_KUBECONFIG}}
       # In a container of the docker daemon itself (the devcontainer), the
@@ -721,7 +733,7 @@ tasks:
       - helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint >/dev/null
       - for: { var: VALUES }
         cmd: helm lint {{.CHART}} -f {{.ITEM}} && helm template lint {{.CHART}} -f {{.ITEM}} >/dev/null
-      - for: [workspaces.runtime=gvisor, 'workspaces.runtimes={gvisor}', 'workspaces.runtimes={privileged}', access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2, assistant.idle=soon, assistant.volumeDays=-1, workspaces.kataRuntimeClass.handler=Kata_Runtime, 'workspaces.runtime=kata,workspaces.runtimeClassName=kata-clh,workspaces.kataRuntimeClass.create=true']
+      - for: [workspaces.runtime=gvisor, 'workspaces.runtimes={gvisor}', 'workspaces.runtimes={privileged}', access.http.ingress.enabled=true, access.http.appsDomain=apps.example.com, ssh.enabled=true, engine.replicas=2, assistant.idle=soon, assistant.volumeDays=-1, workspaces.kataRuntimeClass.handler=Kata_Runtime, 'workspaces.runtime=kata,workspaces.runtimeClassName=kata-clh,workspaces.kataRuntimeClass.create=true', workspaces.usernsRuntimeClass.handler=Runc_Userns, 'workspaces.runtime=userns,workspaces.runtimeClassName=runc-other,workspaces.usernsRuntimeClass.create=true']
         cmd: '! helm template lint {{.CHART}} --set masterKey=lint --set postgres.password=lint --set {{.ITEM}} >/dev/null 2>&1 || { echo "the schema must refuse {{.ITEM}}"; exit 1; }'
       - '{{.HELM_DOCS}} -c charts -s file --skip-version-footer -l warning -d | diff -u {{.CHART}}/README.md - || { echo "charts/apothecary/README.md is stale: run task chart:docs"; exit 1; }'
 
@@ -904,6 +916,38 @@ tasks:
         APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
         APOTHECARY_LIVE_PULL_POLICY=IfNotPresent
         APOTHECARY_LIVE_RUNTIME=sysbox
+        go test -tags live -count=1 -timeout 40m -run 'TestLiveSandboxLifecycle$|TestLiveK8sRuntimeProbe' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
+
+  # The workspace provisioner under userns (plain runc in the pod's own user
+  # namespace), on a throwaway k3s node under systemd in one privileged
+  # container, its containerd given the runc-userns handler and its kubelet
+  # a wide user-namespace range (deploy/userns/rig.sh: nothing installed on
+  # the host). Never the host's own k3s. Reuses the node if it is up (and
+  # leaves it); otherwise creates it and deletes it afterwards. A userns
+  # sandbox keeps its run on a local-path claim and sleeps like a privileged
+  # one; inside it a Kubernetes node runs an ordinary, a privileged and a
+  # user-namespaced pod (the rig's kubelet gives a pod more than 65536 ids).
+  sandbox:test:userns:
+    deps: [pin:task, pin:kubectl]
+    desc: 'Workspace sandboxes under userns, their whole life, nested Kubernetes included, on a k3s node in docker with the runc-userns handler (needs docker) — CI: sandbox-test (userns)'
+    dotenv: ['deploy/kata/kata.env']
+    vars:
+      RIG_EXISTED:
+        sh: docker container inspect apo-userns-node >/dev/null 2>&1 && echo yes || echo no
+    cmds:
+      - cmd: '{{.TASK_EXE}} sandbox:images'
+        if: '[ "${APOTHECARY_IMAGES_PREBUILT:-}" != 1 ]'
+      - deploy/userns/rig.sh up
+      - defer: '{{if eq .RIG_EXISTED "no"}}deploy/userns/rig.sh down{{end}}'
+      - deploy/userns/rig.sh import {{range (splitList " " "sandbox shim tools egress-gw")}}{{$.K3D_REGISTRY}}/apothecary/{{.}}:local {{end}}
+      - >-
+        APOTHECARY_LIVE_KUBECONFIG=$PWD/deploy/.userns-kubeconfig
+        APOTHECARY_LIVE_K8S_NAMESPACE=apothecary-live
+        APOTHECARY_LIVE_IMAGE_PREFIX={{.K3D_REGISTRY}}/apothecary
+        APOTHECARY_LIVE_PULL_POLICY=IfNotPresent
+        APOTHECARY_LIVE_RUNTIME=userns
+        APOTHECARY_LIVE_NESTED_K8S=$K3S_IMAGE
+        APOTHECARY_LIVE_NESTED_USERNS=1
         go test -tags live -count=1 -timeout 40m -run 'TestLiveSandboxLifecycle$|TestLiveK8sRuntimeProbe' -v {{.CLI_ARGS}} ./internal/adapters/workspace/
 
   k8s:import:

@@ -23,7 +23,8 @@ package workspace
 //     wireguard-go (the Kata guest's path) on a kernel with the module.
 //   - APOTHECARY_LIVE_RUNTIME (default privileged): the sandboxes' runtime.
 //     sysbox needs a cluster with sysbox (task sandbox:test:sysbox,
-//     deploy/sysbox). kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
+//     deploy/sysbox), userns one with the runc-userns handler (task
+//     sandbox:test:userns, deploy/userns). kata needs a cluster with Kata (task sandbox:test:kata, deploy/kata);
 //     its sandboxes are sized, on emptyDir disks, and tunnel through
 //     wireguard-go (the stock guest kernel has no WireGuard).
 //   - APOTHECARY_LIVE_VM_STORAGE_CLASS: a class of raw block volumes for a
@@ -31,10 +32,16 @@ package workspace
 //     and wakes like the others'. Unset, a kata sandbox is on disks of its
 //     own and the test checks that it refuses to sleep.
 //   - APOTHECARY_LIVE_NESTED_K8S=<k3s image>: also start a Kubernetes node
-//     inside the sandbox and a user-namespaced pod on it (liveNestedKubernetes),
-//     what this repository's own sandbox suites need. Only for a runtime that
-//     gives both (privileged, kata); task sandbox:test:kata sets it, and a
-//     kata run without it skips through livetest.
+//     inside the sandbox (deploy/userns/nested-node.Dockerfile over it), an
+//     ordinary and a privileged pod on it, and a user-namespaced pod where
+//     the runtime gives user namespaces inside (liveNestedKubernetes): what
+//     this repository's own sandbox suites need. task sandbox:test:kata and
+//     sandbox:test:userns set it, and a kata run without it skips through
+//     livetest.
+//   - APOTHECARY_LIVE_NESTED_USERNS=1: the cluster's kubelets give a pod
+//     more than 65536 ids (KubeConfig.NestedUserNamespaces), so a userns
+//     sandbox's nested cluster runs the user-namespaced pod too (the userns
+//     rig's kubelet does).
 //
 // The test runs OUTSIDE the cluster, like an engine on a laptop: it reaches
 // pods through kubectl port-forward. Pods cannot reach a docker host's own
@@ -173,6 +180,7 @@ func TestLiveSandboxLifecycle(t *testing.T) {
 		}
 	}
 	vm := runtime == envport.RuntimeKata
+	nestedUserns := os.Getenv("APOTHECARY_LIVE_NESTED_USERNS") == "1"
 	if _, err := os.Stat("/dev/kvm"); vm && err != nil {
 		livetest.Skip(t, "APOTHECARY_LIVE_RUNTIME=kata without /dev/kvm here: the Kata rig runs on this host's KVM")
 	}
@@ -212,7 +220,9 @@ func TestLiveSandboxLifecycle(t *testing.T) {
 			Storage:         "pvc",
 			VMStorageClass:  os.Getenv("APOTHECARY_LIVE_VM_STORAGE_CLASS"),
 			Runtime:         runtime,
-			Firewall:        gateway,
+			// The rig's kubelet gives a pod more than 65536 ids.
+			NestedUserNamespaces: nestedUserns,
+			Firewall:             gateway,
 			// The tunnel either way: kernel WireGuard by default, userspace
 			// when asked.
 			WireGuardUserspace: os.Getenv("APOTHECARY_LIVE_WG_USERSPACE") == "1",
@@ -476,10 +486,16 @@ func TestLiveSandboxLifecycle(t *testing.T) {
 	if res, err := a.Exec(ctx, env, envport.Command{Script: "echo still-here"}); err != nil || !strings.Contains(res.Output, "still-here") {
 		t.Fatalf("exec after reattach: %+v %v", res, err)
 	}
-	// Nested Kubernetes, before a sleep replaces the pod.
+	// What userns is chosen for, then nested Kubernetes, before a sleep
+	// replaces the pod. The user-namespaced pod is asked of a runtime whose
+	// capabilities on this cluster (the integration's flag included) say so.
+	if runtime == envport.RuntimeUserns {
+		liveUsernsNesting(ctx, t, a.host.(*k8sHost), name)
+	}
 	nestedImage := os.Getenv("APOTHECARY_LIVE_NESTED_K8S")
-	if caps := runtime.Capabilities(); nestedImage != "" && caps.NestedKubernetes && caps.UserNamespaces {
-		liveNestedKubernetes(ctx, t, a.host.(*k8sHost), name, nestedImage)
+	caps := envport.RuntimeChoice{Adds: NestedUserNamespaceAdds(nestedUserns)}.Capabilities(runtime)
+	if nestedImage != "" && caps.NestedKubernetes {
+		liveNestedKubernetes(ctx, t, a.host.(*k8sHost), name, nestedImage, caps.UserNamespaces)
 	}
 	// Stop-on-idle: a sandbox on a claim (a VM's raw-block one included)
 	// sleeps and wakes; a VM's on disks of its own is refused, by design, and
@@ -503,20 +519,35 @@ func TestLiveSandboxLifecycle(t *testing.T) {
 	}
 }
 
+// nestedNodeDockerfile is the nested Kubernetes node's one definition
+// (deploy/userns/nested-node.Dockerfile), sent to the sandbox's docker on
+// stdin: the sandbox has no checkout of this repository.
+const nestedNodeDockerfile = "../../../deploy/userns/nested-node.Dockerfile"
+
 // liveNestedKubernetes is what this repository's own sandbox suites ask of
 // a sandbox (task sandbox:test:k3d inside it): a Kubernetes node on the
-// sandbox's docker daemon, and on it a pod with a user namespace of its own
-// (hostUsers: false, the assistant pod's shape), mapped wherever the nested
-// kubelet picks in the 32-bit id space. Under sysbox that pod cannot start
-// (the sandbox owns 65536 ids); a runtime that claims UserNamespaces must
-// run it. The node's images come through the run's gateway (Docker Hub is
-// among the egress defaults).
-func liveNestedKubernetes(ctx context.Context, t *testing.T, h *k8sHost, name, image string) {
+// sandbox's docker daemon, built from the node definition over image, and on
+// it an ordinary pod that resolves a Service by name and a privileged pod
+// (a project gateway's sysctl init container is one). With userns, also a
+// pod with a user namespace of its own (hostUsers: false, the assistant
+// pod's shape), mapped wherever the nested kubelet picks: under sysbox it
+// cannot start (the sandbox owns 65536 ids); a runtime whose capabilities
+// on this cluster include UserNamespaces must run it. The node's images come
+// through the run's gateway (Docker Hub is among the egress defaults).
+func liveNestedKubernetes(ctx context.Context, t *testing.T, h *k8sHost, name, image string, userns bool) {
 	t.Helper()
+	dockerfile, err := os.ReadFile(nestedNodeDockerfile)
+	if err != nil {
+		t.Fatal(err)
+	}
 	const script = `set -eu
+docker build -q -t apo-nested-node --build-arg K3S_IMAGE="$1" - >/dev/null
 docker rm -f apo-nested >/dev/null 2>&1 || true
-docker run -d --name apo-nested --privileged --tmpfs /run --tmpfs /var/run "$1" \
-  server --disable=traefik,metrics-server,servicelb,local-storage,coredns >/dev/null
+# Ranges of its own: the sandbox's resolver may sit in k3s's default ones.
+docker run -d --name apo-nested --privileged --tmpfs /run --tmpfs /var/run \
+  -v /usr/local/bin/apo-runc:/bin/apo-runc:ro apo-nested-node \
+  server --disable=traefik,metrics-server,servicelb,local-storage \
+  --cluster-cidr 10.142.0.0/16 --service-cidr 10.143.0.0/16 >/dev/null
 k() { docker exec -i apo-nested kubectl "$@"; }
 i=0
 until k get nodes 2>/dev/null | grep -q ' Ready'; do
@@ -524,8 +555,24 @@ until k get nodes 2>/dev/null | grep -q ' Ready'; do
   sleep 2
 done
 echo "nested node Ready after $((i * 2))s"
-i=0
-until k apply -f - >/dev/null 2>&1 <<'EOF'
+pods='apiVersion: v1
+kind: Pod
+metadata: {name: plain, namespace: default}
+spec:
+  restartPolicy: Never
+  containers:
+    - {name: c, image: busybox:1.37, command: [sh, -c, "until nslookup kubernetes.default.svc.cluster.local; do sleep 2; done"]}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: privileged, namespace: default}
+spec:
+  restartPolicy: Never
+  containers:
+    - {name: c, image: busybox:1.37, command: [sysctl, -w, net.ipv4.ip_forward=1], securityContext: {privileged: true}}'
+if [ "$2" = userns ]; then
+  pods="$pods
+---
 apiVersion: v1
 kind: Pod
 metadata: {name: userns, namespace: default}
@@ -533,23 +580,33 @@ spec:
   hostUsers: false
   restartPolicy: Never
   containers:
-    - name: c
-      image: busybox:1.37
-      command: [cat, /proc/self/uid_map]
-EOF
-do
-  i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the pod was never accepted"; exit 1; }
+    - {name: c, image: busybox:1.37, command: [cat, /proc/self/uid_map]}"
+fi
+i=0
+until echo "$pods" | k apply -f - >/dev/null 2>&1; do
+  i=$((i + 1)); [ "$i" -lt 60 ] || { echo "the pods were never accepted"; exit 1; }
   sleep 2
 done
-k wait --for=jsonpath='{.status.phase}'=Succeeded pod/userns --timeout=300s >/dev/null ||
-  { k describe pod userns | tail -n 25; exit 1; }
-echo "uid_map: $(k logs userns)"
+for p in plain privileged $([ "$2" = userns ] && echo userns); do
+  k wait --for=jsonpath='{.status.phase}'=Succeeded "pod/$p" --timeout=300s >/dev/null ||
+    { k describe pod "$p" | tail -n 25; exit 1; }
+  echo "pod $p ran"
+done
+[ "$2" != userns ] || echo "uid_map: $(k logs userns)"
 docker rm -f apo-nested >/dev/null
 `
+	mode := "plain"
+	if userns {
+		mode = "userns"
+	}
 	start := time.Now()
-	out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script, "sh", image}, nil, nil)
+	out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script, "sh", image, mode}, dockerfile, nil)
 	if err != nil || code != 0 {
 		t.Fatalf("nested Kubernetes in the sandbox (exit %d, %v):\n%s%s", code, err, out, stderr)
+	}
+	t.Logf("nested Kubernetes: %s, %s in all", strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0], time.Since(start).Truncate(time.Second))
+	if !userns {
+		return
 	}
 	// The pod's first mapping: inside id 0 at an outside id the nested
 	// kubelet chose, never the sandbox's own 0.
@@ -558,8 +615,48 @@ docker rm -f apo-nested >/dev/null
 	if _, err := fmt.Sscan(line, &inside, &outside, &count); err != nil || inside != 0 || outside == 0 {
 		t.Fatalf("the nested pod is not user-namespaced: %q (%v)", line, err)
 	}
-	t.Logf("nested Kubernetes: %s; the pod mapped 0 at %d (%d ids), %s in all",
-		strings.SplitN(strings.TrimSpace(string(out)), "\n", 2)[0], outside, count, time.Since(start).Truncate(time.Second))
+	t.Logf("nested user-namespaced pod: mapped 0 at %d (%d ids)", outside, count)
+}
+
+// liveUsernsNesting is what the userns runtime is chosen for, on the
+// sandbox's own docker daemon: a privileged container (apo-runc's case), a
+// container over its memory limit killed alone (the sandbox's cgroup is its
+// own), and a compose project.
+func liveUsernsNesting(ctx context.Context, t *testing.T, h *k8sHost, name string) {
+	t.Helper()
+	const script = `set -eu
+[ "$(docker info --format '{{.DefaultRuntime}}')" = apo-runc ] || { echo "docker's runtime is not apo-runc"; exit 1; }
+docker run --rm --privileged busybox:1.37 sh -c 'ip link add d0 type dummy && grep " /sys " /proc/self/mounts' | grep -q ' ro,'
+echo "privileged container ran"
+want=$(cat /sys/fs/cgroup/cpu.max)
+got=$(docker run --rm busybox:1.37 cat /sys/fs/cgroup/cpu.max)
+[ "$got" = "$want" ] || { echo "an inner container's cpu.max is $got, the sandbox's $want"; exit 1; }
+own=$(docker run --rm --cpus 1 busybox:1.37 cat /sys/fs/cgroup/cpu.max)
+[ "$own" = "100000 100000" ] || { echo "a container's own quota became $own"; exit 1; }
+echo "an inner container has the sandbox's CPU limit ($got), one with its own keeps it"
+code=0
+docker run --rm -m 32m busybox:1.37 sh -c 'head -c 128m /dev/zero | tail' >/dev/null 2>&1 || code=$?
+[ "$code" = 137 ] || { echo "over its limit: exit $code, want 137"; exit 1; }
+echo "a container over its limit was killed"
+mkdir -p /tmp/apo-compose && cd /tmp/apo-compose
+printf 'services:
+  web:
+    image: busybox:1.37
+    command: [httpd, -f, -p, "8080"]
+  client:
+    image: busybox:1.37
+    depends_on: [web]
+    command: [sh, -c, "until wget -q -O /dev/null http://web:8080/ 2>&1 | grep -q 404; do sleep 1; done"]
+' >compose.yaml
+timeout 120 docker compose up --abort-on-container-exit --exit-code-from client >/dev/null 2>&1
+docker compose down -t 0 >/dev/null 2>&1
+echo "a compose project came up"
+`
+	out, stderr, code, err := h.runInner(ctx, name, "sh", []string{"-c", script}, nil, nil)
+	if err != nil || code != 0 {
+		t.Fatalf("nesting under userns (exit %d, %v):\n%s%s", code, err, out, stderr)
+	}
+	t.Logf("userns nesting: %s", strings.ReplaceAll(strings.TrimSpace(string(out)), "\n", "; "))
 }
 
 // liveSleepWake: the run sleeps (its pod deleted, its claim kept) and wakes

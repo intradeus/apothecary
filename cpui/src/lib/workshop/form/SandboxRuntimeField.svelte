@@ -45,13 +45,19 @@
 
 	// A known runtime says when to pick it, so a person chooses by what the
 	// workshop needs; one the form does not know lists what it can run.
+	// userns says more where this provisioner's cluster gives it user
+	// namespaces inside (its nodes' kubelets give a pod more ids).
 	const about: Partial<Record<string, MessageKey>> = {
 		sysbox: 'form.project.rtAboutSysbox',
 		kata: 'form.project.rtAboutKata',
-		privileged: 'form.project.rtAboutPrivileged'
+		privileged: 'form.project.rtAboutPrivileged',
+		userns: 'form.project.rtAboutUserns'
 	};
 	const describe = (r: { name: string; capabilities: RuntimeCapabilities }) => {
-		const key = about[r.name];
+		const key =
+			r.name === 'userns' && r.capabilities.userNamespaces
+				? 'form.project.rtAboutUsernsWide'
+				: about[r.name];
 		return key ? t(key) : can(r.capabilities);
 	};
 

@@ -29,6 +29,15 @@ const (
 	// it everything runs, user namespaces included; its memory is held per
 	// VM, so a sandbox under it must be sized.
 	RuntimeKata Runtime = "kata"
+	// RuntimeUserns is plain runc in a Kubernetes user namespace of the
+	// pod's own, with the pod's cgroup writable (a containerd handler with
+	// cgroup_writable): docker and Kubernetes nest on the node's kernel with
+	// nothing installed but that handler. Its isolation is the user
+	// namespace alone (no seccomp, no AppArmor for the sandbox container):
+	// for the operator's own projects, not untrusted code. It owns as many
+	// ids as the node's kubelet gives a pod, so user namespaces inside it
+	// are the provisioner's to say (RuntimeChoice.Adds).
+	RuntimeUserns Runtime = "userns"
 )
 
 // RuntimeCapabilities is what a runtime gives the sandbox; a definition (and
@@ -53,6 +62,7 @@ var runtimes = map[Runtime]RuntimeCapabilities{
 	RuntimePrivileged: {NestedContainers: true, NestedKubernetes: true, UserNamespaces: true},
 	RuntimeSysbox:     {NestedContainers: true, NestedKubernetes: true, Contained: true},
 	RuntimeKata:       {NestedContainers: true, NestedKubernetes: true, UserNamespaces: true, Contained: true},
+	RuntimeUserns:     {NestedContainers: true, NestedKubernetes: true, Contained: true},
 }
 
 // Runtimes lists every known runtime, sorted by name.
@@ -78,7 +88,8 @@ func ParseRuntime(s string) (Runtime, error) {
 	return r, nil
 }
 
-// Capabilities is what r gives a sandbox; an unknown runtime gives nothing.
+// Capabilities is what r gives a sandbox on any cluster; an unknown runtime
+// gives nothing. What a provisioner's cluster adds is RuntimeChoice's.
 func (r Runtime) Capabilities() RuntimeCapabilities { return runtimes[r] }
 
 // Missing lists, in a fixed order, what need asks for that have lacks; empty
@@ -102,11 +113,11 @@ func (have RuntimeCapabilities) Missing(need RuntimeCapabilities) []string {
 }
 
 // Satisfying lists, sorted, the runtimes among from that give everything
-// need asks for: the fix a refusal names.
-func Satisfying(need RuntimeCapabilities, from []Runtime) []Runtime {
+// need asks for on this provisioner's cluster: the fix a refusal names.
+func (c RuntimeChoice) Satisfying(need RuntimeCapabilities, from []Runtime) []Runtime {
 	var out []Runtime
 	for _, r := range from {
-		if len(r.Capabilities().Missing(need)) == 0 {
+		if len(c.Capabilities(r).Missing(need)) == 0 {
 			out = append(out, r)
 		}
 	}
@@ -138,6 +149,16 @@ type RuntimeChoice struct {
 	// disks go with its pod, whatever the storage).
 	NoSleep      string             `json:"-"`
 	NoSleepUnder map[Runtime]string `json:"-"`
+	// Adds is what this provisioner's cluster gives a runtime beyond its
+	// row: userns gets UserNamespaces where the nodes' kubelets hand a
+	// user-namespaced pod more than 65536 ids.
+	Adds map[Runtime]RuntimeCapabilities `json:"-"`
+}
+
+// Capabilities is what rt gives a sandbox on this provisioner's cluster:
+// its row, with what the cluster adds.
+func (c RuntimeChoice) Capabilities(rt Runtime) RuntimeCapabilities {
+	return rt.Capabilities().Union(c.Adds[rt])
 }
 
 // SleepRefusal is why a sandbox under want ("" the default) cannot be
@@ -181,9 +202,9 @@ func (c RuntimeChoice) Choose(want Runtime, need RuntimeCapabilities) (Runtime, 
 		return "", fmt.Errorf("sandbox runtime %s is not approved on this instance (approved: %s; an admin approves runtimes on the provisioner, System → Provisioner)", rt, joinRuntimes(c.Approved))
 	}
 	all := c.Needs.Union(need)
-	if missing := rt.Capabilities().Missing(all); len(missing) > 0 {
+	if missing := c.Capabilities(rt).Missing(all); len(missing) > 0 {
 		fix := "no approved runtime gives it: ask an admin to approve one that does"
-		if ok := Satisfying(all, c.Approved); len(ok) > 0 {
+		if ok := c.Satisfying(all, c.Approved); len(ok) > 0 {
 			fix = "choose " + joinRuntimes(ok)
 		}
 		return "", fmt.Errorf("sandbox runtime %s cannot give this workshop %s: %s", rt, strings.Join(missing, ", "), fix)

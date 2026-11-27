@@ -42,7 +42,7 @@ func (k Kubernetes) Descriptor() Descriptor {
 	d := k.Defaults
 	return Descriptor{
 		Port: "provisioner", Kind: "kubernetes", Label: "Kubernetes (sandbox pod per run)",
-		Help: "Runs each workspace as a Docker-in-Docker pod under a sandbox runtime: privileged, sysbox or kata. Empty fields use the deployment's APOTHECARY_K8S_* settings.",
+		Help: "Runs each workspace as a Docker-in-Docker pod under a sandbox runtime: privileged, sysbox, userns or kata. Empty fields use the deployment's APOTHECARY_K8S_* settings.",
 		Fields: []Field{
 			{Name: "kubeconfig", Label: "kubeconfig", Secret: true,
 				Help: "Contents of a kubeconfig, or an absolute path. Empty: the engine's in-cluster service account."},
@@ -63,11 +63,13 @@ func (k Kubernetes) Descriptor() Descriptor {
 			{Name: "vm_storage_class", Label: "VM storage class (kata)", Placeholder: "none: disks inside the VM",
 				Help: "A class that provisions raw block volumes (volumeMode: Block: EBS, TopoLVM, Longhorn, Ceph RBD; not k3s's local-path). Set, a kata sandbox keeps its checkout and inner Docker data on a block claim of storage size from it, a disk in its VM kept while the run lives, so it can stop when idle. Empty: on disks inside its VM, gone with its pod, and it never stops when idle."},
 			{Name: "runtime", Label: "Sandbox runtime (" + strings.Join(runtimeNames(), "/") + ")", Placeholder: orDefault(d.Runtime, string(envport.RuntimePrivileged)),
-				Help: "What isolates each sandbox. privileged: sandbox root is root on its node (CI, a cluster of your own). sysbox: unprivileged, in a user namespace of its own (hostUsers: false; sysbox-runc on the nodes, containerd 2.0.5+, sysbox 0.7+; README, cluster requirements). kata: a VM per sandbox (Kata Containers with Cloud Hypervisor, KVM on the nodes; sized sandboxes, on disks of their own that a stop would lose)."},
+				Help: "What isolates each sandbox. privileged: sandbox root is root on its node (CI, a cluster of your own). sysbox: unprivileged, in a user namespace of its own (hostUsers: false; sysbox-runc on the nodes, containerd 2.0.5+, sysbox 0.7+; README, cluster requirements). kata: a VM per sandbox (Kata Containers with Cloud Hypervisor, KVM on the nodes; sized sandboxes, on disks of their own that a stop would lose). userns: plain runc in a user namespace of its own (a runc-userns containerd handler with cgroup_writable, containerd 2.1+; no seccomp or AppArmor in the sandbox: for your own projects, not untrusted code)."},
 			{Name: "runtimes", Label: "Approved runtimes (comma-separated)", Placeholder: orDefault(strings.Join(d.Runtimes, ","), "the default runtime alone"),
 				Help: "The runtimes a workshop may choose for its sandboxes, the default among them; only list runtimes this cluster's nodes run (Test starts a pod under each). privileged sandboxes are root on their node: approve it only on a cluster of your own."},
 			{Name: "runtime_class", Label: "Runtime class", Placeholder: orDefault(d.RuntimeClass, "the runtime's own"),
-				Help: "The RuntimeClass sandbox pods name, when not the runtime's own (sysbox: sysbox-runc; kata: kata; privileged: none, the node's default). A class alone is the default runtime's; runtime=class pairs, comma-separated, name any approved runtime's (e.g. kata=kata-clh). Empty: the deployment's class, for the deployment's own runtime only."},
+				Help: "The RuntimeClass sandbox pods name, when not the runtime's own (sysbox: sysbox-runc; kata: kata; userns: runc-userns; privileged: none, the node's default). A class alone is the default runtime's; runtime=class pairs, comma-separated, name any approved runtime's (e.g. kata=kata-clh). Empty: the deployment's class, for the deployment's own runtime only."},
+			{Name: "nested_user_namespaces", Label: "Nested user namespaces (userns; on/off)", Placeholder: "off",
+				Help: "On: every node that runs userns sandboxes gives a user-namespaced pod more than 65536 ids (the kubelet's userNamespaces.idsPerPod, with its kubelet range in /etc/subuid and /etc/subgid), so a userns sandbox can run user-namespaced pods on a cluster inside it. Turn it on only once every such node has the setting. Never change that setting on a node while a user-namespaced pod runs there (sandboxes under sysbox or userns, assistant pods): the kubelet then refuses to start. docs/kubernetes.md, nested user namespaces."},
 			{Name: "privileged", Label: "Privileged sandboxes (on/off, older: use the runtime)",
 				Help: "Read only when the runtime is empty: on is the privileged runtime, off is sysbox (with a runtime class)."},
 			{Name: "firewall", Label: "Egress firewall (on/off)", Placeholder: "on", Default: "on"},
@@ -124,31 +126,33 @@ func (k Kubernetes) New(cfg Config, deps ProvisionerDeps) (Provisioner, error) {
 		return nil, fmt.Errorf("kubernetes: storage must be pvc or emptydir, got %q", storage)
 	}
 	runtime := choice.Default
+	nested, _ := nestedUserNamespaces(cfg) // read by kubernetesChoice already
 	a := workspaceadapter.New(workspaceadapter.Config{
 		RunsDir:         deps.RunsDir,
 		WorkspaceDocker: deps.WorkspaceDocker,
 		ProjectEnv:      deps.ProjectEnv,
 		Kube: &workspaceadapter.KubeConfig{
-			Kube:            &kube.Client{Kubeconfig: path, Context: cfg.Str("context", ""), Namespace: ns},
-			SandboxImage:    cfg.Str("sandbox_image", d.SandboxImage),
-			ShimImage:       cfg.Str("shim_image", d.ShimImage),
-			ToolsImage:      cfg.Str("tools_image", d.ToolsImage),
-			GatewayImage:    cfg.Str("gateway_image", d.GatewayImage),
-			PullPolicy:      cfg.Str("image_pull_policy", d.PullPolicy),
-			EngineURL:       engineURL,
-			EngineNamespace: d.EngineNamespace,
-			EngineCIDR:      cfg.Str("engine_cidr", ""),
-			Forward:         d.Transport == "portforward",
-			Storage:         storage,
-			StorageClass:    cfg.Str("storage_class", ""),
-			VMStorageClass:  cfg.Str("vm_storage_class", ""),
-			StorageSize:     cfg.Str("storage_size", ""),
-			Runtime:         runtime,
-			RuntimeClasses:  classes,
-			Runtimes:        choice.Approved,
-			Firewall:        cfg.Str("firewall", "on") != "off",
-			ProtectCIDRs:    d.ProtectCIDRs,
-			Drift:           deps.Drift,
+			Kube:                 &kube.Client{Kubeconfig: path, Context: cfg.Str("context", ""), Namespace: ns},
+			SandboxImage:         cfg.Str("sandbox_image", d.SandboxImage),
+			ShimImage:            cfg.Str("shim_image", d.ShimImage),
+			ToolsImage:           cfg.Str("tools_image", d.ToolsImage),
+			GatewayImage:         cfg.Str("gateway_image", d.GatewayImage),
+			PullPolicy:           cfg.Str("image_pull_policy", d.PullPolicy),
+			EngineURL:            engineURL,
+			EngineNamespace:      d.EngineNamespace,
+			EngineCIDR:           cfg.Str("engine_cidr", ""),
+			Forward:              d.Transport == "portforward",
+			Storage:              storage,
+			StorageClass:         cfg.Str("storage_class", ""),
+			VMStorageClass:       cfg.Str("vm_storage_class", ""),
+			StorageSize:          cfg.Str("storage_size", ""),
+			Runtime:              runtime,
+			RuntimeClasses:       classes,
+			Runtimes:             choice.Approved,
+			NestedUserNamespaces: nested,
+			Firewall:             cfg.Str("firewall", "on") != "off",
+			ProtectCIDRs:         d.ProtectCIDRs,
+			Drift:                deps.Drift,
 		},
 	})
 	return &kubernetesProvisioner{Adapter: a, cleanup: cleanup}, nil
@@ -296,6 +300,11 @@ func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, 
 			return envport.RuntimeChoice{}, nil, fmt.Errorf("kubernetes: runtime_class names a class for %s, which the integration does not approve", rt)
 		}
 	}
+	nested, err := nestedUserNamespaces(cfg)
+	if err != nil {
+		return envport.RuntimeChoice{}, nil, err
+	}
+	c.Adds = workspaceadapter.NestedUserNamespaceAdds(nested)
 	// Per runtime: a VM keeps its disks on the VM storage class, the others
 	// on the integration's storage.
 	for _, rt := range c.Approved {
@@ -307,6 +316,19 @@ func kubernetesChoice(cfg Config, d KubernetesDefaults) (envport.RuntimeChoice, 
 		}
 	}
 	return c, classes, nil
+}
+
+// nestedUserNamespaces is the integration's word that its nodes give a
+// user-namespaced pod more than 65536 ids: on or off (default off).
+func nestedUserNamespaces(cfg Config) (bool, error) {
+	switch v := strings.ToLower(cfg.Str("nested_user_namespaces", "off")); v {
+	case "on":
+		return true, nil
+	case "off":
+		return false, nil
+	default:
+		return false, fmt.Errorf("kubernetes: nested_user_namespaces must be on or off, got %q", v)
+	}
 }
 
 // kubernetesStorage is the integration's workspace storage (default pvc),

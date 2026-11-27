@@ -18,7 +18,8 @@ import (
 // The integration's Test on a real cluster (live_k8s_test.go's header says
 // what it needs; only the shim image is pulled): a probe pod under the
 // privileged runtime runs to completion, and under kata on a Kata cluster,
-// under sysbox on a sysbox one; a runtime whose RuntimeClass is
+// under sysbox on a sysbox one, under userns on one with its handler; a
+// runtime whose RuntimeClass is
 // missing is refused at admission; one whose class names a handler no node
 // has never runs, and the refusal carries the kubelet's reason.
 func TestLiveK8sRuntimeProbe(t *testing.T) {
@@ -71,6 +72,13 @@ func TestLiveK8sRuntimeProbe(t *testing.T) {
 	case string(envport.RuntimeSysbox):
 		if err := host(envport.RuntimeSysbox, "").probeRuntimes(ctx); err != nil {
 			t.Fatalf("sysbox: %v", err)
+		}
+	case string(envport.RuntimeUserns):
+		// Its probe carries the sandbox's security context (procMount:
+		// Unmasked), under the runc-userns class, in a user namespace of
+		// its own.
+		if err := host(envport.RuntimeUserns, "").probeRuntimes(ctx); err != nil {
+			t.Fatalf("userns: %v", err)
 		}
 	}
 

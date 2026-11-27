@@ -58,6 +58,25 @@ describe('SandboxRuntimeField', () => {
 		expect(screen.queryByText(/save will be refused/)).not.toBeInTheDocument();
 	});
 
+	it('says when to pick userns, and more where the cluster gives it user namespaces', async () => {
+		const userns: SandboxRuntime = { name: 'userns', capabilities: sysbox.capabilities };
+		vi.mocked(api.system.runtimeOffer).mockResolvedValue(offer({ approved: [sysbox, userns] }));
+		const { unmount } = render(SandboxRuntimeField, { runtime: '', docker: false });
+		expect(
+			await screen.findByText(/Pick this if you need docker.*not code you do not trust/)
+		).toBeInTheDocument();
+		unmount();
+		const wide: SandboxRuntime = {
+			name: 'userns',
+			capabilities: { ...sysbox.capabilities, userNamespaces: true }
+		};
+		vi.mocked(api.system.runtimeOffer).mockResolvedValue(offer({ approved: [sysbox, wide] }));
+		render(SandboxRuntimeField, { runtime: '', docker: false });
+		expect(
+			await screen.findByText(/Pick this if you also need user-namespaced pods.*without kata’s VM/)
+		).toBeInTheDocument();
+	});
+
 	it('says when to pick each known runtime, and what an unknown one can run', async () => {
 		const kata: SandboxRuntime = {
 			name: 'kata',

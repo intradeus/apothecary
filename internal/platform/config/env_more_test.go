@@ -249,10 +249,10 @@ func TestBootRefusals(t *testing.T) {
 		{"ssh door with a bad address", map[string]string{"APOTHECARY_SSH_LISTEN": "nonsense"}, "APOTHECARY_SSH_LISTEN"},
 		{"privileged neither on nor off", map[string]string{"APOTHECARY_K8S_PRIVILEGED": "maybe"}, "APOTHECARY_K8S_PRIVILEGED"},
 		{"unprivileged sandboxes need a runtime class", map[string]string{"APOTHECARY_K8S_PRIVILEGED": "off"}, "APOTHECARY_K8S_RUNTIME_CLASS"},
-		{"an unknown runtime", map[string]string{"APOTHECARY_K8S_RUNTIME": "gvisor"}, "kata, privileged, sysbox"},
+		{"an unknown runtime", map[string]string{"APOTHECARY_K8S_RUNTIME": "gvisor"}, "kata, privileged, sysbox, userns"},
 		{"privileged on contradicts sysbox", map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_PRIVILEGED": "on"}, "contradicts"},
 		{"privileged off contradicts privileged", map[string]string{"APOTHECARY_K8S_RUNTIME": "privileged", "APOTHECARY_K8S_PRIVILEGED": "off"}, "contradicts"},
-		{"an unknown approved runtime", map[string]string{"APOTHECARY_K8S_RUNTIMES": "sysbox,gvisor"}, `APOTHECARY_K8S_RUNTIMES must list runtimes among kata, privileged, sysbox, got "gvisor"`},
+		{"an unknown approved runtime", map[string]string{"APOTHECARY_K8S_RUNTIMES": "sysbox,gvisor"}, `APOTHECARY_K8S_RUNTIMES must list runtimes among kata, privileged, sysbox, userns, got "gvisor"`},
 		{"approved without the default", map[string]string{"APOTHECARY_K8S_RUNTIME": "sysbox", "APOTHECARY_K8S_RUNTIMES": "privileged"}, "must include the default runtime APOTHECARY_K8S_RUNTIME=sysbox"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

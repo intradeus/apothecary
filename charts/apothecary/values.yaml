@@ -109,13 +109,16 @@ workspaces:
   # namespace of its own; sysbox-runc installed on the nodes that run
   # sandboxes), `kata` (a VM per sandbox: Kata Containers with Cloud
   # Hypervisor and a `kata` RuntimeClass, KVM on the nodes; sandboxes must be
-  # sized, System → Limits, on disks of their own in the VM) or `privileged`
+  # sized, System → Limits, on disks of their own in the VM), `userns` (plain
+  # runc in a user namespace of its own, under a `runc-userns` containerd
+  # handler with cgroup_writable, containerd 2.1+; no seccomp or AppArmor in
+  # the sandbox: for your own projects, not untrusted code) or `privileged`
   # (sandbox root is root on its node: for a cluster of your own, k3d or a
   # dev box, never a shared one). Empty: from the older `privileged` below
   # (true: privileged; false: sysbox).
   runtime: ""
   # -- The RuntimeClass sandbox pods name, when not the runtime's own (sysbox:
-  # sysbox-runc; kata: kata; privileged: none). The RuntimeClass's own scheduling
+  # sysbox-runc; kata: kata; userns: runc-userns; privileged: none). The RuntimeClass's own scheduling
   # (nodeSelector, tolerations) places sandbox pods on its nodes.
   runtimeClassName: ""
   # -- The runtimes a workshop may choose for its sandboxes, the default
@@ -152,6 +155,25 @@ workspaces:
     # there, e.g. `{apothecary.dev/kata: "true"}`. Empty: any node.
     nodeSelector: {}
     # -- Tolerations Kata sandbox pods get, for Kata nodes tainted to keep
+    # other pods off.
+    tolerations: []
+  # The userns runtime's RuntimeClass, made by the chart for a cluster whose
+  # nodes have the `runc-userns` containerd handler (README, Cluster
+  # requirements) and no class for it yet. It is cluster-wide: one release
+  # per cluster creates it.
+  usernsRuntimeClass:
+    # -- Create it.
+    create: false
+    # -- Its name: the one userns sandbox pods name (`runc-userns`, or
+    # `runtimeClassName` when userns is the default runtime).
+    name: runc-userns
+    # -- The containerd runtime handler: plain runc with
+    # `cgroup_writable = true`.
+    handler: runc-userns
+    # -- Labels of the nodes with the handler: userns sandbox pods go only
+    # there. Empty: any node (every node has it).
+    nodeSelector: {}
+    # -- Tolerations userns sandbox pods get, for nodes tainted to keep
     # other pods off.
     tolerations: []
 
